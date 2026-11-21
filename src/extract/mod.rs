@@ -6127,6 +6127,20 @@ impl<'pr> Extractor<'_> {
                 }
                 continue;
             }
+            // graphql-ruby: `field … method: :x` calls `x` on the field's
+            // object, which may not be `self`; `argument … prepare: :x` on
+            // `self` (DEC-712).
+            if matches!(macro_name.as_str(), "field" | "argument") {
+                let to = match key.as_str() {
+                    "method" => None,
+                    "prepare" => Some(to_self.clone()),
+                    _ => continue,
+                };
+                if let Some(symbol) = value.as_symbol_node() {
+                    self.record_symbol(&symbol, to);
+                }
+                continue;
+            }
             // `validates :x, exclusion: { unless: :skip? }`: each validator's
             // options take a guard, and numericality's bounds a method
             // (DEC-711).

@@ -979,8 +979,8 @@ ruby tests/testbed/900-a-callback-symbol-of-a-commit-job-or-test-hook-is-a-refer
 ruby tests/testbed/901-a-route-names-its-action-by-keyword-or-hash-rocket/app/controllers/application_controller.rb 6a92135212c3dff5
 ruby tests/testbed/901-a-route-names-its-action-by-keyword-or-hash-rocket/app/controllers/widgets_controller.rb 7d98b1fbd31a0801
 ruby tests/testbed/901-a-route-names-its-action-by-keyword-or-hash-rocket/config/routes.rb 30d4e99bed2c9e38
-ruby tests/testbed/902-a-graphql-field-names-the-method-that-resolves-it/app/graphql/mutations/update_widget.rb 8ccdb072fd6eb9bc
-ruby tests/testbed/902-a-graphql-field-names-the-method-that-resolves-it/app/graphql/types/widget_type.rb b5bc8ca6dc08be48
+ruby tests/testbed/902-a-graphql-field-names-the-method-that-resolves-it/app/graphql/mutations/update_widget.rb 0f69df857a753bec
+ruby tests/testbed/902-a-graphql-field-names-the-method-that-resolves-it/app/graphql/types/widget_type.rb 655344862830156b
 ruby tests/testbed/902-a-graphql-field-names-the-method-that-resolves-it/lib/graphql.rb 2d64e7b61159c6e6
 ruby tests/testbed/903-a-constant-written-inside-a-live-literal/app/models/user.rb 569b27f022b55d8c
 ruby tests/testbed/903-a-constant-written-inside-a-live-literal/app/models/widget.rb 9679e2324523ab02

@@ -16945,3 +16945,17 @@ data. **Not yet**: `comparison:`'s bounds, which Rails also reads a
 symbol for, and `validates_numericality_of :n, greater_than: :min`, whose
 bounds are top-level; no case pins them. Ported from sorbet-deadcode issues #89, #94
 and #149 (testbed 906).
+
+## DEC-712 — graphql-ruby's `method:` and `prepare:` name a method
+
+**Decided.** On a class-level `field` or `argument`, `method: :x` and
+`prepare: :x` record `x` as a symbol call, so `--dead` reads the method as
+`convention-only`. `prepare:` is called on `self` (the type, mutation or
+resolver the argument is declared on) and stands for that method.
+`method:` is called on the field's underlying `object`, which trekr cannot
+type, so it stands for nothing: a name-only reference, as RABL's keys are
+(DEC-526). Scoped to those two macro names: `method:` on any other macro is not
+a method of anything known. **Not yet**: `loads:` (which calls
+`load_<argument>`) and a `.graphql` schema file's field names; testbed 902
+stages both. Ported from Spoom's GraphQL plugin and sorbet-deadcode issues
+#53, #92 and #27.

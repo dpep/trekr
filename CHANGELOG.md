@@ -25,6 +25,9 @@
   `numericality: { greater_than: :min_size, if: :sized? }` left `skip_name?`,
   `min_size` and `sized?` `unreferenced`, "not read as a call"; they are
   `convention-only`.
+- **`--dead` reads graphql-ruby's `method:` and `prepare:`**: `field :color,
+  String, method: :paint` and `argument :name, String, prepare: :clean_name`
+  left `paint` and `clean_name` `unreferenced`; they are `convention-only`.
 
 ## 0.10.2 — 2026-11-20
 
