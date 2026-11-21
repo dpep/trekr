@@ -199,7 +199,7 @@
 935-a-spec-goes-only-where-it-tests-nothing-live 3e95e31caba9cfcf
 936-a-minitest-tests-setup-is-weighed aae4042b84b03057
 937-a-reopened-test-base-runs-its-setup-everywhere 1073eda59ab3b6c4
-938-a-spec-that-builds-or-defines-live-code-stays 36ba31b5588c656d
+938-a-spec-that-builds-or-defines-live-code-stays cbca4c331380b249
 940-a-nested-guard-only-under-validates d0077d05ca0ae951
 941-class-shift-onto-a-local da8f39fc75fc934d
 942-a-call-written-as-an-assignment-target d9e9a03582dd67b9

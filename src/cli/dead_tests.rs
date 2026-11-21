@@ -575,6 +575,7 @@ impl Weigh<'_, '_> {
             let Some(facts) = self.files.facts(&path) else {
                 return Err(format!("unread {path}"));
             };
+            self.reads_live(&facts, &path, start, end)?;
             let within = |at: Pos| start <= at && at <= end;
             // A name sent: only a literal one can be weighed.
             for send in facts.sends.iter().filter(|s| within(s.call)) {
@@ -763,11 +764,24 @@ impl Weigh<'_, '_> {
                 return Err(format!("`{}` on a receiver no type settles", call.name));
             }
         }
-        for read in facts.const_refs.iter().filter(|r| within(r.pos)) {
+        self.reads_live(&facts, path, start, end)
+    }
+
+    /// Whether the span reads a checkout constant, outside its tests, but
+    /// the target's class and the namespaces around it: a lambda or a value
+    /// computed there is live code.
+    fn reads_live(&self, facts: &Facts, path: &str, start: Pos, end: Pos) -> Result<(), String> {
+        for read in facts
+            .const_refs
+            .iter()
+            .filter(|r| start <= r.pos && r.pos <= end)
+        {
             let Some(fqn) = self.tree.resolve_at(&read.name, &read.nesting, path).fqn else {
                 continue;
             };
-            if fqn == self.target.owner {
+            // `Billing::Invoice` reads `Billing` on the way: a namespace runs nothing.
+            let owner = &self.target.owner;
+            if fqn == *owner || owner.starts_with(&format!("{fqn}::")) {
                 continue;
             }
             let live = self.tree.sites(&fqn).iter().any(|site| {
