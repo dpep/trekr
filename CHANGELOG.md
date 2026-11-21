@@ -78,6 +78,10 @@
   (`Printer.write`), `unreferenced`, `clear`, and named as what frees the
   methods it calls. It is `lower`, "defined on the object `io` holds, which
   trekr cannot type", and frees nothing.
+- **`--dead` reads a call written as an assignment target as a call of
+  its writer**: `pr.left, pr.right = 1, 2` and `rescue => pr.err` left
+  `left=`, `right=` and `err=` `unreferenced`, `clear`; each is called once,
+  and `--def` on the name answers the writer.
 
 ## 0.10.2 — 2026-11-20
 

@@ -2,3 +2,7 @@
 # (`pr.left, pr.right = 1, 2`) or a `rescue => pr.err`, calls its writer; all
 # three were unreferenced, `clear`.
 dead app/a.rb Pair#lonely==unreferenced
+dead app/a.rb Pair#left==single-caller Pair#right==single-caller Pair#err==single-caller
+def app/a.rb:22:8 status=resolved owner=Pair name=left=
+def app/a.rb:22:18 status=resolved owner=Pair name=right=
+def app/a.rb:25:18 status=resolved owner=Pair name=err=

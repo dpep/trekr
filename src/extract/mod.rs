@@ -1671,6 +1671,14 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         ruby_prism::visit_call_and_write_node(self, node);
     }
 
+    // `pr.left, pr.right = 1, 2`, `rescue => pr.err`: a call of the writer,
+    // with the one value. Not `a[i], b = …`: an index target, as `h[k] ||= v`
+    // (DEC-710), carries no message.
+    fn visit_call_target_node(&mut self, node: &ruby_prism::CallTargetNode<'pr>) {
+        self.record_call_at(node.name(), Some(&node.receiver()), &node.message_loc(), 1);
+        ruby_prism::visit_call_target_node(self, node);
+    }
+
     fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
         self.spell_sends(node.unescaped(), node.content_loc().start_offset());
     }
@@ -5465,23 +5473,26 @@ impl<'pr> Extractor<'_> {
             return;
         };
         for (name, argc) in [(read, 0), (write, 1)] {
-            let Ok(name) = String::from_utf8(name.as_slice().to_vec()) else {
-                return;
-            };
-            let mut fact = self.call_fact(
-                name,
-                receiver.as_ref(),
-                false,
-                &message,
-                Some(argc),
-                false,
-                None,
-            );
-            // The writer is written as its reader: `total=` spans `total`.
-            fact.written
-                .get_or_insert((message.end_offset() - message.start_offset()) as u32);
-            self.facts.calls.push(fact);
+            self.record_call_at(name, receiver.as_ref(), &message, argc);
         }
+    }
+
+    /// A call of `name` written as `message`, which spells a writer without
+    /// its `=`: `total=` spans `total`.
+    fn record_call_at(
+        &mut self,
+        name: ruby_prism::ConstantId<'pr>,
+        receiver: Option<&Node<'pr>>,
+        message: &ruby_prism::Location<'pr>,
+        argc: u32,
+    ) {
+        let Ok(name) = String::from_utf8(name.as_slice().to_vec()) else {
+            return;
+        };
+        let mut fact = self.call_fact(name, receiver, false, message, Some(argc), false, None);
+        fact.written
+            .get_or_insert((message.end_offset() - message.start_offset()) as u32);
+        self.facts.calls.push(fact);
     }
 
     /// The fact for a call of `name` on `receiver`, written at `message`.

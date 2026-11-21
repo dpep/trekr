@@ -193,7 +193,7 @@
 930-a-test-only-methods-spec-goes-with-it 9d16faca52c733db
 940-a-nested-guard-only-under-validates d0077d05ca0ae951
 941-class-shift-onto-a-local da8f39fc75fc934d
-942-a-call-written-as-an-assignment-target 514877262ed92cfd
+942-a-call-written-as-an-assignment-target d9e9a03582dd67b9
 960-a-modules-class-side-lists-no-includers 93381cf13bf4b771
 961-a-module-named-concern-is-no-concern 2d73799d72d6bf4a
 962-self-class-descendants-and-a-split-t-unsafe 693d9d8e6f8e9a5c

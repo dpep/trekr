@@ -17282,3 +17282,14 @@ off for it, as for `def io.x`. Only a local, as `def io.x` reads only a
 local: `class << @io` or `class << build` still opens the scope's own
 singleton class, and so do `def @io.x` and its kin (testbed 941; 654's
 `class << item` moves the same way).
+
+## DEC-741 — A call written as an assignment target is a call of its writer
+
+**Decided.** `pr.left, pr.right = 1, 2` and `rescue => pr.err` write
+through a call (Prism's `CallTargetNode`; `for pr.x in list` is the same
+node, not pinned by a case): each records a call of the writer (`left=`) with one argument, on the receiver
+as written, spanning the name as written (as DEC-710's writer does). They
+recorded nothing, so the writers were `unreferenced`, `clear`; discourse
+has both shapes (testbed 942). **Not** an index target (`a[i], b = …`):
+it carries no message location, as `h[k] ||= v` does not (DEC-710), so
+`[]=` stays unrecorded there.
