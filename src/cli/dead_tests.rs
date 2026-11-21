@@ -794,6 +794,21 @@ const HOOKS: [&str; 6] = [
     "let_it_be",
 ];
 
+/// Statements of a group's body that run only when read (`let`), after
+/// the example (`after`), as examples or groups of their own, or are refused
+/// whole (`include_context`): no hook of the examples around them.
+const READ_ELSEWHERE: [&str; 9] = [
+    "let",
+    "subject",
+    "after",
+    "prepend_after",
+    "append_after",
+    "include_context",
+    "include_examples",
+    "pending",
+    "skip",
+];
+
 /// Calls that include a shared group's hooks and `let`s into the group
 /// they are written in (`it_behaves_like` opens a group of its own).
 const INCLUDES_INTO: [&str; 2] = ["include_context", "include_examples"];
@@ -838,6 +853,47 @@ impl Shape {
                 });
             }
         }
+        impl Walk<'_> {
+            /// What a group's body runs as the file loads, or registers to
+            /// run before its examples, that is no RSpec DSL read elsewhere:
+            /// a macro from a helper (`with_registry`), an assignment, an
+            /// `if` around hooks. Each is weighed as a hook.
+            fn group_body(&mut self, call: &ruby_prism::CallNode<'_>) {
+                let Some(body) = call
+                    .block()
+                    .and_then(|b| b.as_block_node())
+                    .and_then(|b| b.body())
+                else {
+                    return;
+                };
+                let Some(statements) = body.as_statements_node() else {
+                    self.span(SpanKind::Hook, String::new(), &body.location());
+                    return;
+                };
+                for statement in statements.body().iter() {
+                    if statement.as_def_node().is_some() {
+                        continue;
+                    }
+                    let name = statement.as_call_node().map(|c| {
+                        let name = String::from_utf8_lossy(c.name().as_slice()).into_owned();
+                        let block = c.block().and_then(|b| b.as_block_node()).is_some();
+                        (name, block)
+                    });
+                    if let Some((name, block)) = &name {
+                        let hook = HOOKS.contains(&name.as_str()) || name.ends_with('!');
+                        let elsewhere =
+                            [&READ_ELSEWHERE[..], &GROUPS[..], &SHARED[..], &EXAMPLES[..]]
+                                .iter()
+                                .any(|names| names.contains(&name.as_str()));
+                        if (hook && *block) || elsewhere {
+                            continue;
+                        }
+                    }
+                    let name = name.map(|(name, _)| name).unwrap_or_default();
+                    self.span(SpanKind::Hook, name, &statement.location());
+                }
+            }
+        }
         impl<'pr> Visit<'pr> for Walk<'_> {
             fn visit_call_node(&mut self, call: &ruby_prism::CallNode<'pr>) {
                 let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
@@ -861,6 +917,9 @@ impl Shape {
                 } else {
                     None
                 };
+                if kind == Some(SpanKind::Group) {
+                    self.group_body(call);
+                }
                 if let Some(kind) = kind {
                     let described = call
                         .arguments()

@@ -14,3 +14,8 @@ dead lib Tally#total=test-only& Mention#rewrite=test-only& Mention#slug=test-onl
 # and discourse's `fab!` ran live code unweighed. Each is a hook now, as is
 # any call named with a `!` that takes a block.
 dead lib Booter#first=test-only& Booter#second=test-only& Booter#third=test-only&
+# A call in a group's body that is no RSpec DSL — a helper's macro that
+# defines a `before` (`with_registry`) — was weighed for a group unit, not
+# for an example in that group. Each such statement of a group around the
+# unit is weighed as a hook now.
+dead lib Labeled#label=test-only&
