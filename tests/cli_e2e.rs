@@ -7914,3 +7914,43 @@ fn a_store_that_cannot_be_opened_is_named_in_the_error() {
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// `--dead Gemfile --dead foo.gemspec`, where the Gemfile says `gemspec`,
+/// grades each gem line once (DEC-822); and foo's dependency is not said to
+/// be kept by foo, whose name its gemspec computes from the file's.
+#[test]
+fn a_gem_line_two_manifests_reach_is_graded_once() {
+    let (dir, db) = scratch("gems-twice");
+    repo(&dir);
+    fs::write(
+        dir.join("Gemfile"),
+        "source \"https://rubygems.org\"\ngemspec\ngem \"spare\"\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("foo.gemspec"),
+        "Gem::Specification.new do |s|\n  s.name = File.basename(__FILE__, \".gemspec\")\n  \
+         s.version = \"0.1.0\"\n  s.add_dependency \"dep\"\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Gemfile.lock"),
+        "PATH\n  remote: .\n  specs:\n    foo (0.1.0)\n      dep\n\nGEM\n  remote: \
+         https://rubygems.org/\n  specs:\n    dep (1.0)\n    spare (1.0)\n\nPLATFORMS\n  ruby\n\n\
+         DEPENDENCIES\n  foo!\n  spare\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    let out = trekr(
+        &db,
+        &dir,
+        &["--dead", "Gemfile", "--dead", "foo.gemspec", "--json"],
+    );
+    let answer = json(&out);
+    let rows = answer["candidates"].as_array().expect("candidates");
+    let names: Vec<&str> = rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["spare", "dep"], "{answer}");
+    assert_eq!(answer["summary"]["declared"], 2, "{answer}");
+    assert_eq!(rows[1]["needed_by"], serde_json::json!([]), "{answer}");
+    let _ = fs::remove_dir_all(&dir);
+}

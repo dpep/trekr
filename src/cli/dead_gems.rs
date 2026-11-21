@@ -255,15 +255,31 @@ pub(super) fn cmd_dead_gems(
     if graded.len() > 1 {
         TEXT_ABSOLUTE.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    let mut rows = Vec::new();
-    let mut referenced = Vec::new();
-    let (mut declared, mut transitive) = (0, 0);
+    // A gem line two manifests reach (a Gemfile's `gemspec` and the gemspec
+    // named too) is graded once, by the file that declares it.
+    let mut rows: Vec<GemRow> = Vec::new();
+    let mut referenced: Vec<Evidence> = Vec::new();
+    let mut declared_keys = HashSet::new();
+    let mut transitive_by_root = BTreeMap::new();
     for one in graded {
-        rows.extend(one.rows);
-        referenced.extend(one.referenced);
-        declared += one.declared;
-        transitive += one.transitive;
+        for row in one.rows {
+            if !rows
+                .iter()
+                .any(|r| r.path == row.path && r.name == row.name)
+            {
+                rows.push(row);
+            }
+        }
+        for seen in one.referenced {
+            if !referenced.iter().any(|r| r.name == seen.name) {
+                referenced.push(seen);
+            }
+        }
+        declared_keys.extend(one.declared);
+        transitive_by_root.insert(one.root, one.transitive);
     }
+    let declared = declared_keys.len();
+    let transitive: usize = transitive_by_root.values().sum();
     let count = |keep: &dyn Fn(&GemRow) -> bool| rows.iter().filter(|r| keep(r)).count();
     let summary = Summary {
         candidates: rows.len(),
@@ -444,9 +460,11 @@ fn tier_name(tier: DeadTier) -> &'static str {
 }
 
 struct Graded {
+    root: String,
     rows: Vec<GemRow>,
     referenced: Vec<Evidence>,
-    declared: usize,
+    /// Each declaration, as the declaring file's path and the gem's name.
+    declared: Vec<(String, String)>,
     transitive: usize,
 }
 
@@ -842,7 +860,15 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
         .filter(|file| file.ends_with(".gemspec"))
         .map(|file| {
             let raw = crate::scan::read_source(root.join(file)).ok();
-            (file, raw.and_then(|raw| gemfile::gemspec_name(&raw)))
+            // A name computed (`File.basename(__FILE__, ".gemspec")`) is
+            // most often the file's.
+            let stem = Path::new(file)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned());
+            (
+                file,
+                raw.and_then(|raw| gemfile::gemspec_name(&raw)).or(stem),
+            )
         })
         .collect();
     let mut rows = Vec::new();
@@ -1010,8 +1036,12 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
     Ok(Graded {
         rows,
         referenced,
-        declared: declared.len(),
+        declared: declared
+            .iter()
+            .map(|(d, file)| (at(file), d.name.clone()))
+            .collect(),
         transitive,
+        root: root_str,
     })
 }
 

@@ -701,7 +701,9 @@ gem it brings that the app uses, which others bring too.
 Per row: `version` and `gem_dir` (`null` when not installed), `groups`,
 `bundler_require` (`name`, `paths`, or `off` for `require: false`),
 `needed_by` (gems that depend on it, so removing the line keeps it in the
-bundle; not the gem whose gemspec declares it), `executables`, `test_refs`. `summary` counts `declared`,
+bundle; not the gem whose gemspec declares it, by its `name` or, computed,
+the file's), `executables`, `test_refs`. A gem line several manifests
+reach is one row (DEC-822). `summary` counts `declared`,
 `referenced` (gems found in use that are not rows: a `test-only` row is
 not one), `transitive`, the rows per tier and per confidence; text lists
 `referenced` with `--explain`.

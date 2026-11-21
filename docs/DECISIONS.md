@@ -18027,3 +18027,20 @@ a design call. The refusal now says the root has no Gemfile or
 `gems.rb`, and names the Gemfile `.bundle/config` selects. Not
 testbed-shaped (the harness asserts no message); checked by hand on
 nextonly.
+
+## DEC-822 — Two DEC-809 paper cuts, finished
+
+- **A gem line is graded once across every manifest named.** DEC-809
+  deduped a manifest named twice, but `--dead Gemfile --dead foo.gemspec`,
+  the Gemfile saying `gemspec`, graded foo.gemspec's lines twice: 3 of
+  3 declared for a 2-gem bundle (hunt 3's twice). Rows are deduped by
+  the declaring file and the gem's name, `referenced` by the gem's name,
+  `summary.declared` counts distinct declarations, and `transitive` is
+  counted once per checkout.
+- **A computed gemspec name falls back to the file's stem** for
+  `needed_by`'s exclusion: `s.name = File.basename(__FILE__,
+  ".gemspec")` left foo saying it keeps its own dependency (hunt 3's
+  twice2).
+
+Both in `cli_e2e`'s `a_gem_line_two_manifests_reach_is_graded_once`:
+the testbed passes one target and asserts no `needed_by`.
