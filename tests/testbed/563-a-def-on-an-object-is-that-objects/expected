@@ -2,7 +2,10 @@
 # `WidgetTest`'s own singleton method, unreferenced and clear (DEC-562).
 # Its type is the write `clock`'s read sees, not every write of the name in
 # the class: the receiver of a `def` is now read by the flow analysis.
-dead widget_test.rb Clock#time_now=override
+# Clock's own `now` calls `time_now` on `self`, which may be that one
+# Clock: the call may run the stub before the class's (DEC-827), so the row
+# has one possible caller rather than being an `override` no call names.
+dead widget_test.rb Clock#time_now=single-caller~Clock
 # On an object trekr cannot type: whose it is is unknown, so never clear.
 dead widget_test.rb WidgetTest#tick=unreferenced~object
 # `def self.x` is unchanged.

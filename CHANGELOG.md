@@ -116,6 +116,12 @@
   object is `possible`, in `--refs` and the editor's Find References, as
   `--dead` grades it; one on another class is still excluded, and so is
   one on the class itself (`Widget.extra`) for an instance's method.
+- **`--refs` on a method an object overrides counts the call on the
+  object**: with `w = Widget.new; def w.label` where Widget has its own
+  `label`, `--refs` on the object's `label` excluded `w.label`, "resolves
+  to a different owner", and `--dead` graded it `override`, "no call
+  names it". The call is `possible`. `--def` at `w.label` still answers
+  Widget#label.
 - **`--dead` reads `def io.x` and `class << io` at the top of a script
   as the object's**, as it does in a class: there `top_write`, called as
   `io.top_write`, was `unreferenced`, `clear`, and so was a method only its

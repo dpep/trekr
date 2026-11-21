@@ -1,0 +1,12 @@
+# `def w.label` on `w = Widget.new`, where Widget has its own `label`:
+# Ruby runs the object's method for `w.label`. `--refs` on it excluded the
+# call, "resolves to a different owner", since the ladder lands on
+# Widget#label; a receiver that may be the object is possible, and one of
+# another class (Gadget) is still excluded.
+refs app/a.rb:16:11 confirmed=0 possible=1 excluded=1 sites=app/a.rb:19:7
+dead app/a.rb Gadget#label=single-caller
+# Recorded as it stands: `--def` at `w.label` answers Widget#label, and its
+# `--refs` confirms the call, since the ladder does not know `w` holds the
+# one object whose method replaces it.
+def app/a.rb:19:7 status=resolved owner=Widget
+refs app/a.rb:2:7 confirmed=1 possible=0 excluded=1

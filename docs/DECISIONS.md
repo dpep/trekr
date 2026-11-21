@@ -17816,3 +17816,30 @@ the same way. Since DEC-796 the gather it ran after had promoted them
 already: removed on its own at 4fd21603, the testbed (`tests/dead.golden`
 byte for byte) and `--dead app lib` on discourse and mastodon were
 unchanged. Left in, it would have put `Widget.extra` back.
+
+## DEC-827 — A call that may be on the object runs the object's method over its class's
+
+**Decided.** DEC-796's promotion covers a call the ladder lands on another
+owner, not only one it finds no method for: with `w = Widget.new; def
+w.label` where Widget has its own `label`, `w.label` is `possible` on the
+object's `def`, "the method is defined on an object the receiver may be,
+over its class's", since Ruby looks in the object's singleton class
+first. The receiver must be one that may be the object, as DEC-826 reads
+it: a Gadget's `label` stays excluded. Testbed 827.
+
+**Why.** `--refs` on the object's `def` excluded `w.label`, its one call,
+as "resolves to a different owner"; `--dead` graded the row `override`,
+"no call names it".
+
+**Testbed 563 moves with it.** `def clock.time_now` stubs a Clock whose own
+`now` calls `time_now` on `self`; that call may be on the stubbed Clock, so
+the row is `single-caller`, one possible call, where it was an `override`
+no call names.
+
+**Not done: `--def` at `w.label`.** It still answers Widget#label,
+`resolved`, and `--refs` on Widget#label confirms the call. Answering
+`ambiguous` with both needs the ladder to know the receiver may hold that
+one object — the read DEC-796 left out for a method the class lacks — and
+whether a call on every Widget should then be hedged by one object's stub
+(DEC-562 declined to place a test's stub on its class for the same
+reason). That is a design call, left open.

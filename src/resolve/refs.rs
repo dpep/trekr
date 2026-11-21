@@ -774,6 +774,19 @@ fn tier(
                     0,
                     None,
                 )
+            } else if on
+                .iter()
+                .any(|on| on.may_be(tree, &receiver.fqn, receiver.singleton))
+            {
+                // One object's own method runs before its class's (DEC-827).
+                here(
+                    Tier::Possible,
+                    Some(receiver.fqn.clone()),
+                    Some(found.owner.clone()),
+                    "the method is defined on an object the receiver may be, over its class's",
+                    1,
+                    None,
+                )
             } else {
                 let why = if target.is_some_and(|target| is_inherited(tree, query, target, &found))
                 {

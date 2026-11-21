@@ -92,7 +92,7 @@
 560-a-superclass-named-like-its-class-is-the-outer-one b7de33d5683aa69f
 561-a-private-section-in-class-self-is-private 0372ca61537eee97
 562-a-def-in-a-block-that-may-rebind-self-is-not-the-scopes b0e44ce0a391ef33
-563-a-def-on-an-object-is-that-objects 732e97263720e89b
+563-a-def-on-an-object-is-that-objects 87caa8262b5064eb
 580-dead-initialize-weighs-no-unplaced-super 6a72987e719a4104
 604-a-let-read-through-an-alias-of-self df0d2da31963c497
 605-a-nested-let-read-by-an-outer-def-whose-examples-an-include-writes 1d4c46651e1d8aad
@@ -182,6 +182,7 @@
 816-two-defs-on-one-line-are-told-apart-or-not-guessed efcb97a063cc075e
 825-a-block-in-an-objects-method-may-change-self 4770a7b9e3cfb3cb
 826-an-instances-method-is-not-its-classs 21fe6b973791f231
+827-an-objects-method-overrides-its-classs 836fd136463e7c9c
 885-a-second-bundles-manifest-is-refused 6dd2e5b026ee19d8
 900-a-callback-symbol-of-a-commit-job-or-test-hook-is-a-reference 4c8bf98dd1dd911c
 901-a-route-names-its-action-by-keyword-or-hash-rocket cc89def7b9d15b76
