@@ -1,0 +1,8 @@
+# Found by a hunt: a module extending a checkout module whose name ends in
+# `Concern` is no concern, so nothing extends its `ClassMethods` and it
+# stays a candidate. One extending ActiveSupport::Concern, here not indexed,
+# is still read as one (DEC-761). The method table agrees: `tracked_fields`
+# is no class method of Widget, `find_by_slug` is.
+dead app Trackable::ClassMethods=unreferenced~ Sluggable::ClassMethods=none
+def app/main.rb:2:8 status=resolved owner=Sluggable::ClassMethods
+def app/main.rb:3:8 status=residue

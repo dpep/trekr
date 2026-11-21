@@ -305,7 +305,7 @@ ruby tests/testbed/315-dead-says-what-it-cannot-see/app/models/widget.rb ca55850
 ruby tests/testbed/316-an-aliases-calls-reach-its-target/app.rb b68e53af830058f9
 ruby tests/testbed/340-a-symbol-an-option-names-is-a-reference/app.rb 15e8fe982bb7bc15
 ruby tests/testbed/341-keywords-are-no-positional-argument/app.rb 649a4de545458769
-ruby tests/testbed/342-a-block-rails-runs-on-the-instance-calls-the-instance/app.rb eeb90d39d41c441d
+ruby tests/testbed/342-a-block-rails-runs-on-the-instance-calls-the-instance/app.rb bfdd6e0666f871c5
 ruby tests/testbed/343-a-symbol-read-as-no-name-is-said/app.rb cb62e8f434d937fd
 ruby tests/testbed/344-a-route-reaches-a-controller-action/app/controllers/admin/base_controller.rb be6205859123e90e
 ruby tests/testbed/344-a-route-reaches-a-controller-action/app/controllers/admin/gadgets_controller.rb a499b57a9c354b26
@@ -381,7 +381,7 @@ ruby tests/testbed/385-thor-runs-no-helper-as-a-command/lib/thor.rb 1ac5d6181341
 ruby tests/testbed/385-thor-runs-no-helper-as-a-command/lib/thor/group.rb 11d143547c20f95a
 ruby tests/testbed/386-a-lambda-in-a-modules-method-has-no-known-self/app/models/gadget.rb 459b9f7ed530cd74
 ruby tests/testbed/386-a-lambda-in-a-modules-method-has-no-known-self/app/models/gated.rb 6310d07c97652183
-ruby tests/testbed/390-a-callback-block-in-a-class-methods-method-runs-on-the-includer/app.rb a001a0e6d2346d50
+ruby tests/testbed/390-a-callback-block-in-a-class-methods-method-runs-on-the-includer/app.rb b2678a08226cef8b
 ruby tests/testbed/391-a-block-whose-self-is-not-known-rules-nothing-out/app.rb a871092f1a58aa92
 ruby tests/testbed/392-a-memoized-reader-is-what-it-builds/app.rb 2f768de68f4d4668
 ruby tests/testbed/400-a-lambda-callback-calls-an-included-method/app/controllers/api/base_controller.rb d28e31cd98a33716
@@ -1050,6 +1050,11 @@ ruby tests/testbed/960-a-modules-class-side-lists-no-includers/app/models/main.r
 ruby tests/testbed/960-a-modules-class-side-lists-no-includers/app/models/registry.rb 37fe9cf7a260ae6b
 ruby tests/testbed/960-a-modules-class-side-lists-no-includers/app/models/tracked.rb ae7eeafdb236bdc6
 ruby tests/testbed/960-a-modules-class-side-lists-no-includers/app/models/widget.rb dd5a50e2de13c534
+ruby tests/testbed/961-a-module-named-concern-is-no-concern/app/audit_concern.rb 8914a57dd9301957
+ruby tests/testbed/961-a-module-named-concern-is-no-concern/app/main.rb c942ee3b27b6ffe8
+ruby tests/testbed/961-a-module-named-concern-is-no-concern/app/sluggable.rb 21918b4a9edcfd42
+ruby tests/testbed/961-a-module-named-concern-is-no-concern/app/trackable.rb cb5ba79557581f85
+ruby tests/testbed/961-a-module-named-concern-is-no-concern/app/widget.rb f4acb957db645832
 ruby tests/testbed/962-self-class-descendants-and-a-split-t-unsafe/app/models/base.rb 93d6ea00342c5a46
 ruby tests/testbed/962-self-class-descendants-and-a-split-t-unsafe/app/models/leaves.rb 244c91b5cc70c614
 ruby tests/testbed/962-self-class-descendants-and-a-split-t-unsafe/app/models/main.rb 7842a3fac702c3c1

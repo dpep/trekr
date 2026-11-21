@@ -54,13 +54,20 @@
   candidate (it was `convention-only`, or `unreferenced` without
   ActiveSupport indexed). Its methods still are, and a `ClassMethods` in a
   module that extends no Concern still is.
+- **A module that extends a checkout module merely named `…Concern` is no
+  concern**: `module Trackable; extend AuditConcern` made
+  `Trackable::ClassMethods`'s methods class methods of every includer, so
+  `--def` placed `Widget.tracked_fields` on it; it is `residue`
+  now. A concern is one whose `extend` resolves to
+  `ActiveSupport::Concern`, or, with ActiveSupport not indexed, is
+  written `ActiveSupport::Concern` or `Concern`.
 - **`--dead` reads a class's own `descendants` as a listing of its
   subclasses**: `descendants` in a class method,
   `T.unsafe(self).subclasses` (on one line or two), or
-  `self.class.descendants` in an instance method, makes each subclass `convention-only` by
-  `subclasses`, as `Base.subclasses` does; they were `unreferenced`. A
-  module's class side lists nothing: a class that includes it is no
-  subclass.
+  `self.class.descendants` in an instance method, makes each subclass
+  `convention-only` by `subclasses`, as `Base.subclasses` does; they were
+  `unreferenced`. A module's class side lists nothing: a class that
+  includes it is no subclass.
 
 ## 0.10.2 — 2026-11-20
 

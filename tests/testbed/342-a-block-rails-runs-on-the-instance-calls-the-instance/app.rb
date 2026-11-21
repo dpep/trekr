@@ -1,5 +1,5 @@
-module Concern
-end
+# ActiveSupport is not indexed: its Concern is read
+# by the name written.
 
 class Base
   def self.rescue_from(*classes, with: nil, &block); end
@@ -7,7 +7,7 @@ class Base
 end
 
 module Guarded
-  extend Concern
+  extend ActiveSupport::Concern
 
   included do
     rescue_from ArgumentError do |error|

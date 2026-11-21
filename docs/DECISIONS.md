@@ -16963,7 +16963,7 @@ stages both. Ported from Spoom's GraphQL plugin and sorbet-deadcode issues
 
 **Decided.** `--dead` does not weigh the `ClassMethods` of a module that
 extends `ActiveSupport::Concern` — as written (`extend
-ActiveSupport::Concern`, `extend Concern`, as the tree's own rule reads it),
+ActiveSupport::Concern`, `extend Concern`, as the tree's own rule reads it, DEC-761),
 or by a class side that answers `append_features` from it — whether written
 as a module or made by `class_methods do`. Its methods are still weighed.
 Testbeds 913 and 424.
@@ -17018,6 +17018,28 @@ Reading it would need the block told apart from `def self.` in the
 module, then every class that includes the concern, directly or through
 another concern. Left conservative: it lists nothing, so a subclass it
 does reach stays a candidate, as before DEC-721.
+
+## DEC-761 — A concern is a module that extends ActiveSupport::Concern, as it resolves
+
+**Decided.** The tree's `is_concern`, which decides both DEC-720 and
+whether a module's `ClassMethods` joins each includer's class methods
+(DEC-105), resolves the `extend` target: a concern when it resolves to
+`ActiveSupport::Concern`; no concern when it resolves to anything else;
+and, when it resolves to nothing (ActiveSupport not indexed), a concern
+only when written `ActiveSupport::Concern` or a bare `Concern`. It was
+any name ending in `Concern`, so `extend AuditConcern`, a plain checkout
+module, made `Trackable::ClassMethods` vanish from `--dead` and its
+methods class methods of every includer. Testbed 961.
+
+**Moved.** `--def` on such a module's `ClassMethods` method through an
+includer is `residue` where it was `resolved`, as Ruby would raise
+NoMethodError there. Testbeds 342 and 390 and a tree unit test stood in
+for ActiveSupport with an empty checkout `module Concern`; they now write
+`extend ActiveSupport::Concern` unindexed, which is what they meant.
+
+**Not done.** An unresolved name other than those two (`extend
+Foo::Concern` from an unindexed gem) is no concern; a gem's own
+Concern-alike is not modelled.
 
 ## DEC-762 — `self.class.descendants` lists, and `T.unsafe` is read by its receiver
 

@@ -3634,14 +3634,21 @@ impl Tree {
         chain
     }
 
-    /// Does this module extend `ActiveSupport::Concern`, as written?
+    /// Does this module extend `ActiveSupport::Concern`? As it resolves, or,
+    /// with ActiveSupport not indexed, as written: a checkout module that
+    /// merely ends in `Concern` is no concern.
     pub(crate) fn is_concern(&self, module_name: &str) -> bool {
         self.names.get(module_name).is_some_and(|entry| {
             entry.kind() == "module"
-                && entry
-                    .extends()
-                    .iter()
-                    .any(|target| target.name.ends_with("Concern"))
+                && entry.extends().iter().any(|target| {
+                    match self.resolve_lexical(target.name, &target.nesting) {
+                        Some(fqn) => fqn == "ActiveSupport::Concern",
+                        None => matches!(
+                            target.name.trim_start_matches("::"),
+                            "ActiveSupport::Concern" | "Concern"
+                        ),
+                    }
+                })
         })
     }
 
@@ -3651,19 +3658,10 @@ impl Tree {
     /// includes `M` — no `extend` is ever written, so nothing in the blob layer
     /// records it. Gated on the module actually extending a Concern so that a
     /// plain module happening to contain a `ClassMethods` is not treated as
-    /// one; the check is on the name as *written*, because a checkout without
-    /// ActiveSupport indexed still writes `extend ActiveSupport::Concern`.
+    /// one.
     fn concern_class_methods(&self, module_name: &str) -> Option<String> {
-        let entry = self.names.get(module_name)?;
-        if entry.kind() != "module" {
-            return None;
-        }
-        let is_concern = entry
-            .extends()
-            .iter()
-            .any(|target| target.name.ends_with("Concern"));
         let nested = qualify(module_name, "ClassMethods");
-        (is_concern && self.names.contains(&nested)).then_some(nested)
+        (self.is_concern(module_name) && self.names.contains(&nested)).then_some(nested)
     }
 
     /// Only the superclass links — no mixins. Class methods are inherited down
@@ -4786,8 +4784,8 @@ mod singleton_tests {
         // ActiveSupport::Concern extends M::ClassMethods into every includer,
         // and no `extend` is ever written — so nothing in the blob layer
         // records it. It is how most Rails class methods come to exist.
-        let tree = one("module Concern\nend\n\
-             module Trackable\n  extend Concern\n  \
+        // ActiveSupport unindexed: its Concern is read by the name written.
+        let tree = one("module Trackable\n  extend ActiveSupport::Concern\n  \
              module ClassMethods\n    def track_all\n    end\n  end\n  \
              def track\n  end\nend\n\
              class Widget\n  include Trackable\nend\n");

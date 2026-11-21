@@ -1,5 +1,5 @@
-module Concern
-end
+# ActiveSupport is not indexed: its Concern is read
+# by the name written.
 
 class Base
   def self.rescue_from(*classes, &block); end
@@ -7,7 +7,7 @@ class Base
 end
 
 module Rescuing
-  extend Concern
+  extend ActiveSupport::Concern
 
   module ClassMethods
     def rescue_duplicates(fields:)
@@ -21,7 +21,7 @@ module Rescuing
 end
 
 module Limited
-  extend Concern
+  extend ActiveSupport::Concern
 
   class_methods do
     def limits(name)
