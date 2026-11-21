@@ -116,7 +116,6 @@
 668-a-test-files-own-module-is-no-test-only-candidate 2cc4d17474dbc976
 669-a-test-directory-under-lib-or-app-is-production d5128fe6a743f968
 670-a-super-in-a-define-method-block-is-the-defined-methods 5c1b0a59facac5cf
-671-a-name-a-ruby-script-writes-is-no-test-only-method 6f0c306113d94a15
 671-a-name-a-ruby-script-writes-lowers-its-row bcd7591b1b0aeacf
 680-a-two-letter-namespace-bounds-a-built-shape ae8e27f0a29e82ed
 681-a-heredocs-text-looks-nothing-up 849030f9633afbe7
