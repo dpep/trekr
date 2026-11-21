@@ -1208,7 +1208,7 @@ ruby tests/testbed/937-a-reopened-test-base-runs-its-setup-everywhere/test/reope
 ruby tests/testbed/937-a-reopened-test-base-runs-its-setup-everywhere/test/test_helper.rb 76240e0e2a371676
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/config.ru da690933bdf4b18c
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/lib/live.rb 97bbb099b8e62819
-ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/lib/targets.rb 23c251b633cb0cee
+ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/lib/targets.rb 2bd94bce539b916d
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/clocked_spec.rb f5b78c68ae457508
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/configured_spec.rb 169a356022d6eadf
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/counter_spec.rb dbacb5dfafbcb333
@@ -1219,7 +1219,9 @@ ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/implic
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/konst_spec.rb 2bef3598987781d4
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/limited_spec.rb a32749c3f2895a60
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/own_subject_spec.rb ed2cb335e2918d77
+ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/relayed_spec.rb 5d01af5d7cdf5781
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/runner_spec.rb b01c9ec6b4675b50
+ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/support/price_relay.rb a83c932fc3dbee15
 ruby tests/testbed/939-a-library-superclass-runs-what-its-class-is-handed/Gemfile e61de8175cc045fb
 ruby tests/testbed/939-a-library-superclass-runs-what-its-class-is-handed/config.ru da690933bdf4b18c
 ruby tests/testbed/939-a-library-superclass-runs-what-its-class-is-handed/lib/gadget.rb 04bd23db4048ffec

@@ -51,3 +51,9 @@ class Configured
     2
   end
 end
+
+class Relayed
+  def relayed_value
+    2
+  end
+end

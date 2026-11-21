@@ -10,9 +10,11 @@ dead lib Described#described_value=test-only& Implicit#implicit_value=test-only&
 # A module the group `include`s answers its implicit calls, and its method
 # was weighed as a body of test code though it is live: `format_price` was
 # the live PriceHelper's, in its only test. A member a group's module
-# answers from outside the tests keeps the unit. Unincluded (as by
-# `config.include`), the residue's candidate already kept it.
-dead lib Helped#helped_value=test-only& Configured#configured_value=test-only&
+# answers from outside the tests keeps the unit, also through a support
+# module that includes it, where no constant read in the spec names it.
+# Unincluded (as by `config.include`), the residue's candidate already
+# kept it.
+dead lib Helped#helped_value=test-only& Configured#configured_value=test-only& Relayed#relayed_value=test-only&
 # A constant read in spec code was never weighed, though the method's own
 # body may read none: `Formats::MONEY.call(…)` ran a live lambda in its
 # only test. Spec code reads no checkout constant but the method's class.
