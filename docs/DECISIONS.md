@@ -17433,3 +17433,30 @@ placed there by `--def` — a call Ruby answers with NoMethodError.
 
 **No store change.** The receiver's shape is not among the stored facts;
 the extraction golden does not move.
+
+## DEC-796 — `--refs` counts a call on what may hold a method's object
+
+**Decided.** When the queried method is defined on an object rather than
+owned by its scope (DEC-562: `def w.x`, `class << w`, a `def` in a block
+that may run as another object), a call the ladder rules out as "no such
+method" on its receiver is `possible` — "the method is defined on an
+object the receiver may be" — when that receiver is untyped, is the
+object's class or one of its ancestors, or the object is one trekr cannot
+type. A receiver of another class stays excluded. It is `--dead`'s DEC-562
+rule, moved into `query::refs::tier`, so `--refs` and the editor's Find
+References answer as `--dead` grades. Testbed 796.
+
+**Why.** With `w = Widget.new; class << w; def extra; end; end; w.extra`,
+`--refs` on `extra` said "0 confirmed, 0 possible, 1 excluded: define no
+such name", while `--dead` counted `w.extra` as its one possible call.
+The tree still places the `def` where it is written (`Shop.extra`), so
+the ladder lands `w.extra` on Widget and finds nothing.
+
+**How.** The `def`'s mark is not stored, so each front reads the file of
+each of the queried method's `def`s (`query::refs::defined_on`); only a
+`def` with the mark costs more than that lookup. `--dead`'s own copy of
+the rule now finds nothing left to promote, and its output does not move.
+
+**Not done.** `--def` at `w.extra` stays `residue`, with no candidate:
+naming the object's `def` there would need the ladder to know the call's
+receiver holds that one object.

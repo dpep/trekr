@@ -1575,6 +1575,16 @@ pub(crate) enum DefinedOn {
     Unknown,
 }
 
+impl DefinedOn {
+    /// May a receiver of this class be the object?
+    pub(crate) fn may_be(&self, tree: &Tree, class: &str) -> bool {
+        match self {
+            DefinedOn::Object(of) => class == of || tree.inherits(of, class),
+            DefinedOn::Unknown => true,
+        }
+    }
+}
+
 /// `None` for a `def` its scope owns, which includes one in a block that a
 /// method of Ruby's own runs as it stands (`each`, `tap`): DEC-391's rule.
 pub(crate) fn defined_on(

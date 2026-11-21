@@ -3296,13 +3296,21 @@ fn gather_refs(
             tiered.found.push(reference);
         }
     };
+    // A method defined on an object may be called on what holds it (DEC-796).
+    let on = query_refs::defined_on(tree, query, target, |path| match parsed {
+        Some(parsed) => {
+            parsed.read(root, &[path.to_string()]);
+            parsed.get(path)
+        }
+        None => extract::read_file(root, path).map(Arc::new),
+    });
     let tier = |path: &String, facts: &crate::core::Facts| {
         let mut tiered = Tiered::default();
         for call in facts.calls.iter().filter(|c| refs::names_it(c, query)) {
             if listing {
                 tiered.sites.push(crate::store::Ref::call(path, call));
             }
-            let reference = query_refs::tier(tree, facts, call, path, query, target, partial);
+            let reference = query_refs::tier(tree, facts, call, path, query, target, &on, partial);
             // Its includers may answer it: asked below, one file at a time.
             match query_refs::rescuable(facts, call, target, &reference) {
                 true => tiered.rescuable.push((call.clone(), reference)),

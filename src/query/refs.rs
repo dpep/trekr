@@ -5,7 +5,8 @@
 
 use super::members::{CheckoutFiles, includer_reference};
 use crate::core::{Call, Facts};
-use crate::resolve::refs::{self, Query, Reference, Tier};
+use crate::resolve::DefinedOn;
+use crate::resolve::refs::{self, Query, Reference, Ruling, Tier};
 use crate::store::{Ref, Store};
 use crate::tree::Tree;
 use std::collections::HashMap;
@@ -114,8 +115,39 @@ pub(crate) fn placed_name(tree: &Tree, written: &str, nesting: &[String], path: 
         .unwrap_or_else(|| crate::tree::whole_name(bare))
 }
 
+/// What the queried method's `def`s its scope does not own are defined on
+/// (DEC-562): `facts` reads a checkout file's facts. Empty for a method
+/// every `def` of which is its owner's own.
+pub(crate) fn defined_on(
+    tree: &Tree,
+    query: &Query,
+    target: Option<&str>,
+    facts: impl Fn(&str) -> Option<std::sync::Arc<Facts>>,
+) -> Vec<DefinedOn> {
+    let Some(target) = target else {
+        return Vec::new();
+    };
+    tree.named(&query.name)
+        .iter()
+        .filter(|m| m.owner == target && m.singleton == query.singleton)
+        .filter_map(|m| {
+            let facts = facts(&m.site.path)?;
+            let def = facts.defs.iter().find(|d| {
+                d.kind == crate::core::Kind::Method
+                    && d.name == query.name
+                    && (d.pos.line, d.pos.col) == (m.site.line, m.site.col)
+            })?;
+            crate::resolve::defined_on(tree, &facts, def, &m.site.path)
+        })
+        .collect()
+}
+
 /// One call site, tiered. Reads only the tree and the file's own facts, so
-/// it runs on any worker.
+/// it runs on any worker. `on` is what the queried method is defined on
+/// when its scope does not own it ([`defined_on`]): a call ruled out as
+/// "no such method" on a receiver that may be that object may run it, as
+/// `--dead` counts it (DEC-796).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn tier(
     tree: &Tree,
     facts: &Facts,
@@ -123,9 +155,20 @@ pub(crate) fn tier(
     path: &str,
     query: &Query,
     target: Option<&str>,
+    on: &[DefinedOn],
     partial: bool,
 ) -> Reference {
     let mut reference = refs::tier_call(tree, facts, call, path, query, target);
+    let may_be = |class: &str| on.iter().any(|on| on.may_be(tree, class));
+    if reference.ruling == Some(Ruling::NoSuchMethod)
+        && !on.is_empty()
+        && reference.receiver_type.as_deref().is_none_or(may_be)
+    {
+        reference.tier = Tier::Possible;
+        reference.ruling = None;
+        reference.why = "the method is defined on an object the receiver may be";
+        reference.proximity = 1;
+    }
     if partial {
         reference.unrule();
     }

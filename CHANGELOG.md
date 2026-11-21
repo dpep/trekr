@@ -97,6 +97,12 @@
   `--def`, as the enclosing class's `helper_one`, which Ruby would not
   call. The call is typed as the object (`obj = Object.new` is an
   `Object`), or untyped when trekr cannot type it.
+- **`--refs` on a method defined on an object counts the calls that may
+  be on it**: with `w = Widget.new; class << w; def extra; end; end;
+  w.extra`, `--refs` on `extra` excluded `w.extra` as "no such method" on
+  Widget, while `--dead` counted it. A call whose receiver may be the
+  object is `possible`, in `--refs` and the editor's Find References, as
+  `--dead` grades it; one on another class is still excluded.
 
 ## 0.10.2 — 2026-11-20
 

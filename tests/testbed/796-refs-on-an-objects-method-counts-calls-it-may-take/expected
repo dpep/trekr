@@ -1,3 +1,8 @@
 # A method defined on an object is reached by a call on what may be that
 # object, though its class has no method of the name.
 dead app/w.rb Shop#build=single-caller
+# `--refs` on `extra` excluded `w.extra`, its one real call, as "no such
+# method" on Widget, while `--dead` counted it: both now count a call on
+# what may be the object, and still rule out one on another class (Gadget).
+refs app/w.rb:11:11 confirmed=0 possible=1 excluded=1 sites=app/w.rb:13:7
+refs Shop.extra confirmed=0 possible=1 excluded=1

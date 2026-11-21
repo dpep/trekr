@@ -1274,6 +1274,16 @@ fn scan_files(
         partial,
     } = *scan;
     let target = query.owner.as_deref();
+    // A method defined on an object may be called on what holds it (DEC-796).
+    let on = query_refs::defined_on(tree, query, target, |path| {
+        let text = match overlay.get(path) {
+            Some(text) => text.as_bytes().to_vec(),
+            None => crate::scan::read_source(root.join(path)).ok()?,
+        };
+        Some(std::sync::Arc::new(crate::extract::extract_file(
+            path, &text,
+        )))
+    });
     // Made at the first call a shared group's includers may answer.
     let mut includers: Option<CheckoutFiles> = None;
     let mut seen = HashSet::new();
@@ -1324,7 +1334,7 @@ fn scan_files(
                     .filter(|(_, call)| refs::names_it(call, query))
                     .map(|(at, call)| {
                         let tiered =
-                            query_refs::tier(tree, &facts, call, path, query, target, partial);
+                            query_refs::tier(tree, &facts, call, path, query, target, &on, partial);
                         (at, tiered)
                     })
                     .collect();
