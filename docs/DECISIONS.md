@@ -17411,3 +17411,25 @@ owned class is cheaper but does not reach `enum`.
 the corpora, which is a real use. Telling them apart needs a list of which
 settings name gems: a rule with exceptions. Both rows are still rows
 (`convention-only`), so nothing is hidden.
+
+## DEC-795 — `self` in a method defined on an object is that object
+
+**Decided.** In the body of `def io.x`, or of a `def` inside `class << io`
+(DEC-562, DEC-740), a call on `self` — bare or `self.x` — is a call on the
+object the local holds, as if written `io.x`. It is typed as the `def`'s
+owner is: by the writes the local's read at the `def` sees, when they agree
+(`io = Object.new` is an `Object`), and untyped otherwise (a parameter).
+It is no explicit receiver, so a top-level `def` is still reachable from it
+(DEC-311). The extractor records such a call as an `Other` receiver whose
+value is the object (`RecvValue::Held`), so DEC-721's self listing, which
+reads an implicit or `self` receiver on a class side, no longer sees it.
+Testbed 795.
+
+**Why.** The method's owner was the object, but its body's `self` was
+still the scope's class side: a bare `descendants` in `class << obj` made
+the enclosing class's subclasses `convention-only`, and a bare `helper_one`
+in `class << io` was `confirmed` as `Printer.helper_one` by `--refs` and
+placed there by `--def` — a call Ruby answers with NoMethodError.
+
+**No store change.** The receiver's shape is not among the stored facts;
+the extraction golden does not move.

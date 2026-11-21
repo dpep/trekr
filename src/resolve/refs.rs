@@ -464,10 +464,12 @@ fn tier(
     // places it on no class, so an implicit call whose receiver has no
     // method of the name is the one that may run it.
     if target == Some("") {
+        // A call on `self` in a method defined on an object is no explicit
+        // receiver, though it is typed as the object's (DEC-795).
         let explicit = !matches!(
             call.recv,
             crate::core::RecvShape::Implicit | crate::core::RecvShape::SelfRecv
-        );
+        ) && !matches!(call.recv_value, Some(crate::core::RecvValue::Held { .. }));
         let receiver = super::receiver_of(tree, facts, call, path);
         let found = receiver
             .as_ref()

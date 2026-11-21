@@ -1,3 +1,12 @@
 # `self` in a method defined on an object (`def obj.x`, `class << obj`) is
 # that object, not the class whose method the `def` is written in.
 dead app/a.rb Printer#run=single-caller KD1=unreferenced
+# A bare `descendants` there went to the class, listing its subclasses
+# (DEC-721), and a bare `helper_one` was "confirmed" as `Printer.helper_one`,
+# a call Ruby would answer with NoMethodError. It is a call on the object:
+# typed by the local's writes (`Object.new`), untyped for a parameter.
+dead app/a.rb KF1=unreferenced KG1=unreferenced Printer#helper_one=unreferenced
+def app/a.rb:41:9 status=residue receiver_type=Object
+def app/a.rb:45:7 status=residue
+refs Printer.helper_one confirmed=0 possible=0 excluded=1
+refs Printer.helper_two confirmed=0 possible=2 excluded=0

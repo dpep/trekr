@@ -90,6 +90,13 @@
   its writer**: `pr.left, pr.right = 1, 2` and `rescue => pr.err` left
   `left=`, `right=` and `err=` `unreferenced`, `clear`; each is called once,
   and `--def` on the name answers the writer.
+- **A call on `self` in a method defined on an object is a call on that
+  object**: in `def obj.kinds` or `class << obj; def kinds`, a bare
+  `descendants` made the enclosing class's subclasses `convention-only`,
+  and a bare `helper_one` was `confirmed` by `--refs`, and placed by
+  `--def`, as the enclosing class's `helper_one`, which Ruby would not
+  call. The call is typed as the object (`obj = Object.new` is an
+  `Object`), or untyped when trekr cannot type it.
 
 ## 0.10.2 — 2026-11-20
 

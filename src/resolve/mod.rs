@@ -2155,6 +2155,19 @@ fn chained(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) ->
             returned_by(tree, facts, previous, path, depth + 1, call)
         }
         RecvValue::Main => None,
+        // `self` in a method defined on an object: what the local holds,
+        // when the writes its read sees agree (DEC-562), else untyped.
+        RecvValue::Held { local, at } => {
+            let read = Call {
+                recv: RecvShape::Local,
+                recv_text: Some(local.clone()),
+                recv_pos: Some(*at),
+                recv_value: None,
+                ..call.clone()
+            };
+            typed_at(tree, facts, &read, path, depth + 1)
+                .filter(|r| r.agreeing == r.total && !r.ambiguous)
+        }
         // `is_expected`: the example's `subject`, as if it were written.
         RecvValue::Subject => {
             let subject = Call {

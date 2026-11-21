@@ -1153,6 +1153,9 @@ pub(crate) enum RecvValue {
     /// `expose_dsl_globally` gives `main` its group methods, each sending to
     /// `RSpec` (DEC-115).
     Main,
+    /// `self` in a method defined on an object (`def io.x`, `class << io`):
+    /// the one object the local holds where it is read at `at` (DEC-795).
+    Held { local: String, at: Pos },
 }
 
 /// The receiver ladder's rungs, in the order they are worth trying.

@@ -129,6 +129,9 @@ struct Frame {
     /// A `class << io` body: the object its `def`s are defined on, as
     /// `def io.x` writes it (DEC-740).
     object: Option<crate::core::Unsettled>,
+    /// The body of a method defined on such an object: `self` is the object
+    /// the local holds, not the scope (DEC-795).
+    self_held: Option<RecvValue>,
 }
 
 /// Code that runs on whatever mixes its module in (DEC-102).
@@ -173,6 +176,7 @@ impl Frame {
             mixed: None,
             held: Vec::new(),
             object: None,
+            self_held: None,
         }
     }
 }
@@ -638,6 +642,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             mixed: None,
             held: Vec::new(),
             object: None,
+            self_held: None,
         }],
         pending_sigs: Vec::new(),
         pending_sig_params: Vec::new(),
@@ -1952,7 +1957,18 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             self.string_methods
                 .insert((self.nesting.clone(), name.clone()), shape);
         }
+        // `self` in the body is the object the method is defined on.
+        let self_held = match receiver.as_ref() {
+            Some(r) => self.object_held(r),
+            None => object,
+        };
         self.enter(None, Opens::Method { singleton });
+        self.frame().self_held = match self_held {
+            Some(crate::core::Unsettled::Object { local, at }) => {
+                Some(RecvValue::Held { local, at })
+            }
+            _ => None,
+        };
         self.frame().mixed = mixed;
         self.frame().method = owner_is_scope.then_some(name);
         self.frame().definer = definer;
@@ -5511,11 +5527,23 @@ impl<'pr> Extractor<'_> {
             None => (RecvShape::Implicit, None),
             Some(r) => receiver_shape(r),
         };
+        // In a method defined on an object, a call on `self` is a call on
+        // that object, as if written `io.x` (DEC-795).
+        let held = self
+            .frames
+            .last()
+            .and_then(|f| f.self_held.clone())
+            .filter(|_| matches!(recv, RecvShape::Implicit | RecvShape::SelfRecv));
+        let (recv, recv_text) = match held {
+            Some(_) => (RecvShape::Other, None),
+            None => (recv, recv_text),
+        };
         let recv_pos = match (receiver, recv) {
             (Some(r), RecvShape::Local) => Some(self.pos(r.location().start_offset())),
             _ => None,
         };
         let recv_value = match (recv, receiver) {
+            _ if held.is_some() => held,
             (RecvShape::Other, Some(r)) => self.recv_value(r),
             (RecvShape::Implicit, None) if main => Some(RecvValue::Main),
             _ => None,
