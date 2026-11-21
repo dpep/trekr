@@ -1166,6 +1166,10 @@ fn required_by_bundle(
     if wanted.is_empty() {
         return Ok(found);
     }
+    // Every candidate's paths in one automaton: a file worth parsing
+    // mentions one of another gem's.
+    let (needles, of_needle): (Vec<&String>, Vec<&String>) = wanted.iter().unzip();
+    let mentioned = aho_corasick::AhoCorasick::new(&needles)?;
     // Each require of a candidate by another gem, in gem order.
     let mut hits: Vec<(String, Required)> = Vec::new();
     let mut gems: Vec<(&String, &String)> = installed.iter().collect();
@@ -1177,9 +1181,9 @@ fn required_by_bundle(
             let Ok(raw) = crate::scan::read_source(Path::new(root).join(path)) else {
                 continue;
             };
-            let mentions = wanted.iter().any(|(needle, candidate)| {
-                candidate != gem && raw.windows(needle.len()).any(|w| w == needle.as_bytes())
-            });
+            let mentions = mentioned
+                .find_overlapping_iter(&raw)
+                .any(|found| of_needle[found.pattern().as_usize()] != gem);
             if !mentions {
                 continue;
             }

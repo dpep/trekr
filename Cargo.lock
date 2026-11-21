@@ -793,6 +793,7 @@ dependencies = [
 name = "trekr"
 version = "0.10.2"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "clap",
  "clap_complete",

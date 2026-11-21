@@ -9,6 +9,7 @@ keywords = ["ruby", "code-intelligence", "lsp", "prism", "rails"]
 categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
+aho-corasick = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
