@@ -1,0 +1,13 @@
+# A test-only method's row said how many tests call it and where the first
+# is, so deleting its spec code with it meant reading every spec by hand.
+# It now names the spec code that goes with it: the outermost group, else
+# the example, around a site whose every call lands on the method, on its
+# class being built, or outside the checkout (DEC-730). A group that also
+# tests a live method gives only its example; an example that also calls
+# one, or a name an untyped receiver may answer, gives nothing; a whole
+# file's one group is the file, but not a group whose other example tests
+# something else, however little of the checkout that reaches. A hook that
+# runs before the example is weighed with it: what it asserts may be what
+# the hook did. `is_expected` reads the subject. A `let` only those units
+# read is freed.
+dead lib Widget#total=test-only&spec/widget_spec.rb:7%spec/widget_spec.rb:5 Widget#label=test-only&spec/widget_spec.rb:18% Widget#mixed=test-only&% Widget#peek=test-only&% Widget#tally=test-only&% Widget#shade=test-only&spec/widget_spec.rb:48% Widget#build=test-only&spec/widget_spec.rb:55% Gadget#spin=test-only&spec/gadget_spec.rb:4% Gizmo#whirl=test-only&spec/gizmo_spec.rb:3%

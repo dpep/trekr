@@ -1041,6 +1041,10 @@ ruby tests/testbed/912-a-name-sent-from-a-literal-list-reaches-another-class/app
 ruby tests/testbed/913-a-concerns-class-methods-module-is-no-candidate/app/models/concerns/sluggable.rb eed0acee7325eda7
 ruby tests/testbed/913-a-concerns-class-methods-module-is-no-candidate/app/models/concerns/taggable.rb 24774377bd7bc65b
 ruby tests/testbed/913-a-concerns-class-methods-module-is-no-candidate/app/models/widget.rb b4624d2b0b3f951e
+ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/lib/widget.rb d7f454e6b09ba148
+ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/spec/gadget_spec.rb e4deed07336e2573
+ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/spec/gizmo_spec.rb 83e222ffbcdb3ce1
+ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/spec/widget_spec.rb 5f058f1b6282999e
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

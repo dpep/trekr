@@ -12,6 +12,7 @@ mod conventions;
 mod dead;
 mod dead_consts;
 mod dead_gems;
+mod dead_tests;
 mod entry_points;
 mod fresh;
 mod generated;

@@ -989,6 +989,17 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
             },
             None => (want.clone(), None, false),
         };
+        // `tier%FILE:LINE+…`: the row's `frees` are the members at those
+        // lines; `tier&FILE:LINE+…`: its `delete_with` are the units starting
+        // there; either empty for none (DEC-730).
+        let (want, frees) = match want.split_once('%') {
+            Some((tier, at)) => (tier.to_string(), Some(at.to_string())),
+            None => (want, None),
+        };
+        let (want, units) = match want.split_once('&') {
+            Some((tier, at)) => (tier.to_string(), Some(at.to_string())),
+            None => (want, None),
+        };
         // `tier^Owner#name`: the row's `cascaded_from` names that candidate,
         // `tier^` that it has none (DEC-680).
         let (want, from) = match want.split_once('^') {
@@ -1028,6 +1039,42 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
                 failures.push(format!(
                     "{case}: {line}
       {method}: expected cascaded_from `{from}`, got `{got}`"
+                ));
+            }
+        }
+        for (field, want) in [("delete_with", &units), ("frees", &frees)] {
+            let Some(want) = want else {
+                continue;
+            };
+            let listed = row
+                .and_then(|row| row[field].as_array())
+                .cloned()
+                .unwrap_or_default();
+            let mut got: Vec<String> = listed
+                .iter()
+                .map(|at| {
+                    let path = at["path"].as_str().unwrap_or_default();
+                    let path = path
+                        .split_once("/spec/")
+                        .map_or(path.to_string(), |(_, tail)| format!("spec/{tail}"));
+                    let path = path
+                        .split_once("/test/")
+                        .map_or(path.clone(), |(_, tail)| format!("test/{tail}"));
+                    format!("{path}:{}", at["line"])
+                })
+                .collect();
+            got.sort();
+            let mut wanted: Vec<String> = want
+                .split('+')
+                .filter(|at| !at.is_empty())
+                .map(str::to_string)
+                .collect();
+            wanted.sort();
+            if got != wanted {
+                failures.push(format!(
+                    "{case}: {line}\n      {method}: expected {field} `{}`, got `{}`",
+                    wanted.join("+"),
+                    got.join("+")
                 ));
             }
         }

@@ -17080,3 +17080,89 @@ other than development lower nothing; `eval_gemfile` is not followed.
 
 **Reverses if** a held-out app shows `clear` rows in use — the likeliest
 way in is a name loaded from a config trekr does not read.
+
+## DEC-730 — A `test-only` row names its tests, and the spec code that goes with it
+
+**Decided.** A `test-only` method row carries `test_sites` (each call,
+symbol and `super` a test writes, with its `example` and innermost `group`,
+as `name`, `line`, `end_line`), `delete_with` (units: `example`, `group`,
+or `file`), and `frees` (spec members every read of which is in those
+units). Read in the CLI layer from a parse of each test file the sites
+are in, as `method_blocks` already reads a file: nothing new is extracted
+or stored, so no store bump. Run for `test-only` method rows only; a
+`test-only` class's spec file is not weighed (below).
+
+**The rule, in trekr's own call data.** A unit is the outermost group,
+else the example, around a site, when:
+
+1. Every call written in it, in each `before`, `prepend_before`,
+   `append_before` or `around` hook and `let!` or `subject!` of the groups
+   around it, and in every body those reach through test code, lands
+   outside the checkout, on the method itself, on its class being built
+   (`new` or `initialize` of the method's owner), or in a test. "Lands" is
+   `resolve::method_at`'s answer — its definition sites and its residue
+   candidates, all of them. A body reached is a group member a call reads
+   (`members::named_by`; `is_expected`, `are_expected` and a bare `should`
+   read the `subject`), or a method defined in a test file a call resolves
+   to; at most 64 bodies, past which it is no unit.
+2. A call `method_at` does not resolve, with a receiver (not implicit or
+   `self`, whose lookup is the group's ancestry), keeps the unit when the
+   checkout's own code outside its tests defines any method of its name
+   but the target (`Tree::named`). An untyped `record.id` may be any `id`.
+3. A send's name must be a literal; a literal that names a live method
+   keeps the unit as a call would.
+4. No `include_context` or `include_examples` is written in a group around
+   it (or in it): what the shared group's hooks do is unweighed. No site
+   in a shared group's body or an `it_behaves_like` block yields a unit.
+5. For a group, every example in it holds a site or reaches the target
+   through what it reads. A sibling example that touches nothing of the
+   checkout still tests something.
+
+A group that is the file's one top-level statement besides `require`s is
+`file`. Units inside another are dropped.
+
+**Why hooks count and `after` does not.** The first cut weighed only the
+example's span. Read by hand, mastodon's `follow_service_spec` "disables
+reblogs" examples assert `muting_reblogs?` after a `before` that calls
+`FollowService#call`: they test the service's handling of the flag, and
+the row said to delete them. Read below. An `after` hook runs once the example has asserted, so
+cannot be what it asserts. Rule 5 came from the same reading:
+`spec/lib/onebox_spec.rb` was a `file` unit for `Onebox.has_matcher?`
+though its other group tests the templates, which no Ruby call reaches.
+
+**`frees` is one step**, as DEC-680: a member whose every read
+(`members::reads`, the reader `--dead`'s own `let` rows use) is inside the
+units, with no caveat (a name sent at runtime may read it). A member only
+freed members read needs a second `--dead` after deleting.
+
+**Measured** (`--dead app lib`, discourse and mastodon as benched in
+session 36's corpora). Final rule: 17 of 301 `test-only` method rows
+carry a unit (discourse 15 of 275, mastodon 2 of 26); 34 units (22
+examples, 11 groups, 1 file). All 34 read by hand: none holds a test of
+anything else of the checkout's. The first cut (span only, no rule 5)
+claimed 51; of the 17 it lost, 5 were wrong (the onebox file; two
+follow-service examples; two `WorkerBatch#jobs` examples whose `before`
+is `add_jobs` or `remove_job`), 3 arguable (`muting_reblogs?` examples
+whose `before` is `follow!` with the option it reads), and the rest lost
+to setup a hook does (`user.user_option.timezone = nil`) that the strict
+rule cannot tell from a subject. `frees` fired once under
+the first cut (a `let(:store)`, correct) and never under the final rule:
+it is pinned by the testbed, not measured. The pass cost about 1.6 s of a
+discourse `--dead`.
+
+**What keeps the yield low.** Most sites sit in examples that build
+another class (`Guardian.new`), call an untyped receiver whose name the
+app defines (discourse's `Fabricate` returns untyped records, so `.id`,
+`.user`, `.topic` match app methods), or run a hook that calls the app.
+Each is a miss, not an error. Typing `Fabricate(:user)` would lift it, and
+belongs to the resolver.
+
+**Not built.** A `test-only` class's spec file (the constant rows are
+`dead_consts`', another lane's); a Minitest class as a group; following
+an `include_context` into its body rather than refusing; a metadata-
+included shared context and `RSpec.configure`'s hooks and helpers, which
+apply to every group and are not weighed; saying why a site has no unit.
+
+**Reverses if** a hand-read sample of units on another suite finds one
+that tests live code by a path these rules do not weigh — then that path
+joins rule 1, or the rows lose `delete_with`.

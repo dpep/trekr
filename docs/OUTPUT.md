@@ -450,6 +450,45 @@ discourse (DEC-652), a `clear` one was reached only by tests 21 times in 26
 one 7 in 25. A public `test-only` method in a library's `lib/` is usually
 its API, so it is graded `lower` as an entry point (below).
 
+**Its tests, and what goes with it** (DEC-730). A `test-only` method row
+carries `test_sites`: each call, symbol and `super` a test writes (`path`,
+`line`, `col`), with the `example` it is written in (an `it`, `specify`,
+`its`, Active Support's `test`, a `test_` method) and the innermost `group`
+(`describe`, `context`), each as `name`, `line`, `end_line`; absent where
+there is none (a hook, a `let`, a helper). `delete_with` lists the spec code
+to delete with the method — `kind` `example`, `group`, or `file` (the group
+is all the file holds besides `require`s), with `path`, `name`, `line`,
+`end_line` — and `frees` the spec members (`kind` `let`, `subject` or
+`method`; `name`, `path`, `line`) every read of which is in that code, so
+they are unread once it goes. Both are empty where nothing qualifies. The
+reason says how many sites the units hold, and what they are.
+
+A unit is the outermost group, else the example, around a site, when:
+
+- every call in it, and in each `before` or `around` hook, `let!` or
+  `subject!` of the groups around it (what an example asserts may be what
+  one of those did), and in every body those reach through test code — a
+  `let` or `subject` read (`is_expected` reads the `subject`), a helper
+  called — lands outside the checkout, on the method, on its class being
+  built (`Widget.new`), or in a test;
+- no call there trekr cannot settle has a name the checkout's own code
+  (outside its tests) defines, other than the method's: an untyped
+  `record.id` may be any `id`, so it keeps the unit;
+- no name is sent there but a literal one, and none includes a shared
+  context around it (`include_context`, `include_examples`); none is in a
+  shared group's body;
+- for a group, each example in it reaches the method.
+
+An `after` hook is not weighed: it runs once the example has asserted. A
+shared context included by metadata, a helper `RSpec.configure` includes,
+and a global `config.before` are not either. `frees` is one step: a member
+only freed members read is found by running `--dead` again after deleting.
+
+Measured (DEC-730): on discourse and mastodon (`app lib`), 17 of 301
+`test-only` rows carry a unit; 34 of 34 units read by hand held nothing
+else of the checkout's. Strict by design: most sites sit in an example that
+also builds another class or calls an untyped receiver.
+
 ### Entry points
 
 A row reached from outside the repo, where no caller can be seen, keeps its
@@ -577,8 +616,9 @@ of the time on three such batches before each was read. So every row is
 - `confidence`: `clear`, or `lower` with a `caveat`.
 - Per tier: `overridden_by` (`shadowed`), `overrides` (`override`),
   `super_from` (`super-only`), `convention.by` (`convention-only`),
-  `caller` with its own `tier` (`single-caller`), and `cascaded_from`
-  when deleting that caller frees it.
+  `caller` with its own `tier` (`single-caller`), `cascaded_from`
+  when deleting that caller frees it, and `test_sites`, `delete_with` and
+  `frees` (`test-only` methods).
 - `visibility`, and `entry_point` when there is one.
 - The evidence counted: a method row's `confirmed`/`possible` callers,
   `symbol_refs` (its name as a symbol), `super_refs`, `mentions_by_name`

@@ -46,10 +46,25 @@
 --dead $.candidates[].convention.path: string
 --dead $.candidates[].convention.root: string
 --dead $.candidates[].convention.text: string
+--dead $.candidates[].delete_with: array
+--dead $.candidates[].delete_with[]: object
+--dead $.candidates[].delete_with[].end_line: int
+--dead $.candidates[].delete_with[].kind: string {example,file,group}
+--dead $.candidates[].delete_with[].line: int
+--dead $.candidates[].delete_with[].name: string
+--dead $.candidates[].delete_with[].path: string
+--dead $.candidates[].delete_with[].root: string
 --dead $.candidates[].end_line: int
 --dead $.candidates[].entry_point: string {api,job,route}
 --dead $.candidates[].executables: array
 --dead $.candidates[].executables[]: string
+--dead $.candidates[].frees: array
+--dead $.candidates[].frees[]: object
+--dead $.candidates[].frees[].kind: string {let}
+--dead $.candidates[].frees[].line: int
+--dead $.candidates[].frees[].name: string
+--dead $.candidates[].frees[].path: string
+--dead $.candidates[].frees[].root: string
 --dead $.candidates[].gem_dir: string
 --dead $.candidates[].group: null|string
 --dead $.candidates[].groups: array
@@ -80,6 +95,20 @@
 --dead $.candidates[].super_refs: int
 --dead $.candidates[].symbol_refs: int
 --dead $.candidates[].test_refs: int
+--dead $.candidates[].test_sites: array
+--dead $.candidates[].test_sites[]: object
+--dead $.candidates[].test_sites[].col: int
+--dead $.candidates[].test_sites[].example: object
+--dead $.candidates[].test_sites[].example.end_line: int
+--dead $.candidates[].test_sites[].example.line: int
+--dead $.candidates[].test_sites[].example.name: string
+--dead $.candidates[].test_sites[].group: object
+--dead $.candidates[].test_sites[].group.end_line: int
+--dead $.candidates[].test_sites[].group.line: int
+--dead $.candidates[].test_sites[].group.name: string
+--dead $.candidates[].test_sites[].line: int
+--dead $.candidates[].test_sites[].path: string
+--dead $.candidates[].test_sites[].root: string
 --dead $.candidates[].tier: string {convention-only,override,shadowed,single-caller,super-only,test-only,unreferenced}
 --dead $.candidates[].version: string
 --dead $.candidates[].visibility: string

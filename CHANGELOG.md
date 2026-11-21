@@ -25,6 +25,13 @@
   root first. One step only: a method freed through another candidate, or
   two that call only each other, carry none; run `--dead` again after
   deleting.
+- **`--dead` says what spec code goes with a `test-only` method**: the
+  row lists each test site (`test_sites`) with the example and group around
+  it, and `delete_with` names the groups, examples or whole spec files to
+  delete with the method — only where every call in them, and in the hooks
+  that run before them, lands on the method, on its class being built, or
+  outside the checkout. `frees` names the `let`s and `subject`s left unread
+  once they go; one step, so run `--dead` again after deleting.
 
 ### Fixed
 
