@@ -191,6 +191,9 @@
 912-a-name-sent-from-a-literal-list-reaches-another-class 81e37bccf2f325d9
 913-a-concerns-class-methods-module-is-no-candidate 55fc35c42ab304ad
 930-a-test-only-methods-spec-goes-with-it 9d16faca52c733db
+940-a-nested-guard-only-under-validates 01cac13a3fb1240f
+941-class-shift-onto-a-local e3474905c3e462a1
+942-a-call-written-as-an-assignment-target 514877262ed92cfd
 960-a-modules-class-side-lists-no-includers 93381cf13bf4b771
 961-a-module-named-concern-is-no-concern 2d73799d72d6bf4a
 962-self-class-descendants-and-a-split-t-unsafe 693d9d8e6f8e9a5c

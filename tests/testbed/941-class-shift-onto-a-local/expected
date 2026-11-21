@@ -1,0 +1,5 @@
+# `class << io` opens the singleton class of the object `io` holds, as
+# `def io.write` does; it was read as `class << self`, so `write` was filed as
+# `Printer.write`, `unreferenced`, `clear`, and freed `stamp` as a cascade
+# root (DEC-680).
+dead app/printer.rb Printer#decorate=single-caller

@@ -1,0 +1,4 @@
+# A call written as an assignment target, in a multiple assignment
+# (`pr.left, pr.right = 1, 2`) or a `rescue => pr.err`, calls its writer; all
+# three were unreferenced, `clear`.
+dead app/a.rb Pair#lonely==unreferenced

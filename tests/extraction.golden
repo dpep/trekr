@@ -1049,6 +1049,10 @@ ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/lib/widget.rb d7f45
 ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/spec/gadget_spec.rb e4deed07336e2573
 ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/spec/gizmo_spec.rb 83e222ffbcdb3ce1
 ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/spec/widget_spec.rb 5f058f1b6282999e
+ruby tests/testbed/940-a-nested-guard-only-under-validates/app/models/widget.rb 09972af63bf13807
+ruby tests/testbed/940-a-nested-guard-only-under-validates/lib/active_model.rb 66cad22098c2af7c
+ruby tests/testbed/941-class-shift-onto-a-local/app/printer.rb 01e314442ce8b66b
+ruby tests/testbed/942-a-call-written-as-an-assignment-target/app/a.rb f427ea771ada52bd
 ruby tests/testbed/960-a-modules-class-side-lists-no-includers/app/models/gadget.rb b8fc808365310365
 ruby tests/testbed/960-a-modules-class-side-lists-no-includers/app/models/main.rb fa0715b836bec763
 ruby tests/testbed/960-a-modules-class-side-lists-no-includers/app/models/registry.rb 37fe9cf7a260ae6b
