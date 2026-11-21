@@ -3307,8 +3307,7 @@ fn gather_refs(
             tiered.found.push(reference);
         }
     };
-    // A method defined on an object may be called on what holds it (DEC-796).
-    let on = query_refs::defined_on(tree, query, target, |path| match parsed {
+    let asked = query_refs::target(tree, query, target, |path| match parsed {
         Some(parsed) => {
             parsed.read(root, &[path.to_string()]);
             parsed.get(path)
@@ -3321,9 +3320,9 @@ fn gather_refs(
             if listing {
                 tiered.sites.push(crate::store::Ref::call(path, call));
             }
-            let reference = query_refs::tier(tree, facts, call, path, query, target, &on, partial);
+            let reference = query_refs::tier(tree, facts, call, path, &asked, partial);
             // Its includers may answer it: asked below, one file at a time.
-            match query_refs::rescuable(facts, call, target, &reference) {
+            match query_refs::rescuable(facts, call, &asked, &reference) {
                 true => tiered.rescuable.push((call.clone(), reference)),
                 false => keep(&mut tiered, reference),
             }
@@ -3358,10 +3357,10 @@ fn gather_refs(
             sites.append(&mut file.sites);
         }
     }
-    if let (Some(target), false) = (target, rescuable.is_empty()) {
+    if !rescuable.is_empty() {
         let files = crate::query::members::CheckoutFiles::new(store, root, root_str);
         for (call, mut reference) in rescuable {
-            query_refs::rescue(tree, &files, &call, target, &mut reference);
+            query_refs::rescue(tree, &files, &call, &asked, &mut reference);
             keep(&mut merged, reference);
         }
     }
@@ -3648,6 +3647,13 @@ fn gather_constructions(
 )> {
     use crate::resolve::refs;
     let owner = target.unwrap_or_default();
+    // What an `initialize` is defined on is not asked: `--dead` reports none
+    // defined on an object, and the calls here are `super`s and `new`s.
+    let asked = refs::Target {
+        query,
+        owner: target,
+        on: Vec::new(),
+    };
     let mut found = Vec::new();
     let mut counts = refs::Counts::default();
     let keep = |counts: &mut refs::Counts,
@@ -3711,7 +3717,7 @@ fn gather_constructions(
             continue;
         };
         for call in facts.calls.iter().filter(|c| c.name == "initialize") {
-            let reference = refs::tier_call(tree, &facts, call, path, query, target);
+            let reference = refs::tier_call(tree, &facts, call, path, &asked);
             if reference.tier != refs::Tier::Excluded && reference.unplaced().is_none() {
                 keep(&mut counts, &mut found, reference);
                 return Ok((found, counts));
@@ -3722,16 +3728,8 @@ fn gather_constructions(
             if !refs::may_run(&construct, own) {
                 continue;
             }
-            let reference = refs::tier_call_with(
-                tree,
-                &facts,
-                call,
-                path,
-                query,
-                target,
-                Some(&construct),
-                &[],
-            );
+            let reference =
+                refs::tier_call_with(tree, &facts, call, path, &asked, Some(&construct));
             if reference.tier != refs::Tier::Excluded && reference.unplaced().is_none() {
                 keep(&mut counts, &mut found, reference);
                 return Ok((found, counts));
@@ -3756,7 +3754,7 @@ fn gather_constructions(
             continue;
         };
         let call = &facts.calls[caller.at];
-        let reference = refs::tier_call(tree, &facts, call, &caller.path, query, target);
+        let reference = refs::tier_call(tree, &facts, call, &caller.path, &asked);
         keep(&mut counts, &mut found, reference);
     }
     if reaches(&found) {

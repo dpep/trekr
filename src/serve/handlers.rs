@@ -1278,9 +1278,7 @@ fn scan_files(
         query,
         partial,
     } = *scan;
-    let target = query.owner.as_deref();
-    // A method defined on an object may be called on what holds it (DEC-796).
-    let on = query_refs::defined_on(tree, query, target, |path| {
+    let asked = query_refs::target(tree, query, query.owner.as_deref(), |path| {
         let text = match overlay.get(path) {
             Some(text) => text.as_bytes().to_vec(),
             None => crate::scan::read_source(root.join(path)).ok()?,
@@ -1338,9 +1336,10 @@ fn scan_files(
                     .enumerate()
                     .filter(|(_, call)| refs::names_it(call, query))
                     .map(|(at, call)| {
-                        let tiered =
-                            query_refs::tier(tree, &facts, call, path, query, target, &on, partial);
-                        (at, tiered)
+                        (
+                            at,
+                            query_refs::tier(tree, &facts, call, path, &asked, partial),
+                        )
                     })
                     .collect();
                 Some(Scanned {
@@ -1357,13 +1356,11 @@ fn scan_files(
         for file in &mut scanned {
             for (at, reference) in &mut file.tiered {
                 let call = &file.facts.calls[*at];
-                if let Some(target) = target
-                    && query_refs::rescuable(&file.facts, call, Some(target), reference)
-                {
+                if query_refs::rescuable(&file.facts, call, &asked, reference) {
                     let files = includers.get_or_insert_with(|| {
                         CheckoutFiles::with_open(store, root, root_str, overlay.clone())
                     });
-                    query_refs::rescue(tree, files, call, target, reference);
+                    query_refs::rescue(tree, files, call, &asked, reference);
                 }
             }
             file.tiered

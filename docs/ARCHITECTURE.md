@@ -772,6 +772,12 @@ return, the definitions themselves, a lookup, a class side's chain — is
 memoized on the tree, each a function of it once the name is loaded
 (DEC-201–203).
 
+Each site is tiered against one `resolve::refs::Target`: the query as
+written, its owner resolved, and what the method's `def`s their scope does
+not own are defined on (DEC-796). Each front builds it once per question
+with `query::refs::target`, reading files its own way (disk, or the editor's
+buffers), and both tier by `query::refs::tier` (DEC-855).
+
 ### `store/` — SQLite, WAL, no cleverness
 
 Schema in [`src/store/schema.rs`](../src/store/schema.rs); it is the authority

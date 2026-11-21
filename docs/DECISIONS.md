@@ -18191,3 +18191,27 @@ Tests: `usage_tells_modes_and_knobs_apart_and_records_the_version`,
 `a_table_from_before_versions_keeps_its_rows_unversioned`,
 `each_version_counts_apart`,
 `the_summary_counts_each_version_and_the_rows_from_before_them`.
+
+## DEC-855 — Refs tier against one `Target`, built once per question
+
+**Decided.** The method a reference search asks about travels as one
+`resolve::refs::Target` — the query as written, its owner resolved, and
+the `DefinedOn`s of its `def`s their scope does not own (DEC-796) — where it
+was three parameters threaded through the tiering chain and both fronts.
+`query::refs::target` builds it; `--refs`/`--dead` (`gather_refs`) and the
+editor's Find References and incoming calls (`scan_files`) each call it
+once, with their own file reader. `rescuable` and `rescue` read its owner,
+so neither front guards on it.
+
+**Why.** Adding `on` for DEC-796 meant a new parameter in every tier
+function and in both fronts, and `tier_matcher` was missed: it tiered a
+predicate matcher with no `DefinedOn`, so `expect(w).to be_ready` was
+excluded where `w.ready?` was possible (fixed first, testbed 855). The next
+"the asked method also carries X" is a field.
+
+**Not changed.** `--dead`'s path for an `initialize` (`gather_constructions`)
+builds a `Target` with no `DefinedOn`, as it tiered before: `--dead` reports
+no `initialize` defined on an object, and its calls there are `super`s and
+`new`s, which never read it. Output is byte-identical on 44 `--refs`
+queries over discourse and rails and on three `--dead` scopes.
+

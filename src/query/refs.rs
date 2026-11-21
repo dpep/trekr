@@ -6,7 +6,7 @@
 use super::members::{CheckoutFiles, includer_reference};
 use crate::core::{Call, Facts};
 use crate::resolve::DefinedOn;
-use crate::resolve::refs::{self, Query, Reference, Tier};
+use crate::resolve::refs::{self, Query, Reference, Target, Tier};
 use crate::store::{Ref, Store};
 use crate::tree::Tree;
 use std::collections::HashMap;
@@ -115,10 +115,25 @@ pub(crate) fn placed_name(tree: &Tree, written: &str, nesting: &[String], path: 
         .unwrap_or_else(|| crate::tree::whole_name(bare))
 }
 
-/// What the queried method's `def`s its scope does not own are defined on
-/// (DEC-562): `facts` reads a checkout file's facts. Empty for a method
-/// every `def` of which is its owner's own.
-pub(crate) fn defined_on(
+/// The method `query` asks about, its owner resolved to `owner`, with what
+/// its `def`s their scope does not own are defined on (DEC-562): `facts`
+/// reads a checkout file's facts. A method defined on an object may be
+/// called on what holds it (DEC-796).
+pub(crate) fn target<'a>(
+    tree: &Tree,
+    query: &'a Query,
+    owner: Option<&'a str>,
+    facts: impl Fn(&str) -> Option<std::sync::Arc<Facts>>,
+) -> Target<'a> {
+    Target {
+        query,
+        owner,
+        on: defined_on(tree, query, owner, facts),
+    }
+}
+
+/// Empty for a method every `def` of which is its owner's own.
+fn defined_on(
     tree: &Tree,
     query: &Query,
     target: Option<&str>,
@@ -143,22 +158,16 @@ pub(crate) fn defined_on(
 }
 
 /// One call site, tiered. Reads only the tree and the file's own facts, so
-/// it runs on any worker. `on` is what the queried method is defined on
-/// when its scope does not own it ([`defined_on`]): a call ruled out as
-/// "no such method" on a receiver that may be that object may run it, as
-/// `--dead` counts it (DEC-796).
-#[allow(clippy::too_many_arguments)]
+/// it runs on any worker.
 pub(crate) fn tier(
     tree: &Tree,
     facts: &Facts,
     call: &Call,
     path: &str,
-    query: &Query,
-    target: Option<&str>,
-    on: &[DefinedOn],
+    asked: &Target,
     partial: bool,
 ) -> Reference {
-    let mut reference = refs::tier_call_with(tree, facts, call, path, query, target, None, on);
+    let mut reference = refs::tier_call(tree, facts, call, path, asked);
     if partial {
         reference.unrule();
     }
@@ -167,14 +176,9 @@ pub(crate) fn tier(
 
 /// Whether [`rescue`] may change this site's answer: a call in a shared
 /// group's body, ruled out for a query that names its owner.
-pub(crate) fn rescuable(
-    facts: &Facts,
-    call: &Call,
-    target: Option<&str>,
-    reference: &Reference,
-) -> bool {
+pub(crate) fn rescuable(facts: &Facts, call: &Call, asked: &Target, reference: &Reference) -> bool {
     reference.tier == Tier::Excluded
-        && target.is_some()
+        && asked.owner.is_some()
         && crate::resolve::members::in_shared_body(facts, call)
 }
 
@@ -185,9 +189,10 @@ pub(crate) fn rescue(
     tree: &Tree,
     files: &CheckoutFiles<'_>,
     call: &Call,
-    target: &str,
+    asked: &Target,
     reference: &mut Reference,
 ) {
+    let Some(target) = asked.owner else { return };
     if let Some(rescued) = includer_reference(tree, files, call, target, reference) {
         *reference = rescued;
     }

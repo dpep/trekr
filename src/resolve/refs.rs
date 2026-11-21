@@ -57,6 +57,17 @@ impl Query {
     }
 }
 
+/// The method a reference search asks about (DEC-855): the query as
+/// written, its owner resolved — `None` for a bare name, which can confirm
+/// nothing because there is nothing to confirm against — and what the
+/// `def`s their scope does not own are defined on (DEC-796), which a front
+/// builds once with `query::refs::target`.
+pub(crate) struct Target<'a> {
+    pub(crate) query: &'a Query,
+    pub(crate) owner: Option<&'a str>,
+    pub(crate) on: Vec<DefinedOn>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Tier {
@@ -312,40 +323,32 @@ fn matcher_predicate(call: &Call, query: &Query) -> Option<Call> {
     })
 }
 
-/// One call site, tiered against the query.
-///
-/// `target` is the queried method's owner, already resolved — `None` for a bare
-/// name, which can confirm nothing because there is nothing to confirm against.
+/// One call site, tiered against the method asked about.
 pub(crate) fn tier_call(
     tree: &Tree,
     facts: &Facts,
     call: &Call,
     path: &str,
-    query: &Query,
-    target: Option<&str>,
+    asked: &Target,
 ) -> Reference {
-    tier_call_with(tree, facts, call, path, query, target, None, &[])
+    tier_call_with(tree, facts, call, path, asked, None)
 }
 
 /// `tier_call`, given what an `X.new` site constructs when the caller has
-/// already worked it out (`--dead` asks about every `initialize`), and
-/// what the queried method's `def`s their scope does not own are defined
-/// on (DEC-796).
-#[allow(clippy::too_many_arguments)]
+/// already worked it out (`--dead` asks about every `initialize`).
 pub(crate) fn tier_call_with(
     tree: &Tree,
     facts: &Facts,
     call: &Call,
     path: &str,
-    query: &Query,
-    target: Option<&str>,
+    asked: &Target,
     made: Option<&Construct>,
-    on: &[DefinedOn],
 ) -> Reference {
+    let (query, target) = (asked.query, asked.owner);
     let mut reference = match made {
-        _ if call.name == query.name => tier(tree, facts, call, path, query, target, on),
+        _ if call.name == query.name => tier(tree, facts, call, path, asked),
         _ if let Some(predicate) = matcher_predicate(call, query) => {
-            tier_matcher(tree, facts, call, &predicate, path, query, target, on)
+            tier_matcher(tree, facts, call, &predicate, path, asked)
         }
         Some(made) => tier_construct(tree, made, call, path, query, target),
         None => {
@@ -367,16 +370,13 @@ pub(crate) fn tier_call_with(
 /// subject — unless the group, RSpec or a gem defines the matcher's name,
 /// when that method runs instead and RSpec's `method_missing` never does
 /// (DEC-090, DEC-659).
-#[allow(clippy::too_many_arguments)]
 fn tier_matcher(
     tree: &Tree,
     facts: &Facts,
     matcher: &Call,
     predicate: &Call,
     path: &str,
-    query: &Query,
-    target: Option<&str>,
-    on: &[DefinedOn],
+    asked: &Target,
 ) -> Reference {
     let receiver = super::receiver_of(tree, facts, matcher, path);
     let defined = match super::example_member(tree, facts, matcher, path) {
@@ -402,7 +402,7 @@ fn tier_matcher(
                 from: None,
                 called_as: None,
             },
-            None => tier(tree, facts, predicate, path, query, target, on),
+            None => tier(tree, facts, predicate, path, asked),
         };
     };
     Reference {
@@ -440,15 +440,8 @@ fn subject_has_root(
     Some((receiver.fqn, found.owner))
 }
 
-fn tier(
-    tree: &Tree,
-    facts: &Facts,
-    call: &Call,
-    path: &str,
-    query: &Query,
-    target: Option<&str>,
-    on: &[DefinedOn],
-) -> Reference {
+fn tier(tree: &Tree, facts: &Facts, call: &Call, path: &str, asked: &Target) -> Reference {
+    let (query, target, on) = (asked.query, asked.owner, &asked.on);
     let shape = call.recv.as_str();
     let here = |tier, receiver_type, owner, why, proximity, ruling| Reference {
         path: path.to_string(),
