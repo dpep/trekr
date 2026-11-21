@@ -4,6 +4,19 @@
 
 ### Added
 
+- **`trekr --dead Gemfile` grades the gems a Gemfile or gemspec
+  declares**, one row per `gem` line (`kind: gem`): `unreferenced` when
+  nothing in the checkout names a constant the gem owns, requires one of
+  its files or calls a method of a module of its own; `test-only` when only
+  tests use a default-group gem; `convention-only` when a config (an
+  adapter in `database.yml`, a `.rubocop.yml` plugin), a command line
+  (Procfile, CI, lefthook), a symbol naming a plugin (`provider :saml`), or
+  another gem's `require` loads it by name. A Railtie, a method defined on
+  a class it does not own, a command it installs, a plugin's name or the
+  development group grade it `lower`. A gem only the lockfile names is
+  never a row. `--explain` lists each gem found in use and the first
+  evidence; `--json` carries it as `referenced`.
+
 - **`--dead` names the candidate whose deletion frees a method**: a
   `single-caller` row whose one call is written in a `clear`
   `unreferenced` or `test-only` method, and which is `clear` itself,

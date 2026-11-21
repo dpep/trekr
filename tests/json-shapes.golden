@@ -23,6 +23,7 @@
 --dead $: object
 --dead $.candidates: array
 --dead $.candidates[]: object
+--dead $.candidates[].bundler_require: string
 --dead $.candidates[].caller: object
 --dead $.candidates[].caller.col: int
 --dead $.candidates[].caller.line: int
@@ -44,14 +45,21 @@
 --dead $.candidates[].convention.line: int
 --dead $.candidates[].convention.path: string
 --dead $.candidates[].convention.root: string
+--dead $.candidates[].convention.text: string
 --dead $.candidates[].end_line: int
 --dead $.candidates[].entry_point: string {api,job,route}
+--dead $.candidates[].executables: array
+--dead $.candidates[].executables[]: string
+--dead $.candidates[].gem_dir: string
 --dead $.candidates[].group: null|string
+--dead $.candidates[].groups: array
+--dead $.candidates[].groups[]: string
 --dead $.candidates[].helpers_read: int
---dead $.candidates[].kind: string {class,constant,let,method,module,shared_group,subject}
+--dead $.candidates[].kind: string {class,constant,gem,let,method,module,shared_group,subject}
 --dead $.candidates[].line: int
 --dead $.candidates[].mentions_by_name: int
 --dead $.candidates[].name: string
+--dead $.candidates[].needed_by: array
 --dead $.candidates[].overridden_by: array
 --dead $.candidates[].overridden_by[]: string
 --dead $.candidates[].overrides: array
@@ -73,6 +81,7 @@
 --dead $.candidates[].symbol_refs: int
 --dead $.candidates[].test_refs: int
 --dead $.candidates[].tier: string {convention-only,override,shadowed,single-caller,super-only,test-only,unreferenced}
+--dead $.candidates[].version: string
 --dead $.candidates[].visibility: string
 --dead $.index: object
 --dead $.index.cause: string
@@ -81,12 +90,21 @@
 --dead $.index.refreshed_files: array
 --dead $.index.refreshed_files[]: string
 --dead $.index.stale: bool
+--dead $.referenced: array
+--dead $.referenced[]: object
+--dead $.referenced[].by: string
+--dead $.referenced[].line: int
+--dead $.referenced[].name: string
+--dead $.referenced[].path: string
+--dead $.referenced[].root: string
+--dead $.referenced[].what: string
 --dead $.scope: int
 --dead $.summary: object
 --dead $.summary.candidates: int
 --dead $.summary.confidence: object
 --dead $.summary.confidence.clear: int
 --dead $.summary.confidence.lower: int
+--dead $.summary.declared: int
 --dead $.summary.kinds: object
 --dead $.summary.kinds.class: int
 --dead $.summary.kinds.constant: int
@@ -95,6 +113,7 @@
 --dead $.summary.kinds.module: int
 --dead $.summary.kinds.shared_group: int
 --dead $.summary.kinds.subject: int
+--dead $.summary.referenced: int
 --dead $.summary.tiers: object
 --dead $.summary.tiers.convention-only: int
 --dead $.summary.tiers.override: int
@@ -103,6 +122,7 @@
 --dead $.summary.tiers.super-only: int
 --dead $.summary.tiers.test-only: int
 --dead $.summary.tiers.unreferenced: int
+--dead $.summary.transitive: int
 --def $: object
 --def $.agreement: string
 --def $.candidates: array
@@ -181,6 +201,7 @@
 --index $.gems.missing: array
 --index $.gems.missing[]: string
 --index $.gems.picked: array
+--index $.gems.picked[]: string
 --index $.gems.resolved_from: string
 --index $.gems.ruby: string
 --index $.gems.stdlib: object

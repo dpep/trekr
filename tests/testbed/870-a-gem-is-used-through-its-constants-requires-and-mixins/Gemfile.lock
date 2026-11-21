@@ -1,0 +1,25 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    gizmo (1.0)
+    idle (1.0)
+    pager (1.0)
+    suite (1.0)
+      suite_core
+    suite_core (1.0)
+    testkit (1.0)
+    widget_kit (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  gizmo
+  idle
+  pager
+  suite
+  testkit
+  widget_kit
+
+BUNDLED WITH
+   2.5.0

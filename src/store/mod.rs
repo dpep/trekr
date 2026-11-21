@@ -162,7 +162,6 @@ pub(crate) struct Roots {
 
 impl Roots {
     /// Just these roots, hiding nothing.
-    #[cfg(test)]
     pub(crate) fn of(list: Vec<String>) -> Roots {
         Roots {
             list,
@@ -2017,6 +2016,69 @@ impl Store {
               ORDER BY g.gem_root",
         )?;
         let rows = stmt.query_map(params![root], |r| r.get(0))?;
+        rows.collect()
+    }
+
+    /// Each gem this checkout's bundle resolves, by name, with its root:
+    /// what `--dead Gemfile` weighs (DEC-670). The stdlib has no name.
+    pub(crate) fn gem_names(&self, root: &str) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT g.name, g.gem_root FROM gem_use g
+               JOIN checkout c ON c.id = g.checkout_id
+              WHERE c.root = ?1 AND g.name IS NOT NULL
+              ORDER BY g.name, g.gem_root",
+        )?;
+        let rows = stmt.query_map(params![root], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// Each file of this checkout's stdlib that a default gem owns, as an
+    /// absolute path, with the gem's name: json's `json/common.rb`.
+    pub(crate) fn default_gem_files(&self, root: &str) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT d.name, s.root || '/' || d.path
+               FROM checkout c
+               JOIN gem_use u ON u.checkout_id = c.id
+               JOIN checkout s ON s.root = u.gem_root AND s.kind = 'stdlib'
+               JOIN default_gem d ON d.checkout_id = s.id
+              WHERE c.root = ?1
+              ORDER BY d.name, d.path",
+        )?;
+        let rows = stmt.query_map(params![root], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// Every constant reference in one checkout, unresolved, by place.
+    pub(crate) fn all_const_refs(&self, root: &str) -> Result<Vec<ConstRefRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.path, r.name, r.nesting, r.line
+               FROM file f
+               JOIN const_ref r ON r.blob_id = f.blob_id
+              WHERE f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)
+              ORDER BY f.path, r.line",
+        )?;
+        let rows = stmt.query_map(params![root], |r| {
+            Ok(ConstRefRow {
+                path: r.get(0)?,
+                name: r.get(1)?,
+                nesting: split_nesting(&r.get::<_, String>(2)?),
+                line: r.get(3)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Every name one checkout calls or writes as a symbol, with each file
+    /// that does, by place, and whether it writes it as a symbol there.
+    pub(crate) fn called_names(&self, root: &str) -> Result<Vec<(String, String, bool)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.name, f.path, c.symbols > 0
+               FROM file f
+               JOIN call_name c ON c.blob_id = f.blob_id
+              WHERE f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)
+              ORDER BY f.path",
+        )?;
+        let rows = stmt.query_map(params![root], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         rows.collect()
     }
 

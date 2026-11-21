@@ -41,6 +41,7 @@ trekr --refs 'Widget#save'               # call sites that can reach this method
 trekr --refs 'Widget.build'              # a class method
 trekr --refs spec/widget_spec.rb:12      # what is at a position: a method, a let, a variable
 trekr --dead app/models spec/models      # deletion candidates, graded
+trekr --dead Gemfile --explain           # gems nothing is seen to use, graded; --explain says why the rest are used
 trekr --ancestors Post                   # linearized ancestor chain
 trekr --symbols app/models/post.rb       # outline a file before reading it
 trekr --index                            # index up front, or after edits

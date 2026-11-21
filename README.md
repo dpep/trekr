@@ -43,6 +43,7 @@ trekr Widget#save                # a card: where it is defined, how many sites r
 trekr --ancestors Widget         # the linearized ancestor chain
 trekr --dead app/models          # methods and classes nothing appears to use, graded
 trekr --dead spec                # and the lets, subjects and shared groups nothing reads
+trekr --dead Gemfile --explain   # the gems nothing is seen to use, graded, and why the rest are
 trekr --gc --dry-run             # what old gem versions and deleted worktrees would free
 ```
 

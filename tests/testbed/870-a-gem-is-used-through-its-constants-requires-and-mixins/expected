@@ -1,0 +1,8 @@
+# `--dead Gemfile` grades the gems a Gemfile declares (DEC-670). A gem is
+# used through a constant it owns, a `require` of one of its files, a method
+# of a module of its own, or a gem it alone brings that the app uses (suite,
+# which has no code, brings suite_core). Only tests using a default-group gem
+# is `test-only`; a gem the lockfile alone names is not the app's to remove,
+# and is never a row. With none of that, and nothing that may still reach
+# it, a gem is `unreferenced` and clear.
+dead Gemfile widget_kit=none gizmo=none pager=none suite=none suite_core=none testkit=test-only idle=unreferenced~

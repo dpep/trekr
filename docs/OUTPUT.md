@@ -591,6 +591,66 @@ of the time on three such batches before each was read. So every row is
 `summary` counts the rows per tier (`tiers`: `unreferenced`, `test-only`,
 `single-caller`, …), per confidence and per kind (`kinds`).
 
+### Gems: `--dead Gemfile`
+
+Handed a `Gemfile`, `gems.rb` or `*.gemspec` (alone: code and gems are
+graded apart), `--dead` grades the gems it declares instead (DEC-670),
+one row per `gem` line (`kind: gem`, `path` and `line` the declaration).
+A Gemfile's `gemspec` adds the gemspecs' dependencies. A gem only the
+lockfile names is not the app's to remove: it is never a row, and
+`summary.transitive` counts them.
+
+A gem is used — not listed, and in `referenced` with the first evidence
+(`by`: `constant`, `require`, `method`, `declaration`, `dependency`;
+`what`, `path`, `line`) — when the checkout, its extensionless scripts
+included, names a constant the gem owns, requires one of its files, calls
+a method a module of its own (or a class it reopens) defines that no more
+than three gems and neither the checkout nor Ruby define, reopens a class
+it owns, or uses a gem only it brings. A constant several gems declare is
+the one whose `lib/` has its file, else the one named for it, else the one
+the others depend on; a module none of those picks is no gem's. A
+`require: false` gem's methods count only once a require of it is seen.
+
+The rows, from least evidence to most:
+
+- `unreferenced` — none of that, and nothing below names it.
+- `test-only` — only tests use it, but it is in the default group: move it
+  to the test group.
+- `convention-only` — no Ruby uses it, but something loads it by name
+  (`convention.by`, with `path`, `line` and `text`): `gem`, another gem
+  of the bundle requires it without depending on it (lograge's
+  `require "logstash-event"`); `symbol`, a symbol naming it to the gem it
+  plugs into (`provider :saml`); `config`, a config, CI file, Procfile or
+  a Ruby string in `config/` names it, an adapter `database.yml` names
+  (`postgresql` for pg), or a file in `config/` is named for it
+  (`config/puma.rb`); `command`, a line runs one of its commands.
+
+Each is `clear`, or `lower` with a `caveat` naming what may use it with
+nothing naming it, and what would settle it: not installed (its files
+were not read), or a path or git gem; declared for some platforms only;
+a Railtie or Engine, which runs at boot through `Bundler.require`; a
+method it defines on a class it does not own, a module it mixes into one,
+or an `on_load` hook; a command it installs that nothing read runs; a
+compiled extension; rake tasks or generators it ships; a name that makes
+it a plugin of a bundled gem (`rubocop-rails`); the development group; a
+gem it brings that the app uses, which others bring too.
+
+Per row: `version` and `gem_dir` (`null` when not installed), `groups`,
+`bundler_require` (`name`, `paths`, or `off` for `require: false`),
+`needed_by` (gems that depend on it, so removing the line keeps it in the
+bundle), `executables`, `test_refs`. `summary` counts `declared`,
+`referenced`, `transitive`, the rows per tier and per confidence; text
+lists `referenced` with `--explain`.
+
+Hand-checked on ten checkouts (mastodon, discourse, rails, sidekiq,
+rubocop, faraday, graphql, flipper, webmock, widget_shop; 508 declared
+gems), every `clear` `unreferenced` row — 10 — was used by none of the
+checkout's code: octokit (its last use removed in 2026, the line left),
+aws-sdk-sns (Rails removed the SES ingress in 2019), flamegraph, and
+seven another gem keeps in the bundle (`needed_by`). The rules were fitted
+on these checkouts, so read it as in-sample. A `lower` row is usually a
+gem in use: of 12 sampled, 8 were, 3 were not, and 1 is unsettled.
+
 ## Classes split by their superclass
 
 A name declared with two different superclasses is two classes (DEC-072) —

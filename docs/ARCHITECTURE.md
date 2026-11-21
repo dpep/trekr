@@ -898,7 +898,7 @@ holding the rest of the `--json` answer and `rows`, the count (DEC-290).
 | `--drop [PATH]` | forget a checkout's file map, and its overlay copy in `trekr.overlays/` |
 | `--gc [--dry-run] [--older-than AGE] [--retention AGE] [--vacuum]` | remove checkouts nothing can reach again, the blobs only they mapped, the versions no checkout has mapped for the retention (DEC-651), tree snapshots no checkout's index names, and every overlay copy (`overlays` in its `--json`); `reclaimed_bytes` is what left the disk. The background cleanup (DEC-650) does the safe part of this on its own |
 | `--usage [--days N]` | which commands and editor features get used, by whom, how often empty, how slow (see below) |
-| `--dead PATH…` | methods, then example groups' members and shared groups, then classes, modules and constants, in scope that nothing appears to use, tiered and graded (see below) |
+| `--dead PATH…` | (or `--dead Gemfile`: the gems it declares) methods, then example groups' members and shared groups, then classes, modules and constants, in scope that nothing appears to use, tiered and graded (see below) |
 
 **`--dead` weighs a definition against the whole checkout** (DEC-038,
 DEC-074). Methods (`cli::dead::dead_in`) are tiered by their receiver-narrowed
@@ -922,6 +922,15 @@ in at runtime may supply it (DEC-661). Last, `entry_points` (DEC-657) marks
 a row reached from outside the repo — a library's public API, a routed
 action or controller, a job class — and grades it `lower` whatever its
 tier, naming the evidence that would settle it.
+
+**`--dead Gemfile` weighs the bundle instead** (`cli::dead_gems`,
+DEC-670): each gem a Gemfile or gemspec declares (`gems::gemfile` reads
+the lines, their groups and `require:`, and the lockfile's dependency
+graph) against the checkout's constant references resolved to the gem
+that owns them, its literal requires, and calls of methods a gem's own
+modules define, then against the config, CI files, symbols and other
+gems' requires that load a gem by name. Read at query time from the
+stored facts and the gems' own files, so it changes no extraction.
 
 **An example group's members** (`let`, `subject`, a group's `def`) are file
 facts the store never sees (DEC-084), so they are weighed by

@@ -80,7 +80,13 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
         if name == "expected" || name == "README.md" || name == "ruby" || name == "rbs" {
             continue;
         }
-        let target = dir.join(&name);
+        // A case's `gitignore` is the checkout's `.gitignore`: as a dotfile
+        // it would hide the case's own files (a fake `vendor/bundle`) from
+        // this repository.
+        let target = match name.to_str() {
+            Some("gitignore") => dir.join(".gitignore"),
+            _ => dir.join(&name),
+        };
         if entry.file_type().unwrap().is_dir() {
             copy_tree(&entry.path(), &target);
         } else {
@@ -1224,7 +1230,10 @@ fn check_case(
     // (expectation, position, what the editor owes) for each placed --def.
     type Owed = (Vec<String>, Vec<String>);
     let mut placed_defs: Vec<(String, String, Owed)> = Vec::new();
-    if expectations.lines().any(|line| line.starts_with("dead ")) {
+    // `dead Gemfile` grades the bundle (DEC-670): the code snapshot is the
+    // other cases', and would grade the fake gems under `vendor/`.
+    let code = |line: &str| line.starts_with("dead ") && !line.starts_with("dead Gemfile");
+    if expectations.lines().any(code) {
         let snapshot = dead_snapshot(&db, &dir);
         dead_rows_are_queryable(&db, &dir, label, &snapshot, failures);
         *dead = Some(snapshot);

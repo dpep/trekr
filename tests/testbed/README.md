@@ -21,6 +21,13 @@ of the case's own, and the checkout names it in `.ruby-version` (DEC-180).
 The stdlib is not a second checkout of the case's making — every app runs on
 one — so it belongs here, where a gem does not.
 
+A case that needs installed gems stages them as bundler would vendor them:
+a `Gemfile`, a `Gemfile.lock`, the gems under
+`vendor/bundle/ruby/9.8.0/gems/<name>-<version>/` (and a `specifications/`
+beside it for a gemspec), and a `gitignore` reading `/vendor/bundle/`,
+staged as the checkout's `.gitignore` so the app does not index the gems
+as its own (cases 870, 871).
+
 ## The `expected` format
 
 ```text
@@ -67,7 +74,9 @@ its whole name (`Admin::Widget=unreferenced`), or an example group's `let`, `sub
 also asserts its caveat contains `word`, `tier!~word` that it does not, and `tier~` that it has none;
 `tier^Owner#name` asserts its `cascaded_from` names that candidate, and `tier^` that it has none. `ancestors NAME A,B,C`
 asserts the chain starts with those names, and `unresolved=X,Y` (empty for
-none) asserts the ancestors it could not resolve. A case with a `dead` line also has its whole `--dead . --json` pinned,
+none) asserts the ancestors it could not resolve. `dead Gemfile name=tier`
+asserts a gem's row of `--dead Gemfile` (DEC-670), by the gem's name, and
+pins no snapshot. A case with any other `dead` line also has its whole `--dead . --json` pinned,
 byte for byte, in `tests/dead.golden`: an output change names the cases it
 moved, and `UPDATE_GOLDEN=1` accepts it. `symbols FILE` asserts the outline,
 in source order, comma-separated, and `private=a,b` which of its rows are

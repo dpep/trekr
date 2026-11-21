@@ -11,6 +11,7 @@ mod config;
 mod conventions;
 mod dead;
 mod dead_consts;
+mod dead_gems;
 mod entry_points;
 mod fresh;
 mod generated;
@@ -116,7 +117,13 @@ struct Cli {
     /// public API, a routed action, a job). A method whose only caller is
     /// itself a candidate is `single-caller`, and its reason says so; when
     /// that caller is a clear `unreferenced` or `test-only` method,
-    /// `cascaded_from` names it, since deleting it frees this one.
+    /// `cascaded_from` names it, since deleting it frees this one. Handed a
+    /// Gemfile, `gems.rb` or a gemspec instead, it grades the gems declared
+    /// there (`kind: gem`): `unreferenced` when nothing names a constant,
+    /// file or mixin method of theirs, `test-only`, or `convention-only`
+    /// when a config, a command line, a symbol or another gem loads one by
+    /// name; `lower` when a Railtie, a patch, a command, a plugin's name or
+    /// its group may use it unseen. `--explain` lists the gems found in use.
     #[arg(long, value_name = "PATH", num_args = 1..)]
     dead: Vec<PathBuf>,
 
@@ -352,8 +359,10 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
                 .is_some_and(|i| position::Spec::parse(i).is_some());
     // `--context` also says which checkout a name is asked about in.
     let named = cli.refs.is_some() || cli.ancestors.is_some() || cli.input.is_some();
+    // `--dead Gemfile` grades the bundle's gems (DEC-670).
+    let gems_scope = cli.dead.iter().any(|path| dead_gems::is_manifest(path));
     for (on, flag, applies) in [
-        (cli.explain, "--explain", position),
+        (cli.explain, "--explain", position || gems_scope),
         (
             cli.context.is_some(),
             "--context",
@@ -409,6 +418,11 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
             .and_then(|spec| spec.map_err(|why| Failure::Usage.error(why)))
             .and_then(|spec| cmd_def(out, written, &spec, cli.explain, cli.context.as_deref()));
         (Some("def"), def)
+    } else if gems_scope {
+        (
+            Some("dead"),
+            dead_gems::cmd_dead_gems(out, &cli.dead, cli.explain),
+        )
     } else if !cli.dead.is_empty() {
         (Some("dead"), dead::cmd_dead(out, &cli.dead))
     } else if let Some(name) = &cli.ancestors {

@@ -1,0 +1,35 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    boot_hooks (1.0)
+      railties
+    console_tool (1.0)
+    core_ext_x (1.0)
+    event_x (1.0)
+    formatter_x (1.0)
+    pg (1.0)
+    quiet (1.0)
+    railties (1.0)
+    rubocop (1.0)
+    rubocop-widgets (1.0)
+      rubocop
+    runner (1.0)
+    tooly (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  boot_hooks
+  console_tool
+  core_ext_x
+  event_x
+  formatter_x
+  pg
+  quiet
+  rubocop-widgets
+  runner
+  tooly
+
+BUNDLED WITH
+   2.5.0

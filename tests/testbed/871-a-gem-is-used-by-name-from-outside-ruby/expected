@@ -1,0 +1,10 @@
+# Most gems are used with no Ruby reference, so `--dead Gemfile` (DEC-670)
+# says what else may reach one. Named outside Ruby, a gem is
+# `convention-only`: an adapter database.yml names (pg), a command a
+# Procfile runs (runner), a plugin .rubocop.yml lists, an optional
+# dependency another gem requires without declaring it (event_x). With no
+# mention it stays `unreferenced`, graded lower by what acts with nothing
+# naming it: a Railtie, a command it installs, the development group, a
+# method it defines on a class it does not own. Nothing at all is clear.
+dead Gemfile pg=convention-only~ runner=convention-only~ rubocop-widgets=convention-only~ event_x=convention-only~ formatter_x=none
+dead Gemfile boot_hooks=unreferenced~Railtie tooly=unreferenced~command console_tool=unreferenced~development core_ext_x=unreferenced~own quiet=unreferenced~

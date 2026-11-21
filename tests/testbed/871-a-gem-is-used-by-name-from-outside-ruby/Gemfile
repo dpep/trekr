@@ -1,0 +1,15 @@
+source "https://rubygems.org"
+
+gem "boot_hooks"
+gem "pg"
+gem "runner"
+gem "tooly"
+gem "rubocop-widgets", require: false
+gem "formatter_x"
+gem "event_x"
+gem "core_ext_x"
+gem "quiet"
+
+group :development do
+  gem "console_tool"
+end

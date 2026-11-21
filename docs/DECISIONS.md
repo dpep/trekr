@@ -17001,3 +17001,82 @@ No store change.
 **Not an instance method's.** There `descendants` is the instance's, and
 `T.unsafe(self)` an instance: neither lists the class's subclasses.
 
+
+## DEC-670 — `--dead Gemfile`: a bundle's gems graded, never called unused
+
+**Surface.** A kind under `--dead`, not a new mode: handing `--dead` a
+`Gemfile`, `gems.rb` or `*.gemspec` grades the gems it declares, one row
+per `gem` line (`kind: gem`, located at the line to delete), in `--dead`'s
+vocabulary — `tier`, `confidence`, `caveat`, `reason`, `convention`,
+`summary`. A separate `--dead-gems` flag would duplicate that vocabulary
+under a second name; the manifest *is* the scope, as a directory is for
+code. Code and gems are graded apart (a mix is a usage error): one answer
+mixing method rows and gem rows would make `summary` count two units.
+`--explain` is accepted here and lists the gems found in use, which
+`--json` always carries as `referenced` — the evidence behind every gem
+that is not a row, so the "not unused" half is auditable too.
+
+**Evidence of use**, read at query time from facts already stored (no
+extraction change, no schema bump):
+
+- a constant the gem owns, resolved by Ruby's lookup from the app's
+  references and its extensionless scripts. Ownership: a constant only one
+  gem declares is its; one several declare is the gem whose `lib/` has its
+  file (`lib/rack.rb`), else the gem named for it (`RuboCop`), else the one
+  the others depend on in the lockfile; a module none of those picks is no
+  one's (a `Rack` reference credited puma, rack-attack and ruby-prof before
+  this). Core's and the stdlib's constants are no gem's, except a default
+  gem's files when the manifest declares that gem.
+- a literal `require` whose path one of the gem's `lib/` files answers to.
+- a method a module of the gem (or a class it reopens) defines, called in
+  the checkout, when no more than three gems, and neither the app nor Ruby,
+  define the name. A gem's own class's methods are reached through its
+  constant; requiring a unique name missed sidekiq-bulk's `push_bulk`,
+  which `Sidekiq::Client` defines too. A `require: false` gem's methods
+  count only once a require is seen (brakeman's `alert`, i18n-tasks'
+  `health` credited dev tools no code loads).
+- a gem only it brings that the app uses (`rails`, which has no code).
+
+**Used with no reference** → `convention-only` with `convention.by`:
+another bundled gem requires it without depending on it in the lockfile
+(lograge's `logstash-event`, rubocop's `ostruct` for YARD — a default gem
+counts); a symbol equal to its plugin short name, written anywhere in the
+checkout (`:facebook` for omniauth-facebook; a short name another gem's
+name holds, `rails`, `rspec`, `saml`, names none); a config file's line, a
+Ruby string or symbol in `config/`, a `config/` file named for it, a
+database adapter name. Code in `config/` is not read as a mention:
+`logger.debug?` named the debug gem.
+
+**Caveats** (each grades `lower`): not installed; a path or git gem;
+platforms; a Railtie (`tree.inherits(…, "Rails::Railtie")`); a method on,
+or mixin into, a class it does not own, or an `on_load` hook; an
+executable no file read runs; a compiled extension; rake tasks;
+generators; a plugin's name; the development group; a used gem it shares
+with other declared gems. Transitive-only gems are excluded and counted.
+
+**Measured** on mastodon, discourse, rails, sidekiq, rubocop, faraday,
+graphql, flipper, webmock and widget_shop (508 declared gems, 129 rows):
+every `clear` `unreferenced` row, 10, was used by none of the checkout's
+code. Three are lines left behind — octokit (discourse removed its last
+use in 36a8a51ef00, 2026-06), aws-sdk-sns (Rails removed the SES ingress
+in f480cfabcd, 2019), flamegraph (flipper, never used by a script since
+added) — and seven are kept in the bundle by another gem (`needed_by`), so
+removing the line is harmless: mutex_m, playwright-ruby-client, sawyer,
+and pdf-reader's ruby-rc4, hashery, ttfunk, afm. Found and fixed on the
+way: ostruct (`clear` until a default gem's soft require counted),
+logstash-event (`clear` until another gem's require did). In-sample: the
+rules were fitted on these checkouts. Of 12 `lower` rows sampled, 8 were
+in use (haml-rails, omniauth-saml, hiredis-client by `driver: :hiredis`,
+better_errors, brakeman, minitest-documentation, …), 3 not (rack-protection,
+unf, graphql's mutex_m), 1 unsettled (discourse's redis-namespace). The
+mastodon corpus is pruned to app/config/db/lib/spec — no CI, no
+`.rubocop.yml` — so its rubocop plugins and simplecov-lcov read
+`unreferenced`, `lower`.
+
+**Not done**: a gem whose driver or adapter name is not its own
+(`:hiredis` for hiredis-client) stays `unreferenced`, `lower` only by its
+caveats; a gem run by a CI file outside the read list; Bundler groups
+other than development lower nothing; `eval_gemfile` is not followed.
+
+**Reverses if** a held-out app shows `clear` rows in use — the likeliest
+way in is a name loaded from a config trekr does not read.
