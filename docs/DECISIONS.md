@@ -17314,6 +17314,18 @@ cascaded, claims the wrong deletion. `header`, before `run` starts, is
 still `build`'s. Testbed 816. A def's end column, an extraction change,
 would settle the tie.
 
+**Every def is a contender, not only the candidates.** The innermost def
+is sought among every literal `def` in scope, candidate or live: a live
+one that holds the call, or ties for it, means no candidate certainly
+does, and the row names no caller. They were sought among the rows, so a
+live def was invisible and the candidate beside or around it was named
+and, once cascaded, freed the row: `footer` in `def build; 1; end; def
+run; footer; end` with `run` called, `trailer` in `def show; def inner;
+end; trailer; end` (the live `show` ties with `inner`), and `banner` in a
+live `def wire` nested in the candidate `setup`. Testbed 963. Moved no
+discourse row (`app lib plugins`, byte-identical output): no candidate
+caller there has a live def around or beside its call.
+
 ## DEC-740 — `class << io` defines on the object `io` holds
 
 **Decided.** A `def` inside `class << local` is read as `def local.x` is

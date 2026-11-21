@@ -1,0 +1,6 @@
+# Found by a hunt: the def a call is written in was looked for among the
+# candidates only, so a live def holding it was skipped and a candidate
+# beside or around it named as the caller and freed it: footer is in the
+# live run, not build; trailer's live show ties with inner; banner is in
+# the live wire, inside the candidate setup (DEC-751).
+dead app Report#footer=single-caller^ Report#trailer=single-caller^ Report#banner=single-caller^ Report#build=unreferenced^ Report#inner=unreferenced^ Report#setup=unreferenced^

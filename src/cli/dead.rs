@@ -333,11 +333,12 @@ pub(super) fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCod
     }
 
     let mut rows: Vec<DeadRow> = Vec::new();
+    let mut defs: Vec<WrittenDef> = Vec::new();
     let mut scope = 0;
     for (root, scoped) in &checkouts {
-        scope += dead_in(&store, root, scoped, &mut rows)?;
+        scope += dead_in(&store, root, scoped, &mut rows, &mut defs)?;
     }
-    note_candidate_callers(&mut rows);
+    note_candidate_callers(&mut rows, &defs);
 
     let found = !rows.is_empty();
     let summary = DeadSummary::of(&rows);
@@ -540,13 +541,22 @@ struct Memo {
     gems: entry_points::Gems,
 }
 
+/// A literal `def` in scope, candidate or not: where a call is written.
+struct WrittenDef {
+    path: String,
+    start: (u32, u32),
+    end: u32,
+}
+
 /// `--dead` over the scopes in one checkout, weighed against that checkout:
-/// pushes a row per candidate and returns how many files were in scope.
+/// pushes a row per candidate, and each literal `def` in scope to `defs`,
+/// and returns how many files were in scope.
 fn dead_in(
     store: &Store,
     root: &Path,
     paths: &[PathBuf],
     rows: &mut Vec<DeadRow>,
+    defs: &mut Vec<WrittenDef>,
 ) -> anyhow::Result<usize> {
     let root_str = root.to_string_lossy().into_owned();
     let ours = rows.len();
@@ -585,6 +595,17 @@ fn dead_in(
             also(&mut risky, "class_eval string");
         }
         let at = file.to_string_lossy().into_owned();
+        defs.extend(
+            facts
+                .defs
+                .iter()
+                .filter(|def| def.kind == crate::core::Kind::Method && def.via.is_none())
+                .map(|def| WrittenDef {
+                    path: at.clone(),
+                    start: (def.pos.line, def.pos.col),
+                    end: def.end_line,
+                }),
+        );
         // The file's symbols no rule reads as a method's name (DEC-343).
         let recorded: Vec<crate::core::Pos> = facts
             .calls
@@ -1567,21 +1588,22 @@ fn dead_in(
 /// leaves this one unreferenced:
 /// the row names it in `cascaded_from` (DEC-680). One step only, so a
 /// cycle, or a chain whose top is no such root, frees nothing.
-fn note_candidate_callers(rows: &mut [DeadRow]) {
+fn note_candidate_callers(rows: &mut [DeadRow], defs: &[WrittenDef]) {
     struct Span {
         path: String,
         start: (u32, u32),
         end: u32,
-        name: String,
+        /// The candidate's name; `None` for a live def.
+        name: Option<String>,
         root: Option<Cascade>,
     }
-    let spans: Vec<Span> = rows
+    let mut spans: Vec<Span> = rows
         .iter()
         .map(|row| Span {
             path: row.path.clone(),
             start: (row.line, row.col),
             end: row.end_line().unwrap_or(0),
-            name: row.name.clone(),
+            name: Some(row.name.clone()),
             root: (matches!(row.detail, Detail::Method(_))
                 && matches!(row.tier, DeadTier::Unreferenced | DeadTier::TestOnly)
                 && row.confidence == Grade::Clear)
@@ -1593,6 +1615,22 @@ fn note_candidate_callers(rows: &mut [DeadRow]) {
                 }),
         })
         .collect();
+    // A live def may be the innermost around the call, or tie with a
+    // candidate for it: either way no candidate certainly holds it.
+    for def in defs {
+        if !spans
+            .iter()
+            .any(|s| s.path == def.path && s.start == def.start)
+        {
+            spans.push(Span {
+                path: def.path.clone(),
+                start: def.start,
+                end: def.end,
+                name: None,
+                root: None,
+            });
+        }
+    }
     for row in rows.iter_mut() {
         let clear = row.confidence == Grade::Clear;
         let Detail::Method(MethodDetail {
@@ -1628,6 +1666,9 @@ fn note_candidate_callers(rows: &mut [DeadRow]) {
         else {
             continue;
         };
+        let Some(name) = &within.name else {
+            continue;
+        };
         // A `clear` row's one call certainly reaches it: a possible one is lower.
         let root = within.root.as_ref().filter(|_| clear && only_way_in);
         let what = match root {
@@ -1635,10 +1676,7 @@ fn note_candidate_callers(rows: &mut [DeadRow]) {
             None => "a candidate",
         };
         *cascaded_from = root.cloned().map(Box::new);
-        row.reason = format!(
-            "{}; its caller, {}, is itself {what}",
-            row.reason, within.name
-        );
+        row.reason = format!("{}; its caller, {name}, is itself {what}", row.reason);
     }
 }
 

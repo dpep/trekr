@@ -23,7 +23,8 @@
 
 - **`--dead` names the candidate whose deletion frees a method**: a
   `single-caller` row whose one call is written in a `clear`
-  `unreferenced` or `test-only` method, and which is `clear` itself
+  `unreferenced` or `test-only` method (the innermost `def` around the
+  call, of every `def` in scope), and which is `clear` itself
   with no `super` from an override or symbol besides, carries
   `cascaded_from` (`name`, `path`, `line`, `tier`), and its
   reason says "its caller, build, is itself unreferenced". Delete the
@@ -80,7 +81,10 @@
 - **`--dead` no longer names the wrong caller of a call written after a
   second `def` on one line**: in `def build; header; end; def run; footer;
   end`, `footer`'s reason said its caller was `build`. A call after another
-  `def` on its line now names no caller, since either may hold it.
+  `def` on its line now names no caller, since either may hold it. Nor
+  does a call held by a method that is no candidate: one in a live `def`
+  nested in a candidate, or beside one on its line, was put in the
+  candidate.
 - **`--dead` reads `class << io` as `def io.x`**: a method defined in the
   singleton class of a local's object was filed as the class's own
   (`Printer.write`), `unreferenced`, `clear`, and named as what frees the
