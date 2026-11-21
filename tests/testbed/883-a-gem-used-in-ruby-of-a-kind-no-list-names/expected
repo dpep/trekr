@@ -1,0 +1,6 @@
+# Ruby the index does not read was a list of kinds, and a gem used only
+# in a kind it did not name — a `Vagrantfile`, `fastlane/Fastfile`, a
+# `Steepfile`, a Capistrano `.cap` task — was a `clear` `unreferenced`
+# row. A file with no extension is read as Ruby when Prism parses it
+# without an error; prose does not (NOTES), so idle_kit stays a row.
+dead Gemfile vagrant_kit=none lane_kit=none steep_kit=none cap_kit=none idle_kit=unreferenced~

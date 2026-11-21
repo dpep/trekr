@@ -1090,6 +1090,12 @@ ruby tests/testbed/882-a-gem-a-row-requires-is-loaded-only-if-the-row-is/engines
 ruby tests/testbed/882-a-gem-a-row-requires-is-loaded-only-if-the-row-is/vendor/bundle/ruby/9.8.0/gems/kit_b-1.0/lib/kit_b.rb 21e416581a58b5ba
 ruby tests/testbed/882-a-gem-a-row-requires-is-loaded-only-if-the-row-is/vendor/bundle/ruby/9.8.0/gems/kit_c-1.0/lib/kit_c.rb b008bfa4c16ee6f9
 ruby tests/testbed/882-a-gem-a-row-requires-is-loaded-only-if-the-row-is/vendor/bundle/ruby/9.8.0/gems/kit_d-1.0/lib/kit_d.rb 033950333ceefdf1
+ruby tests/testbed/883-a-gem-used-in-ruby-of-a-kind-no-list-names/Gemfile b04f82379cb8381e
+ruby tests/testbed/883-a-gem-used-in-ruby-of-a-kind-no-list-names/vendor/bundle/ruby/9.8.0/gems/cap_kit-1.0/lib/cap_kit.rb a8f3a1ffd343c6fa
+ruby tests/testbed/883-a-gem-used-in-ruby-of-a-kind-no-list-names/vendor/bundle/ruby/9.8.0/gems/idle_kit-1.0/lib/idle_kit.rb 24eb19b8f25cd7b7
+ruby tests/testbed/883-a-gem-used-in-ruby-of-a-kind-no-list-names/vendor/bundle/ruby/9.8.0/gems/lane_kit-1.0/lib/lane_kit.rb 8a7a03c2656bdd65
+ruby tests/testbed/883-a-gem-used-in-ruby-of-a-kind-no-list-names/vendor/bundle/ruby/9.8.0/gems/steep_kit-1.0/lib/steep_kit.rb 4171e729956662ab
+ruby tests/testbed/883-a-gem-used-in-ruby-of-a-kind-no-list-names/vendor/bundle/ruby/9.8.0/gems/vagrant_kit-1.0/lib/vagrant_kit.rb 366a10a8f1c3b2a4
 ruby tests/testbed/900-a-callback-symbol-of-a-commit-job-or-test-hook-is-a-reference/app/jobs/widget_job.rb fc8ed93b7bcf1238
 ruby tests/testbed/900-a-callback-symbol-of-a-commit-job-or-test-hook-is-a-reference/app/models/application_record.rb b65a4f3559a513a8
 ruby tests/testbed/900-a-callback-symbol-of-a-commit-job-or-test-hook-is-a-reference/app/models/gadget.rb 519acee51761e427

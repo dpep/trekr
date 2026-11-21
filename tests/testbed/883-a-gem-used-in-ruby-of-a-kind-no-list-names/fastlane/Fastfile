@@ -1,0 +1,3 @@
+lane :size do
+  puts LaneKit.pretty
+end

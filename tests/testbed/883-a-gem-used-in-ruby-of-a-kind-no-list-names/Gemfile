@@ -1,0 +1,6 @@
+source "https://rubygems.org"
+gem "vagrant_kit"
+gem "lane_kit"
+gem "steep_kit"
+gem "cap_kit"
+gem "idle_kit"

@@ -1,0 +1,5 @@
+namespace :deploy do
+  task :diff do
+    puts CapKit.diff
+  end
+end

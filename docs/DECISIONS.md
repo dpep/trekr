@@ -17612,3 +17612,24 @@ uncommitted `Dangerfile` naming public_suffix left it `unreferenced`,
 `clear`, while the index read every untracked `.rb` (hunt 2's kinds).
 Unit test `the_files_read_are_the_ones_the_index_reads`; the testbed
 commits every case's files, so it cannot stage an untracked one.
+
+## DEC-804 — A file with no extension that parses as Ruby is read as Ruby
+
+**Decided.** Beside the index, `--dead Gemfile` reads as Ruby every
+listed file with no extension that the index does not already read
+(`scan::is_ruby`), holds no NUL byte, is not blank, and that Prism parses
+without an error — plus Capistrano's `.cap` beside DEC-770's extensions.
+Before, an extensionless file counted only with a `ruby` shebang or one of
+four names, so a gem used only in a `Vagrantfile`, `fastlane/Fastfile`,
+`Matchfile`, `Steepfile` or a `.cap` task was `unreferenced`, `clear`
+(hunt 2's kinds). Naming more kinds would leave the class open; a parse
+closes it, since prose, a Procfile or a Makefile hardly ever parses, and a
+file that wrongly does can only credit a gem (hide a row), never make
+one `clear`.
+
+**Cost**, bounded by what a checkout holds without an extension: about 80
+such files (155 KB) outside `tmp/` and `node_modules/` in discourse, 116 in
+rails, 2 in mastodon's pruned corpus; parsing them is milliseconds, below
+the run-to-run noise of `--dead Gemfile` there (5–20 s warm on a loaded
+machine, both builds). Rows on rails, discourse and mastodon did not move.
+Testbed 883.

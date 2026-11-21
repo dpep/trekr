@@ -1490,10 +1490,12 @@ impl Features {
     }
 }
 
-/// Ruby the index does not read: scripts with no extension (`bin/setup`),
+/// Ruby the index does not read: a file with no extension that Prism
+/// parses without an error (`bin/setup`, `Vagrantfile`, `fastlane/Fastfile`),
 /// and files Ruby in all but name — a Builder, Arbre or Jb view, a Thor
-/// file, a `Dangerfile`, an `.irbrc` — whose requires, constants and calls
-/// count too. A Slim view, which nothing here parses, counts by its words.
+/// file or Capistrano task, an `.irbrc` — whose requires, constants and
+/// calls count too. A Slim view, which nothing here parses, counts by its
+/// words.
 struct Scripts {
     files: Vec<(String, Vec<u8>, crate::core::Facts)>,
     /// Each Slim view's words: a constant path or a method name, by line.
@@ -1501,8 +1503,10 @@ struct Scripts {
 }
 
 /// Plain Ruby the index leaves out, by extension or by name.
-const PLAIN_RUBY: [&str; 6] = [".builder", ".arb", ".jb", ".axlsx", ".prawn", ".thor"];
-const PLAIN_RUBY_NAMES: [&str; 4] = ["Dangerfile", "Thorfile", ".irbrc", ".pryrc"];
+const PLAIN_RUBY: [&str; 7] = [
+    ".builder", ".arb", ".jb", ".axlsx", ".prawn", ".thor", ".cap",
+];
+const PLAIN_RUBY_NAMES: [&str; 2] = [".irbrc", ".pryrc"];
 
 impl Scripts {
     fn read(root: &Path) -> Scripts {
@@ -1515,7 +1519,8 @@ impl Scripts {
             let plain = PLAIN_RUBY.iter().any(|ext| name.ends_with(ext))
                 || PLAIN_RUBY_NAMES.contains(&name);
             let slim = name.ends_with(".slim");
-            if !plain && !slim && name.contains('.') {
+            // One the index reads (`Rakefile`) is in the store already.
+            if !plain && !slim && (name.contains('.') || crate::scan::is_ruby(&path)) {
                 continue;
             }
             let Ok(raw) = crate::scan::read_source(root.join(&path)) else {
@@ -1527,7 +1532,14 @@ impl Scripts {
                     .push((path, words(&String::from_utf8_lossy(&raw))));
                 continue;
             }
-            if !plain && !super::views::ruby_script(&path, &String::from_utf8_lossy(&raw)) {
+            // A file with no extension is Ruby when it parses as Ruby: a
+            // shebang, a Ruby DSL's own name (`Fastfile`, `Steepfile`), or
+            // neither. Text that is not Ruby hardly ever parses.
+            if !plain
+                && (raw.contains(&0)
+                    || ruby_prism::parse(&raw).errors().next().is_some()
+                    || raw.iter().all(u8::is_ascii_whitespace))
+            {
                 continue;
             }
             let facts = crate::extract::extract(&raw);

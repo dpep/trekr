@@ -1,0 +1,21 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    cap_kit (1.0)
+    idle_kit (1.0)
+    lane_kit (1.0)
+    steep_kit (1.0)
+    vagrant_kit (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  cap_kit
+  idle_kit
+  lane_kit
+  steep_kit
+  vagrant_kit
+
+BUNDLED WITH
+   2.6.9

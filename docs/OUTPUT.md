@@ -673,9 +673,11 @@ it reopens) defines that no more than three gems and neither the checkout
 nor Ruby define, reopens a class it owns, or uses a gem only it brings.
 The checkout here is what the index reads — tracked files and untracked
 ones git does not ignore (DEC-803) — plus the Ruby it does not
-(DEC-770): extensionless scripts, Builder, Arbre, Jb, axlsx and Prawn
-views, Thor files, `Dangerfile`, `Thorfile`, `.irbrc` and `.pryrc`,
-parsed; and Slim views, whose words are read — a constant path, a method
+(DEC-770): any file with no extension that Prism parses without an
+error (a script, `Dangerfile`, `Vagrantfile`, `fastlane/Fastfile`,
+`Steepfile`; DEC-804), Builder, Arbre, Jb, axlsx and Prawn views, Thor
+files, Capistrano `.cap` tasks, `.irbrc` and `.pryrc`, parsed; and Slim
+views, whose words are read — a constant path, a method
 name, a `require "…"`. A constant several gems declare is the one whose
 `lib/` has its file, else the one named for it, else the one the others
 depend on; a module none of those picks is no gem's. A `require: false`
