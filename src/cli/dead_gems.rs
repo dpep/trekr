@@ -1877,7 +1877,7 @@ fn words(text: &str) -> Vec<(u32, String)> {
             }
             if b.is_ascii_uppercase() {
                 // `Diffy::Diff`: the whole path, as Ruby looks it up.
-                while line[i..].starts_with("::")
+                while bytes[i..].starts_with(b"::")
                     && bytes.get(i + 2).is_some_and(|c| c.is_ascii_uppercase())
                 {
                     i += 2;
@@ -1888,8 +1888,9 @@ fn words(text: &str) -> Vec<(u32, String)> {
             } else if matches!(bytes.get(i), Some(b'?' | b'!')) {
                 i += 1;
             }
-            // `Foo::Bar`'s `Bar` is no constant of its own.
-            if start >= 2 && &line[start - 2..start] == "::" {
+            // `Foo::Bar`'s `Bar` is no constant of its own. Bytes: a
+            // multi-byte character may end just before `start`.
+            if start >= 2 && bytes[start - 2..start] == *b"::" {
                 continue;
             }
             let word = &line[start..i];

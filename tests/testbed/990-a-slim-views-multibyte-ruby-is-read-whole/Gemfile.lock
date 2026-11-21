@@ -1,0 +1,15 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    idle_kit (1.0)
+    used_kit (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  idle_kit
+  used_kit
+
+BUNDLED WITH
+   2.6.9

@@ -1,0 +1,3 @@
+source "https://rubygems.org"
+gem "used_kit"
+gem "idle_kit"

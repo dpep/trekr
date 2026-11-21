@@ -1,0 +1,4 @@
+# A Slim view's Ruby holding a multi-byte character just before an ASCII
+# letter (a curly apostrophe, an em-dash, CJK, an emoji) panicked: the
+# `::` check before a word sliced the line inside the character.
+dead Gemfile used_kit=none idle_kit=unreferenced~ exit=0
