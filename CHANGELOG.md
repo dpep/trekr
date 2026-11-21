@@ -68,6 +68,10 @@
   `--dead Gemfile` does: an attribute written `href = x` went unread, and
   a `/` comment's `#{}` counted as a name the view writes.
 
+- **With no lockfile, `--index` resolves the gems a file the Gemfile
+  evals declares** (`eval_gemfile "Gemfile.tools"`), as `--dead Gemfile`
+  grades them: they were left out, so nothing of theirs was indexed.
+
 - **`--dead` reads an operator assignment to a call as a call of its
   reader and its writer**: `w.count ||= 0`, `w.total += 1` and
   `w.label &&= x` left all six methods `unreferenced`, `clear`; each is

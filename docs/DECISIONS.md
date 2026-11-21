@@ -18526,3 +18526,21 @@ Haml as much as Slim) is gone. That rule missed an attribute written
 It sits in `extract/` beside `erb_ruby` and `haml_ruby` but keeps its own
 shape — text in, each line's Ruby on that line out — because its readers
 take words, and nothing parses it at offsets.
+
+## DEC-847 — With no lockfile, a Gemfile's evals declare the bundle too
+
+**Decided.** The lockfile-less resolution (DEC-134) reads each file the
+root Gemfile evals, and each those eval, as `--dead Gemfile` does
+(DEC-820): which files is `gemfile::declarations`' answer, so the two
+readers cannot disagree on it again. A checkout whose Gemfile evals
+`Gemfile.tools` had none of its gems indexed. A `path` block's gems were
+already left out. Test
+`with_no_lockfile_a_gemfiles_evals_are_resolved_and_its_path_blocks_are_not`,
+red before.
+
+**Not done.** `declared.rs` keeps its own Prism reader of `gem` and
+`add_*dependency` lines. It binds constants and locals to read version
+requirements and a `git:` source; `gemfile.rs` keeps every line with its
+groups, platforms and position. One reader would carry both, a larger
+change than this fix asks; the eval list was the knowledge one had and the
+other lacked.

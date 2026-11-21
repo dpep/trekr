@@ -766,6 +766,36 @@ fn with_no_lockfile_the_gemspecs_dependencies_are_resolved() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// With no lockfile, a Gemfile's gems are what `--dead Gemfile` reads it
+/// to declare: those a file it evals declares too, and not those a `path`
+/// block names, which are no installed release.
+#[test]
+fn with_no_lockfile_a_gemfiles_evals_are_resolved_and_its_path_blocks_are_not() {
+    let (dir, db) = ruby_scratch("declared-eval");
+    repo(&dir);
+    for name in ["widget", "tooling", "local_kit"] {
+        let lib = dir.join(format!("vendor/bundle/ruby/3.3.0/gems/{name}-1.0.0/lib"));
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(lib.join(format!("{name}.rb")), "module Widget\nend\n").unwrap();
+    }
+    fs::write(
+        dir.join("Gemfile"),
+        "source \"https://rubygems.org\"\ngem \"widget\"\neval_gemfile \"Gemfile.tools\"\npath \"engines\" do\n  gem \"local_kit\"\nend\n",
+    )
+    .unwrap();
+    fs::write(dir.join("Gemfile.tools"), "gem \"tooling\"\n").unwrap();
+
+    let answer = json(&trekr(&db, &dir, &["--index", "--json"]));
+    assert_eq!(answer["gems"]["resolved_from"], "declared", "{answer}");
+    assert_eq!(
+        answer["gems"]["picked"],
+        serde_json::json!(["tooling 1.0.0", "widget 1.0.0"]),
+        "{answer}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A gem's base class may reach what a subclass in the app defines by a
 /// name no call writes: a drop's `public_send(key)` runs its methods, and a
 /// dashboard's `self.class::ATTRS` reads its constant. `--dead` reads the
