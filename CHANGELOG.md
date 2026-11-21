@@ -141,6 +141,12 @@
   top-level method it runs**: `def helper_top; …; end; helper_top` left
   `helper_top` `unreferenced`, `clear`, though `--def` on the call
   answers it.
+- **`trekr --lsp` reads framing as clients write it, not only as the spec
+  spells it**: `Content-Length:93` with no space, a header name in any
+  case, `\n` line ends and blank lines between messages are read. Spoom's
+  LSP client, which writes the first and a `\n` after each body, had the
+  connection closed at `initialize`. A missing or unreadable
+  `Content-Length` still closes it.
 
 ## 0.10.2 — 2026-11-20
 

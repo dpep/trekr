@@ -23,7 +23,7 @@ belongs to:
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
 | `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 680, 690, 730, 770, 771, 772 |
-| LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
+| LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646, 810 |
 | Scope and housekeeping | 030, 063, 640 |
 
 A few revisits are subsections filed under a neighbouring entry, as they
@@ -18044,3 +18044,32 @@ nextonly.
 
 Both in `cli_e2e`'s `a_gem_line_two_manifests_reach_is_graded_once`:
 the testbed passes one target and asserts no `needed_by`.
+
+## DEC-810 — The wire reads framing as leniently as it can without guessing
+
+**Decided.** `wire.rs` reads a message's headers line by line, each line
+ended by `\n` or `\r\n`, and the headers by an empty line of either kind.
+A header name matches in any case and may have space or none around its
+`:`; headers other than `Content-Length` are skipped; whitespace before a
+message's first header (a client's trailing `\n` after a body, a stray
+blank line) is dropped. Still refused, with the reason on stderr before
+the connection closes: a message with no `Content-Length`, one whose value
+is not a byte count, two that disagree, a header line with no `:`, and a
+body that is not JSON-RPC.
+
+**Why.** Spoom's LSP client (`Spoom::LSP::Client`, written for Sorbet)
+writes `Content-Length:93` and a `\n` after each body. trekr split headers
+on `": "`, found no `Content-Length`, and closed the connection at
+`initialize`; Sorbet reads it. None of the tolerated forms can be read two
+ways: a header is a name, a colon and a value however it is spaced, and a
+blank line between messages carries nothing. The spec says header names
+are ASCII, and case-insensitive matching is what HTTP-style headers mean.
+
+**Not tolerated: a length in characters.** The spec counts bytes, and so
+does trekr. Spoom counts characters (`String#length`), which differs only
+on a non-ASCII body: the body is cut short, fails to parse, and is
+refused. Reading on to the next balanced brace would be a guess at where
+a message ends, and a wrong guess misreads every message after it.
+
+Unit tests in `serve::wire` cover each tolerated form and each refusal;
+`content_length_counts_bytes_not_characters` pins the byte count.

@@ -1071,7 +1071,7 @@ the new binary in place (DEC-050).
 | module | owns |
 |---|---|
 | `mod.rs` | the loop: initialize, dispatch, shutdown/exit, error codes, idle warm-up, answers rewritten into the client's path spelling |
-| `wire.rs` | stdio framing: stdin read on the loop's own thread from the raw descriptor (no hidden read-ahead), stdout written by a thread |
+| `wire.rs` | stdio framing, read leniently (DEC-810): stdin read on the loop's own thread from the raw descriptor (no hidden read-ahead), stdout written by a thread |
 | `inbox.rs` | reading the wire ahead, so `$/cancelRequest` is seen before the request it withdraws is reached, and mid-scan |
 | `state.rs` | per-checkout trees, mapped from their snapshots and reloaded when the tree key — checkout and gems — moves; completion listings; documents — the editor's copy, or a disk read revalidated by mtime+length |
 | `handlers.rs` | the nine agent operations, syntax diagnostics, `require` strings as links |

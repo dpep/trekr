@@ -67,26 +67,25 @@ impl Reader {
 
     /// The next whole message in the buffer, if one has fully arrived.
     pub(crate) fn message(&mut self) -> Option<Message> {
-        let length = match frame_length(&self.buffer) {
-            Ok(Some(length)) => length,
+        let parsed = match frame(&self.buffer) {
+            Ok(Some((length, body))) => {
+                let parsed = serde_json::from_slice::<Message>(&self.buffer[body])
+                    .map_err(|e| format!("a message body that is not JSON-RPC: {e}"));
+                self.buffer.drain(..length);
+                parsed
+            }
             Ok(None) => return None,
-            Err(()) => {
-                // Not LSP framing: nothing after it can be trusted to line up,
-                // which is what lsp-server's reader concluded too.
-                self.closed = true;
-                self.buffer.clear();
-                return None;
-            }
+            Err(why) => Err(why),
         };
-        let frame: Vec<u8> = self.buffer.drain(..length).collect();
-        match Message::read(&mut frame.as_slice()) {
-            Ok(message) => message,
-            Err(_) => {
+        parsed
+            .map_err(|why| {
+                // Nothing after it can be trusted to line up, which is what
+                // lsp-server's reader concluded too.
+                eprintln!("trekr: closing the connection: {why}");
                 self.closed = true;
                 self.buffer.clear();
-                None
-            }
-        }
+            })
+            .ok()
     }
 
     /// Nothing more will arrive.
@@ -101,23 +100,54 @@ impl Reader {
     }
 }
 
-/// How long the frame at the start of `buffer` is, headers and all: `None`
-/// until it has all arrived, `Err` when the headers are not LSP's.
-fn frame_length(buffer: &[u8]) -> Result<Option<usize>, ()> {
-    let Some(end) = buffer.windows(4).position(|w| w == b"\r\n\r\n") else {
-        return Ok(None);
+/// The frame at the start of `buffer`: its length, whitespace before it
+/// included, and where its body lies. `None` until it has all arrived, `Err`
+/// saying what is wrong when its headers are not LSP's.
+///
+/// Laxer than the spec (DEC-810): header names in any case, space or none
+/// around the `:`, `\n` line ends, and whitespace between messages — Spoom's
+/// client writes `Content-Length:93` and a `\n` after each body, which Sorbet
+/// reads. The length
+/// is still bytes, as the spec says: a client counting characters is cut
+/// short on a non-ASCII body, and refused for it rather than guessed at.
+fn frame(buffer: &[u8]) -> Result<Option<(usize, std::ops::Range<usize>)>, String> {
+    let mut at = buffer
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(buffer.len());
+    let mut length = None;
+    loop {
+        let Some(newline) = buffer[at..].iter().position(|&b| b == b'\n') else {
+            return Ok(None);
+        };
+        let line = &buffer[at..at + newline];
+        at += newline + 1;
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            break;
+        }
+        let line = String::from_utf8_lossy(line);
+        let Some((name, value)) = line.split_once(':') else {
+            return Err(format!("a header line with no `:`: {line:?}"));
+        };
+        if name.trim().eq_ignore_ascii_case("Content-Length") {
+            let value = value.trim();
+            let Ok(parsed) = value.parse::<usize>() else {
+                return Err(format!(
+                    "a Content-Length that is not a byte count: {value:?}"
+                ));
+            };
+            if length.is_some_and(|before| before != parsed) {
+                return Err("two Content-Length headers that disagree".into());
+            }
+            length = Some(parsed);
+        }
+    }
+    let Some(length) = length else {
+        return Err("a message with no Content-Length header".into());
     };
-    let headers = std::str::from_utf8(&buffer[..end]).map_err(|_| ())?;
-    let length = headers
-        .split("\r\n")
-        .filter_map(|line| line.split_once(": "))
-        .find(|(name, _)| name.eq_ignore_ascii_case("Content-Length"))
-        .ok_or(())?
-        .1
-        .parse::<usize>()
-        .map_err(|_| ())?;
-    let total = end + 4 + length;
-    Ok((buffer.len() >= total).then_some(total))
+    let body = at..at + length;
+    Ok((buffer.len() >= body.end).then_some((body.end, body)))
 }
 
 /// Is there something to read (or the end of input) within `timeout`?
@@ -260,5 +290,94 @@ mod tests {
         garbage.fill(Some(Duration::ZERO));
         assert!(garbage.message().is_none());
         assert!(garbage.is_closed());
+    }
+
+    /// The methods read off `bytes`, and whether the reader then closed.
+    fn methods_in(bytes: &[u8]) -> (Vec<String>, bool) {
+        let mut reader = reader_over(bytes, Vec::new());
+        reader.fill(Some(Duration::ZERO));
+        let methods = std::iter::from_fn(|| reader.message())
+            .map(|m| match m {
+                Message::Notification(n) => n.method,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        (methods, reader.is_closed())
+    }
+
+    #[test]
+    fn spooms_framing_is_read_no_space_after_the_colon_and_a_newline_after_the_body() {
+        let one = format!(
+            "Content-Length:{}\r\n\r\n{INITIALIZED}\n",
+            INITIALIZED.len()
+        );
+        let (methods, closed) = methods_in(format!("{one}{one}").as_bytes());
+        assert_eq!(methods, ["initialized", "initialized"]);
+        assert!(!closed);
+    }
+
+    #[test]
+    fn header_names_in_any_case_and_space_around_the_colon_are_read() {
+        let n = INITIALIZED.len();
+        for header in [
+            format!("content-length: {n}"),
+            format!("CONTENT-LENGTH:\t{n}"),
+            format!("Content-Length : {n} "),
+            format!(
+                "Content-Type: application/vscode-jsonrpc; charset=utf-8\r\ncontent-length:{n}"
+            ),
+        ] {
+            let bytes = format!("{header}\r\n\r\n{INITIALIZED}");
+            assert_eq!(
+                methods_in(bytes.as_bytes()).0,
+                ["initialized"],
+                "{header:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bare_newline_line_ends_and_whitespace_between_messages_are_read() {
+        let n = INITIALIZED.len();
+        let bytes = format!(
+            "Content-Length: {n}\n\n{INITIALIZED}\r\n \r\n\tContent-Length: {n}\r\n\n{INITIALIZED}\n\n"
+        );
+        let (methods, closed) = methods_in(bytes.as_bytes());
+        assert_eq!(methods, ["initialized", "initialized"]);
+        assert!(!closed, "trailing whitespace waits for the next message");
+    }
+
+    #[test]
+    fn a_missing_or_garbage_content_length_is_refused_and_says_what_was_wrong() {
+        for (headers, why) in [
+            (
+                "Content-Type: application/json",
+                "a message with no Content-Length header",
+            ),
+            ("Content-Length: abc", "not a byte count: \"abc\""),
+            ("Content-Length: -1", "not a byte count: \"-1\""),
+            ("Content-Length:", "not a byte count: \"\""),
+            ("hello", "a header line with no `:`: \"hello\""),
+            (
+                "Content-Length: 2\r\nContent-Length: 3",
+                "two Content-Length headers that disagree",
+            ),
+        ] {
+            let bytes = format!("{headers}\r\n\r\n{{}}");
+            let refused = super::frame(bytes.as_bytes()).expect_err(headers);
+            assert!(refused.contains(why), "{headers:?}: {refused}");
+            assert_eq!(methods_in(bytes.as_bytes()), (vec![], true), "{headers:?}");
+        }
+    }
+
+    #[test]
+    fn content_length_counts_bytes_not_characters() {
+        let body = r#"{"jsonrpc":"2.0","method":"é","params":{}}"#;
+        let bytes = format!("Content-Length: {}\r\n\r\n{body}", body.len());
+        assert_eq!(methods_in(bytes.as_bytes()), (vec!["é".to_string()], false));
+        // A client counting characters cuts the body short: refused, not
+        // stretched to fit.
+        let chars = format!("Content-Length: {}\r\n\r\n{body}", body.chars().count());
+        assert_eq!(methods_in(chars.as_bytes()), (vec![], true));
     }
 }
