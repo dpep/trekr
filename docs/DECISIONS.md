@@ -18003,3 +18003,27 @@ root's manifest is, against the root's lock and the whole checkout. A
 group around the `eval_gemfile` line does not reach the eval'd gems'
 `groups`: nothing in the corpus writes one. Testbed 997 (the harness
 now reads a `dead Gemfile.*` line as a bundle's).
+
+## DEC-821 — Two refusals corrected: an engine with no lock, a `BUNDLE_GEMFILE` checkout
+
+**An engine's gemspec with no lockfile is graded.** DEC-807 knew a path
+gem of the root bundle only from the lockfile's `PATH` specs, so with no
+lockfile `--dead engines/core/core.gemspec` was refused as a
+subdirectory's bundle though the Gemfile says `gem "core", path:
+"engines/core"` (hunt 3's eng). `is_engine_gemspec` now asks what
+`path_gems` asks: the lockfile's path gems, and the Gemfile's `path:`
+and `path` blocks (DEC-801). Testbed 998.
+
+**`BUNDLE_GEMFILE` is not followed; the refusal says so.** A checkout
+whose only bundle is `Gemfile.next`, selected by `.bundle/config`'s
+`BUNDLE_GEMFILE` (hunt 3's nextonly), was refused with "the index
+located" the root's bundle, which does not exist. Following
+`BUNDLE_GEMFILE` in `gems::bundle_files` was the other option, and is
+not clean: it changes what the index locates for every command, and
+`.bundle/config` is usually a developer's own, untracked setting — a
+dual-boot checkout with both Gemfiles would then locate `Gemfile.next`
+for one developer and refuse the root's Gemfile under DEC-806. Left for
+a design call. The refusal now says the root has no Gemfile or
+`gems.rb`, and names the Gemfile `.bundle/config` selects. Not
+testbed-shaped (the harness asserts no message); checked by hand on
+nextonly.

@@ -188,11 +188,7 @@ pub(super) fn cmd_dead_gems(
         )));
     }
     if let Some(other) = paths.iter().find(|p| is_other_bundle(p) && !is_evaled(p)) {
-        return Err(Failure::Usage.error(format!(
-            "--dead grades the bundle at a checkout's root, whose gems the index located; \
-             {} is another bundle's, whose gems it did not locate: pass the root's Gemfile",
-            other.display()
-        )));
+        return Err(Failure::Usage.error(other_bundle_refusal(other)));
     }
     if let Some(other) = paths.iter().find(|p| !is_manifest(p) && !is_evaled(p)) {
         return Err(Failure::Usage.error(format!(
@@ -351,19 +347,50 @@ pub(super) fn cmd_dead_gems(
     Ok(exit_on(found))
 }
 
-/// A gemspec in the directory of a path gem the root's lockfile names
-/// (rails' `activesupport/activesupport.gemspec`): its gems are the root
-/// bundle's, which the index located.
+/// A gemspec in the directory of a path gem of the root bundle (rails'
+/// `activesupport/activesupport.gemspec`) — one its lockfile names, or with
+/// none, its Gemfile: its gems are the root bundle's, which the index
+/// located.
 fn is_engine_gemspec(root: &Path, manifest: &Path) -> bool {
     let Some(dir) = manifest.parent() else {
         return false;
     };
-    manifest.extension().is_some_and(|e| e == "gemspec")
-        && crate::scan::read_text(crate::gems::bundle_files(root).1).is_ok_and(|lock| {
-            crate::gems::path_gems_in(root, &lock)
-                .iter()
-                .any(|(_, gem)| gem == dir)
-        })
+    if manifest.extension().is_none_or(|e| e != "gemspec") {
+        return false;
+    }
+    let (gemfile, lockfile) = crate::gems::bundle_files(root);
+    let lock = crate::scan::read_text(lockfile).ok();
+    let declared = declared_in(root, &gemfile);
+    path_gem_dirs(root, lock.as_deref(), &gemfile, &declared)
+        .iter()
+        .any(|(_, gem)| std::fs::canonicalize(gem).is_ok_and(|gem| gem == dir))
+}
+
+/// Why a second bundle's file (`Gemfile.next`) is not graded: the index
+/// located the root's bundle, or none when the root has no Gemfile — though
+/// `.bundle/config` may select this one, which the index does not follow.
+fn other_bundle_refusal(path: &Path) -> String {
+    let root = named_checkout(path).ok();
+    let root_bundle = root
+        .as_deref()
+        .is_some_and(|root| crate::gems::bundle_files(root).0.is_file());
+    if root_bundle {
+        return format!(
+            "--dead grades the bundle at a checkout's root, whose gems the index located; \
+             {} is another bundle's, whose gems it did not locate: pass the root's Gemfile",
+            path.display()
+        );
+    }
+    let selected = root
+        .as_deref()
+        .and_then(crate::gems::configured_gemfile)
+        .map(|g| format!(" (its .bundle/config selects {g} by BUNDLE_GEMFILE, which the index does not follow)"))
+        .unwrap_or_default();
+    format!(
+        "--dead grades the bundle at a checkout's root, whose gems the index locates, and \
+         the root has no Gemfile or gems.rb{selected}; {} is a bundle the index did not locate",
+        path.display()
+    )
 }
 
 /// Why a manifest in a subdirectory is not graded: its bundle has a lock of

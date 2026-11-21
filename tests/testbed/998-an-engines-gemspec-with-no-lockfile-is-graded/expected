@@ -1,0 +1,5 @@
+# An engine's gemspec is graded when its directory is a path gem of the
+# root bundle (886), but that was read from the lockfile alone: with no
+# lockfile, `gem "core", path: "engines/core"` in the Gemfile went
+# unread and the gemspec was refused as a subdirectory's bundle.
+dead engines/core/core.gemspec dropped_dep=unreferenced exit=0

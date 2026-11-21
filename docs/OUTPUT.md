@@ -617,7 +617,8 @@ or lock beside the root's (`Gemfile.next`, Appraisal's
 `gemfiles/*.gemfile`; DEC-806), or a manifest in a subdirectory (whose own
 bundle the index did not locate) is a usage error, exit 64 (DEC-771) —
 except a gemspec in the directory of a path gem the root's lockfile
-names (rails' `activesupport/activesupport.gemspec`), which is graded
+names, or with none its Gemfile (rails'
+`activesupport/activesupport.gemspec`; DEC-821), which is graded
 against the root bundle and the whole checkout (DEC-807). A root
 `Gemfile` that links elsewhere is the root's. A file the root's Gemfile
 reads with `eval_gemfile` (`Gemfile.tools`), directly or through

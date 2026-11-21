@@ -645,6 +645,13 @@ fn bundle_path(repo: &Path) -> Option<PathBuf> {
     Some(repo.join(path))
 }
 
+/// The Gemfile the app's `.bundle/config` selects (`BUNDLE_GEMFILE`), which
+/// `bundle_files` does not follow: only for saying why none was located.
+pub(crate) fn configured_gemfile(repo: &Path) -> Option<String> {
+    let text = crate::scan::read_text(repo.join(".bundle").join("config")).ok()?;
+    config_value(&text, "BUNDLE_GEMFILE")
+}
+
 /// One key of a bundler config file — flat YAML, `KEY: "value"`.
 fn config_value(text: &str, key: &str) -> Option<String> {
     text.lines().find_map(|line| {
