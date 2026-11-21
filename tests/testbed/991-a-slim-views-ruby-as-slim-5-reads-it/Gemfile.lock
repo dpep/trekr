@@ -1,0 +1,23 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    cond_kit (1.0)
+    idle_kit (1.0)
+    modifier_kit (1.0)
+    ns_kit (1.0)
+    spaced_kit (1.0)
+    splat_kit (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  cond_kit
+  idle_kit
+  modifier_kit
+  ns_kit
+  spaced_kit
+  splat_kit
+
+BUNDLED WITH
+   2.6.9

@@ -1,0 +1,7 @@
+source "https://rubygems.org"
+gem "modifier_kit"
+gem "splat_kit"
+gem "cond_kit"
+gem "ns_kit"
+gem "spaced_kit"
+gem "idle_kit"

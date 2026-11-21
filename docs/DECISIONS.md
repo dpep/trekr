@@ -17893,3 +17893,29 @@ method" on Runner; `def (a).z`, `def it.v` and `class << @foo` the same.
 
 **No store change.** The mark is not stored (DEC-562): testbed 828's
 input hashes the same before and after.
+
+## DEC-815 — A Slim view's line is split as Slim 5 splits it
+
+**Decided.** DEC-808's line reader missed Ruby where Slim 5.2.1's parser
+finds it, so a gem a view used was `unreferenced`, `clear` (hunt 3's
+slim3, slim4). Each form was checked against that parser and now reads
+as it does:
+
+- a whitespace modifier after a tag or its shortcuts (`span> = x`,
+  `a<> href=x`): Slim strips `[<>']*` before the attributes;
+- a splat attribute (`.card*x.attrs`, `*attrs`);
+- a conditional comment (`/[if lt IE 9]`): its children are Slim, not a
+  comment; `/!`'s text interpolates;
+- a namespaced tag (`svg:path d=x`): a tag name holds `:` and `-` between
+  word characters;
+- spaces around an attribute's `=` (`a href = x`), as Slim's attribute
+  pattern allows, wrapped or not.
+
+A shortcut's class may hold `:` and `/digits` (`.md:flex.w-1/2`). An
+engine's first line written beside it (`ruby: x = 1`, `javascript:
+…#{x}`) is read as its block's: the hunt's hunch, which the old reader
+already got right by reading the line as a tag with inline content, so
+it is pinned by unit test only. A multi-byte character before a word
+in a view's Ruby panicked the word reader (hunt 3's utf8); it compares
+bytes now (testbed 990). Testbed 991; unit test
+`a_slim_line_is_split_as_slim_5_splits_it`.

@@ -634,9 +634,12 @@ error (a script, `Dangerfile`, `Vagrantfile`, `fastlane/Fastfile`,
 `Steepfile`; DEC-804), Builder, Arbre, Jb, axlsx and Prawn views, Thor
 files, Capistrano `.cap` tasks, `.irbrc` and `.pryrc`, parsed; and Slim
 views, whose Ruby — a `-` or `=` line, a tag's `=` output, an unquoted
-attribute, a `ruby:` block, a `#{}` — is read by its words: a constant
+attribute or a splat, a `ruby:` block, a `#{}` — is read by its words: a constant
 path, a method name, a `require "…"`; its text, `/` comments and quoted
-attributes are not (DEC-808). A constant several gems declare is the one whose
+attributes are not (DEC-808). A line is split as Slim 5 splits it: a
+whitespace modifier after a tag, a namespaced tag, spaces around an
+attribute's `=`, and a conditional comment's children, which are Slim
+(DEC-815). A constant several gems declare is the one whose
 `lib/` has its file, else the one named for it, else the one the others
 depend on; a module none of those picks is no gem's. A `require: false`
 gem's methods count only once a require of it is seen. Ruby's methods

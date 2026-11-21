@@ -1719,10 +1719,24 @@ fn slim_ruby(text: &str) -> String {
     out.join("\n")
 }
 
-/// One Slim line's Ruby, and the block it opens.
+/// One Slim line's Ruby, and the block it opens, split as Slim 5's parser
+/// splits it (`parse_line_indicators`).
 fn slim_line(body: &str) -> (String, Option<SlimBlock>) {
+    // An embedded engine, its first line written on its own: `ruby: x = 1`.
+    if let Some((engine, first)) = body.split_once(':')
+        && SLIM_ENGINES.contains(&engine)
+    {
+        let first = first.trim();
+        return match engine {
+            "ruby" => (first.to_string(), Some(SlimBlock::Ruby)),
+            _ => (interpolations(first), Some(SlimBlock::Text)),
+        };
+    }
     match body.chars().next() {
         None => (String::new(), None),
+        // A conditional comment's children are Slim.
+        Some('/') if body.starts_with("/[") && body.ends_with(']') => (String::new(), None),
+        Some('/') if body.starts_with("/!") => (interpolations(body), Some(SlimBlock::Text)),
         Some('/') => (String::new(), Some(SlimBlock::Comment)),
         Some('|' | '\'') => (interpolations(&body[1..]), Some(SlimBlock::Text)),
         Some('-' | '=') => (
@@ -1731,30 +1745,74 @@ fn slim_line(body: &str) -> (String, Option<SlimBlock>) {
             None,
         ),
         Some('<') => (interpolations(body), None),
-        _ if body == "ruby:" => (String::new(), Some(SlimBlock::Ruby)),
-        // An embedded engine: `javascript:`, `markdown:`.
-        _ if body.strip_suffix(':').is_some_and(|engine| {
-            !engine.is_empty() && engine.chars().all(|c| c.is_ascii_alphanumeric())
-        }) =>
-        {
-            (String::new(), Some(SlimBlock::Text))
-        }
         _ if body.starts_with("doctype") => (String::new(), None),
         _ => (slim_tag(body), None),
     }
 }
 
-/// A tag line's Ruby: `p = x` outputs `x`; `a href=url_for(x)` computes an
-/// attribute; `a href="…#{x}"` interpolates; text after the tag does not.
-fn slim_tag(line: &str) -> String {
-    let named = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '@');
-    let mut ruby = Vec::new();
-    let mut rest = line.trim_start_matches(|c: char| named(c) && c != ':');
-    // `.class` and `#id` shortcuts.
-    while let Some(after) = rest.strip_prefix(['.', '#']) {
-        rest =
-            after.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+/// The engines Slim 5 embeds (`Slim::Embedded.register`).
+const SLIM_ENGINES: [&str; 10] = [
+    "ruby",
+    "javascript",
+    "css",
+    "markdown",
+    "textile",
+    "rdoc",
+    "coffee",
+    "less",
+    "sass",
+    "scss",
+];
+
+/// The length of what starts `text` as Slim's tag name does: word
+/// characters, with `:` and `-` only between them (`svg:path`, `my-tag`).
+fn slim_tag_name(text: &str) -> usize {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut end = 0;
+    let mut chars = text.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        let joins = matches!(c, ':' | '-') && chars.peek().is_some_and(|(_, next)| word(*next));
+        if !word(c) && !(joins && end > 0) {
+            break;
+        }
+        end = at + c.len_utf8();
     }
+    end
+}
+
+/// The length of an attribute's name at the start of `text`, as Slim reads
+/// one: anything up to a space, a quote, `<`, `>`, `/`, `=` or a bracket.
+fn slim_attr_name(text: &str) -> usize {
+    text.find(|c: char| c.is_whitespace() || "\"'<>/=()[]{}".contains(c))
+        .unwrap_or(text.len())
+}
+
+/// A tag line's Ruby: `p = x` outputs `x`; `a href=url_for(x)` computes an
+/// attribute; `.card*x.attrs` splats one; `a href="…#{x}"` interpolates;
+/// text after the tag does not.
+fn slim_tag(line: &str) -> String {
+    let mut ruby = Vec::new();
+    let mut rest = &line[slim_tag_name(line)..];
+    // `.class` and `#id` shortcuts: `.md:flex`, `.w-1/2`.
+    while let Some(after) = rest.strip_prefix(['.', '#']) {
+        let mut end = 0;
+        let mut chars = after.char_indices().peekable();
+        while let Some((at, c)) = chars.next() {
+            let word = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
+            let joins = match c {
+                ':' => chars.peek().is_some_and(|(_, next)| word(*next)),
+                '/' => chars.peek().is_some_and(|(_, next)| next.is_ascii_digit()),
+                _ => word(c),
+            };
+            if !joins {
+                break;
+            }
+            end = at + c.len_utf8();
+        }
+        rest = &after[end..];
+    }
+    // Whitespace modifiers: `span> = x`, `a<> href=x`.
+    rest = rest.trim_start_matches(['<', '>', '\'']);
     let mut wrapped = false;
     loop {
         rest = rest.trim_start();
@@ -1776,13 +1834,24 @@ fn slim_tag(line: &str) -> String {
             rest = after;
             continue;
         }
-        let name_len = rest.len() - rest.trim_start_matches(named).len();
+        // A splat: `*attrs_for(x)`.
+        if let Some(splat) = rest
+            .strip_prefix('*')
+            .filter(|s| s.starts_with(|c: char| !c.is_whitespace()))
+        {
+            let (written, after) = splat.split_at(value_end(splat));
+            ruby.push(written.to_string());
+            rest = after;
+            continue;
+        }
+        let name_len = slim_attr_name(rest);
         if name_len == 0 {
             ruby.push(interpolations(rest));
             break;
         }
         let after_name = &rest[name_len..];
-        let Some(value) = after_name.strip_prefix('=') else {
+        // Slim allows spaces around an attribute's `=`: `a href = x`.
+        let Some(value) = after_name.trim_start().strip_prefix('=') else {
             if wrapped {
                 rest = after_name;
                 continue;
@@ -1791,7 +1860,7 @@ fn slim_tag(line: &str) -> String {
             ruby.push(interpolations(rest));
             break;
         };
-        let value = value.trim_start();
+        let value = value.strip_prefix('=').unwrap_or(value).trim_start();
         let end = value_end(value);
         let (written, after) = value.split_at(end);
         match written.chars().next() {
@@ -2546,6 +2615,42 @@ mod tests {
             assert!(ruby.contains(used), "{used}: {ruby}");
         }
         for prose in ["Diffy", "Retriable", "Tomlrb", "Welcome", "done"] {
+            assert!(!ruby.contains(prose), "{prose}: {ruby}");
+        }
+    }
+
+    #[test]
+    fn a_slim_line_is_split_as_slim_5_splits_it() {
+        let view = "span> = Modifier.out\n\
+                    a<> href=Both.path go\n\
+                    .card*Splat.attrs\n\
+                    /[if lt IE 9]\n  = Conditional.run\n\
+                    svg:path d=Spaced.path\n\
+                    a href = Around.path Text\n\
+                    a(title = Wrapped.name) Dur\n\
+                    .md:flex.w-1/2 = Tailwind.name\n\
+                    ruby: x = OneLine.run\n\
+                    javascript: var x = \"#{Engine.name}\";\n\
+                    /! html comment #{Shown.name}\n\
+                    p Prose Text here\n";
+        let ruby = slim_ruby(view);
+        assert_eq!(ruby.split('\n').count(), view.lines().count());
+        for used in [
+            "Modifier",
+            "Both",
+            "Splat",
+            "Conditional",
+            "Spaced",
+            "Around",
+            "Wrapped",
+            "Tailwind",
+            "OneLine",
+            "Engine",
+            "Shown",
+        ] {
+            assert!(ruby.contains(used), "{used}: {ruby}");
+        }
+        for prose in ["Text", "Dur", "Prose", "html"] {
             assert!(!ruby.contains(prose), "{prose}: {ruby}");
         }
     }

@@ -1,0 +1,7 @@
+# A Slim view's Ruby was missed where Slim 5 reads it, so gems it used
+# were `unreferenced`, `clear`: a whitespace modifier after a tag
+# (`span> =`), a splat (`.card*x`), a conditional comment's children
+# (`/[if …]`), a namespaced tag (`svg:path d=x`), and spaces around an
+# attribute's `=`. Text after an attribute is still text: IdleKit stays
+# a row.
+dead Gemfile modifier_kit=none splat_kit=none cond_kit=none ns_kit=none spaced_kit=none idle_kit=unreferenced~
