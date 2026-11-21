@@ -834,8 +834,32 @@ impl<'a> Extractor<'a> {
     /// flips only these, not what `self` is (DEC-653).
     /// `io` in `def io.x` or `class << io`: the one object the local holds.
     fn object_held(&self, expr: &Node<'_>) -> Option<crate::core::Unsettled> {
-        let read = expr.as_local_variable_read_node()?;
-        let local = String::from_utf8(read.name().as_slice().to_vec()).ok()?;
+        // `def (io).x` is `def io.x`.
+        if let Some(parens) = expr.as_parentheses_node() {
+            let body = parens.body()?;
+            let Some(statements) = body.as_statements_node() else {
+                return self.object_held(&body);
+            };
+            let mut body = statements.body().iter();
+            let only = body.next()?;
+            return body
+                .next()
+                .is_none()
+                .then(|| self.object_held(&only))
+                .flatten();
+        }
+        // An `@ivar` names the object as a local does, though trekr does not
+        // type it (`resolve::defined_on`).
+        let name = if let Some(read) = expr.as_local_variable_read_node() {
+            read.name().as_slice().to_vec()
+        } else if let Some(read) = expr.as_instance_variable_read_node() {
+            read.name().as_slice().to_vec()
+        } else if expr.as_it_local_variable_read_node().is_some() {
+            b"it".to_vec()
+        } else {
+            return None;
+        };
+        let local = String::from_utf8(name).ok()?;
         let at = self.pos(expr.location().start_offset());
         Some(crate::core::Unsettled::Object { local, at })
     }

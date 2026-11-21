@@ -1618,6 +1618,10 @@ pub(crate) fn defined_on(
             .map_or(DefinedOn::Unknown, |r| DefinedOn::Object(r.fqn))
     };
     match def.unsettled.as_ref()? {
+        // An `@ivar`'s object is not typed: its writes may be in any method.
+        crate::core::Unsettled::Object { local, .. } if local.starts_with('@') => {
+            Some(DefinedOn::Unknown)
+        }
         crate::core::Unsettled::Object { local, at } => {
             // The writes the receiver's read can see, and only when they agree:
             // a parameter, or a value of no type, leaves the object unknown.
@@ -2167,7 +2171,9 @@ fn chained(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) ->
         }
         RecvValue::Main => None,
         // `self` in a method defined on an object: what the local holds,
-        // when the writes its read sees agree (DEC-562), else untyped.
+        // when the writes its read sees agree (DEC-562), else untyped, as
+        // an `@ivar`'s is (`defined_on`).
+        RecvValue::Held { local, .. } if local.starts_with('@') => None,
         RecvValue::Held { local, at } => {
             let read = Call {
                 recv: RecvShape::Local,

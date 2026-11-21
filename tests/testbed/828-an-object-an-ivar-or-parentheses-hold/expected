@@ -1,0 +1,13 @@
+# A method defined on what an instance variable holds (`def @w.x`,
+# `class << @w`) is that object's, as `def w.x` is a local's (DEC-562,
+# DEC-740): it was filed as `Runner.ivar_def`, a class method no call
+# names, `unreferenced`, `clear`. trekr does not type the object, so a
+# call of the name on any receiver may reach it.
+dead app/a.rb Runner#ivar_def=single-caller~@w Runner#ivar_singleton=single-caller~@w
+refs app/a.rb:8:12 confirmed=0 possible=1 excluded=0 sites=app/a.rb:20:8
+# `self` in its body is that untyped object, not Runner (DEC-795), so the
+# bare `foo_only` may be Foo's: it was "no such method" on Runner.
+refs Foo#foo_only confirmed=0 possible=1 excluded=0
+# The same for `def (a).x` and Ruby 3.4's `it`: parentheses and the
+# implicit block parameter hold an object as a local does.
+dead app/a.rb Runner#paren_def=unreferenced~`a` Runner#it_def=unreferenced~`it`

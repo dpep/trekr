@@ -183,6 +183,7 @@
 825-a-block-in-an-objects-method-may-change-self 4770a7b9e3cfb3cb
 826-an-instances-method-is-not-its-classs 21fe6b973791f231
 827-an-objects-method-overrides-its-classs 836fd136463e7c9c
+828-an-object-an-ivar-or-parentheses-hold 2527ed97abf9f20f
 885-a-second-bundles-manifest-is-refused 6dd2e5b026ee19d8
 900-a-callback-symbol-of-a-commit-job-or-test-hook-is-a-reference 4c8bf98dd1dd911c
 901-a-route-names-its-action-by-keyword-or-hash-rocket cc89def7b9d15b76

@@ -122,6 +122,12 @@
   to a different owner", and `--dead` graded it `override`, "no call
   names it". The call is `possible`. `--def` at `w.label` still answers
   Widget#label.
+- **`--dead` reads `def @w.x`, `class << @w`, `def (io).x` and `def it.x`
+  as the object's**: each was filed as the class's own method, `def @w.e`
+  as `Runner.e`, `unreferenced`, `clear`, with its body's bare calls on
+  Runner. Each is `lower`, defined on an object trekr cannot type (or
+  typed as the local in parentheses is), and a call of the name may reach
+  it.
 - **`--dead` reads `def io.x` and `class << io` at the top of a script
   as the object's**, as it does in a class: there `top_write`, called as
   `io.top_write`, was `unreferenced`, `clear`, and so was a method only its

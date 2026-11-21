@@ -17843,3 +17843,22 @@ one object — the read DEC-796 left out for a method the class lacks — and
 whether a call on every Widget should then be hedged by one object's stub
 (DEC-562 declined to place a test's stub on its class for the same
 reason). That is a design call, left open.
+
+## DEC-828 — An `@ivar`, parentheses and `it` hold an object as a local does
+
+**Decided.** DEC-562's and DEC-740's reading of `def io.x` and `class <<
+io` covers `def @w.x` and `class << @w`, `def (io).x` and `class << (io)`
+(one expression in parentheses is that expression), and Ruby 3.4's
+`def it.x` in a block, beside the `_1` that was already a local. An
+`@ivar`'s object is never typed — its writes may be in any method of the
+class — so such a row is `lower`, "defined on the object `@w` holds, which
+trekr cannot type", every call of the name may reach it (DEC-796), and a
+bare call in its body is untyped (DEC-795). A parenthesized local and
+`it` are typed as a local is. Testbed 828.
+
+**Why.** `def @w.e` was filed as the class's own method `Runner.e`,
+`unreferenced`, `clear`, and its body's bare `foo_only` was "no such
+method" on Runner; `def (a).z`, `def it.v` and `class << @foo` the same.
+
+**No store change.** The mark is not stored (DEC-562): testbed 828's
+input hashes the same before and after.
