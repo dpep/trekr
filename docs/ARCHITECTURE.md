@@ -1085,6 +1085,7 @@ the new binary in place (DEC-050).
 | `convert.rs` | UTF-16 ↔ byte columns, spans, a per-file line index |
 | `reload.rs` | hot reload: the launch-path stamp, probing the new build, the handoff file, the exec |
 | `miss.rs` | a click that came back empty, written to the log (DEC-083); `src/log/misses.rs` reads it back |
+| `wait.rs` | a request whose answer waits for the checkout's index, parked off the loop, then answered or refused (DEC-811) |
 
 **A view template is a document like a Ruby file** (DEC-520): its facts,
 variables, requires and syntax errors are read from its Ruby (an ERB
@@ -1151,8 +1152,21 @@ note that it was cut.
 
 **While a first index fills the store** (DEC-320) a hover ends "trekr is
 still indexing this checkout (N of M files read, counting its gems and Ruby's), so this answer may change",
-completion is `isIncomplete`, and references list every same-name site the
-receiver would rule out, after the rest.
+completion is `isIncomplete`, and a definition says once, as a
+`window/showMessage`, that it answers from what is read so far (DEC-331).
+
+**No empty answer stands in for "not indexed yet"** (DEC-811, `wait.rs`).
+The CLI's rule (DEC-500), over LSP: references, implementation, incoming
+calls and workspace symbols wait for the whole index; definition,
+declaration and the call hierarchy's prepare and outgoing calls wait for
+the checkout's first part, and after it only when they found nothing. A
+waiting request is parked, not served: the loop keeps answering other
+requests, `$/cancelRequest` and `shutdown`, and tries it again each time
+the index commits. When the index ends it is answered; after 30 s, at
+shutdown, or at once when this session indexes nothing, it is refused with
+`RequestFailed` (-32803) and a message saying how far the index has got.
+An empty answer no index would change — no name at the caret, an
+unreadable file — goes out at once.
 
 **Hover is for a person reading code** (DEC-052), so it shows what the
 definition is and leaves out how it was found:

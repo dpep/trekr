@@ -23,7 +23,7 @@ belongs to:
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
 | `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 680, 690, 730, 770, 771, 772 |
-| LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646, 810 |
+| LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646, 810, 811 |
 | Scope and housekeeping | 030, 063, 640 |
 
 A few revisits are subsections filed under a neighbouring entry, as they
@@ -9746,7 +9746,8 @@ write. While the mark stands:
 - text output adds one stderr line saying how much is read;
 - in the language server, a hover ends "trekr is still indexing this
   checkout (N of M files read), so this answer may change", completion is
-  `isIncomplete`, and references rule nothing out. A definition has no field
+  `isIncomplete`, and references rule nothing out (*superseded by DEC-811:*
+  they wait for the whole index). A definition has no field
   to say it in; the `$/progress` the index already reports is the editor's
   disclosure there. (*Amended by DEC-331:* the first definition or references
   asked says so once, as a `window/showMessage`.)
@@ -18073,3 +18074,70 @@ a message ends, and a wrong guess misreads every message after it.
 
 Unit tests in `serve::wire` cover each tolerated form and each refusal;
 `content_length_counts_bytes_not_characters` pins the byte count.
+
+## DEC-811 — A language-server request waits for the index rather than answer empty
+
+**Decided.** While a checkout's index is being built — never indexed, or a
+first index's mark standing (DEC-320) — a request whose answer depends on
+the index is held, off the serve loop, by the rule the CLI already follows
+(DEC-500):
+
+- **the whole checkout** — references, implementation, incoming calls,
+  workspace symbols — waits for the whole index: a caller or an override
+  may be in any file;
+- **a position** — definition, declaration, the call hierarchy's prepare
+  and outgoing calls — waits for the checkout's first part (DEC-322), and
+  after it only when it found nothing. What it found in the first part is
+  answered, and DEC-331's message says it is partial.
+
+A held request is retried each time the checkout's index moves (a commit,
+its end, or the index no longer coming) and answered when the index ends.
+It is refused with `RequestFailed` and a message saying how far the index
+has got — "trekr has no whole answer for ~/app yet: it is still being
+indexed (812 of 4000 files read, counting its gems and Ruby's)" — after 30 s, at `shutdown`, or at
+once when the session indexes nothing (`initializationOptions.index:
+false`), where the message names `trekr --index`. An empty answer the
+handler says no index would change (no name at the caret, an unreadable
+file, a file in no checkout) is answered at once, and an index that failed
+leaves answers as they were: it says so itself (DEC-039).
+
+**Why.** On a first launch definition answered `null` and references the
+open file's own sites, with nothing said, until the first part landed
+(0.4–0.5 s on mastodon), and references from a partial index after it;
+only hover said "not indexed yet". Spoom's client, which opens no file,
+got `[]` for every definition, reference and workspace symbol on a cold
+store. An empty list is read as "there is none", which is the one thing
+trekr cannot know yet; the CLI had stopped saying it in DEC-500.
+
+**Shape.** Held, not answered on the request: the loop is single-threaded,
+so blocking there would hold `$/cancelRequest`, `shutdown` and every other
+request behind the index. A held request is a parked message the loop
+revisits at the pace it already wakes for an index (250 ms), and a hot
+reload waits for none to be held. `$/cancelRequest` answers it
+`RequestCancelled`.
+
+**Why `RequestFailed`, not `ContentModified`.** The spec gives
+`ContentModified` for a result a change invalidated while it was computed,
+and clients are told not to show it — VS Code's client drops it as an
+empty answer, which is the silence this removes. `RequestFailed` is a
+well-formed request that failed, with a message "for people".
+
+**The wait.** 30 s: a cold index of discourse took 7–11 s and of mastodon
+about 9 s, and the first part lands within a second (DEC-322), so a
+position rarely waits at all and a whole question waits about one index.
+`TREKR_TEST_INDEX_WAIT_MS` shortens it for the suite.
+
+**The cost.** References asked mid-index wait for the whole of it, where
+DEC-323 answered in under a second from what was read; that answer listed
+every same-name site the receiver would rule out (DEC-320) and could not
+say so. No work-done progress is sent for a held request: VS Code sends no
+`workDoneToken` for these (DEC-331), and the index's own `$/progress` is
+already on screen.
+
+**Supersedes** DEC-320's "references rule nothing out" and DEC-323's
+references within a second, in the language server.
+
+Tests: `a_definition_asked_before_the_index_waits_for_it_while_the_loop_serves`,
+`a_request_the_index_outlasts_is_refused_saying_why`,
+`with_indexing_off_an_unindexed_checkout_is_refused_not_answered_empty`,
+`answers_from_a_partial_index_say_so_and_references_wait_for_the_whole`.

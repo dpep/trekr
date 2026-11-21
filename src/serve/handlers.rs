@@ -595,6 +595,11 @@ const NO_CHECKOUT: &str = "the file is in no checkout trekr knows";
 const UNREADABLE: &str = "the file could not be read";
 const NO_NAME: &str = "no name at this position";
 
+/// An empty answer no index would change: one not to wait on (DEC-811).
+pub(super) fn index_free(why: &str) -> bool {
+    [NO_CHECKOUT, UNREADABLE, NO_NAME].contains(&why)
+}
+
 /// A call answer short of certain is counted `uncertain`, with its reason
 /// noted for the miss log — the same rule for definition and hover.
 fn note_uncertain(answer: &crate::resolve::MethodAnswer) {

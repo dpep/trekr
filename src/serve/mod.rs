@@ -24,6 +24,7 @@ mod reload;
 mod schema;
 mod state;
 mod variables;
+mod wait;
 mod wire;
 
 use crate::log::Log;
@@ -39,6 +40,7 @@ use lsp_types::{
 use state::Session;
 use std::path::PathBuf;
 use std::time::Duration;
+use wait::Verdict;
 
 /// What this server tells a client it can do. Nothing here is aspirational —
 /// every one is answered below.
@@ -302,6 +304,14 @@ fn serve(
         indexer.want(root.clone(), false);
     }
     let mut warm = Warm::Cold;
+    let turn = Turn {
+        inbox,
+        writer,
+        spelling: spelling.as_ref(),
+        log,
+    };
+    // Requests waiting for an index (DEC-811), in the order they came.
+    let mut parked: Vec<wait::Parked> = Vec::new();
 
     // Reopens this session, bounded: a store that reads as replaced straight
     // after reopening must not be reopened at every message.
@@ -317,6 +327,33 @@ fn serve(
         }
         session.reindexing = indexer.after_upgrade();
         session.background = indexer.view();
+        for mut held in std::mem::take(&mut parked) {
+            if turn.inbox.is_cancelled(&held.request.id) {
+                let (response, counted) = turn.respond(&mut session, &held.request);
+                turn.deliver(&mut session, response, counted, &mut first_request)?;
+            } else if let Some(why) = held.expired(&session) {
+                turn.refuse(&held.request, held.since, why, &mut first_request)?;
+            } else if held.moved(&session) {
+                let (response, mut counted) = turn.respond(&mut session, &held.request);
+                match wait::verdict(
+                    &mut session,
+                    &held.request,
+                    &response,
+                    counted.why.as_deref(),
+                ) {
+                    Verdict::Answer => {
+                        counted.latency = Some(held.since.elapsed());
+                        turn.deliver(&mut session, response, counted, &mut first_request)?;
+                    }
+                    Verdict::Wait(_) => parked.push(held),
+                    Verdict::Refuse(why) => {
+                        turn.refuse(&held.request, held.since, why, &mut first_request)?;
+                    }
+                }
+            } else {
+                parked.push(held);
+            }
+        }
         // A new binary at the launch path is about to take over, with the
         // store it opens; reopening here would only make this one's.
         let replacing = launched.as_ref().is_some_and(|w| w.changed().is_some());
@@ -337,6 +374,7 @@ fn serve(
         // not end.
         if let Some(watch) = &mut launched
             && !indexer.busy()
+            && parked.is_empty()
             && inbox.is_quiet()
             && let Some(stamp) = watch.changed()
         {
@@ -377,7 +415,7 @@ fn serve(
         // arrived; while an index runs, wake periodically to notice it finish.
         let timeout = if warm < Warm::Done {
             Some(Duration::ZERO)
-        } else if indexer.busy() || indexer.waiting() {
+        } else if indexer.busy() || indexer.waiting() || !parked.is_empty() {
             Some(Duration::from_millis(250))
         } else {
             launched.is_some().then_some(RECHECK)
@@ -390,64 +428,32 @@ fn serve(
         match message {
             Message::Request(request) => {
                 if request.method == lsp_types::request::Shutdown::METHOD {
+                    // Nothing parked is answered after this: say so now.
+                    for held in std::mem::take(&mut parked) {
+                        let why = held.abandoned(&session);
+                        turn.refuse(&held.request, held.since, why, &mut first_request)?;
+                    }
                     writer.send(Response::new_ok(request.id, ()).into())?;
                     log.event("shutdown", serde_json::json!({}));
                     await_exit(writer, inbox);
                     return Ok(());
                 }
-                let id = request.id.clone();
-                let response = if inbox.is_cancelled(&id) {
-                    // Withdrawn before its turn came: the cheapest answer, and
-                    // the one that keeps a queue of stale hovers from being
-                    // worked through one by one.
-                    log.event(
-                        "request",
-                        serde_json::json!({ "op": request.method, "status": "cancelled" }),
-                    );
-                    let counted = Counted {
-                        feature: feature_of(&request.method),
-                        flags: String::new(),
-                        outcome: Outcome::Cancelled,
-                        latency: None,
-                        miss: None,
-                    };
-                    (cancelled(id.clone()), counted)
-                } else {
-                    let cancel = || inbox.is_cancelled(&id);
-                    let out = Outbound {
-                        writer,
-                        spelling: spelling.as_ref(),
-                        log,
-                    };
-                    let (mut response, counted) = dispatch(&mut session, request, &out, &cancel);
-                    if let (Some(spelling), Some(result)) = (&spelling, response.result.as_mut()) {
-                        spelling.apply(result);
+                let started = std::time::Instant::now();
+                let (response, counted) = turn.respond(&mut session, &request);
+                match wait::verdict(&mut session, &request, &response, counted.why.as_deref()) {
+                    Verdict::Answer => {
+                        turn.deliver(&mut session, response, counted, &mut first_request)?;
                     }
-                    (response, counted)
-                };
-                inbox.settle(&id);
-                writer.send(Message::Response(response.0))?;
-                // Counted once the answer is on its way, never ahead of it.
-                let counted = response.1;
-                let cold = first_request && counted.latency.is_some();
-                log.count(
-                    &counted.feature,
-                    counted.flags,
-                    counted.outcome,
-                    counted.latency,
-                    cold,
-                );
-                if cold {
-                    first_request = false;
-                }
-                if let Some(miss) = counted.miss {
-                    let read = session
-                        .document(&miss.path)
-                        .map(|d| (d.reads(miss.position), d.text.clone()));
-                    log.event(
-                        "miss",
-                        miss.event(read.as_ref().map(|(at, text)| (*at, text.as_str()))),
-                    );
+                    Verdict::Wait(root) => {
+                        log.event(
+                            "index_wait",
+                            serde_json::json!({ "op": request.method, "status": "parked" }),
+                        );
+                        parked.push(wait::Parked::new(&session, request, root));
+                    }
+                    Verdict::Refuse(why) => {
+                        turn.refuse(&request, started, why, &mut first_request)?;
+                    }
                 }
             }
             Message::Notification(notification) => {
@@ -548,6 +554,114 @@ fn cancelled(id: RequestId) -> Response {
         lsp_server::ErrorCode::RequestCanceled as i32,
         "cancelled".into(),
     )
+}
+
+/// What answering a request needs of the loop.
+struct Turn<'a> {
+    inbox: &'a Inbox,
+    writer: &'a wire::Writer,
+    spelling: Option<&'a Spelling>,
+    log: &'a Log,
+}
+
+impl Turn<'_> {
+    /// The answer to `request`, in the client's spelling: not yet sent.
+    fn respond(&self, session: &mut Session, request: &Request) -> (Response, Counted) {
+        let id = request.id.clone();
+        if self.inbox.is_cancelled(&id) {
+            // Withdrawn before its turn came: the cheapest answer, and the one
+            // that keeps a queue of stale hovers from being worked through one
+            // by one.
+            self.log.event(
+                "request",
+                serde_json::json!({ "op": request.method, "status": "cancelled" }),
+            );
+            let counted = Counted {
+                feature: feature_of(&request.method),
+                flags: String::new(),
+                outcome: Outcome::Cancelled,
+                latency: None,
+                miss: None,
+                why: None,
+            };
+            return (cancelled(id), counted);
+        }
+        let cancel = || self.inbox.is_cancelled(&id);
+        let out = Outbound {
+            writer: self.writer,
+            spelling: self.spelling,
+            log: self.log,
+        };
+        let (mut response, counted) = dispatch(session, request.clone(), &out, &cancel);
+        if let (Some(spelling), Some(result)) = (self.spelling, response.result.as_mut()) {
+            spelling.apply(result);
+        }
+        (response, counted)
+    }
+
+    /// Send an answer, then count it — never ahead of it.
+    fn deliver(
+        &self,
+        session: &mut Session,
+        response: Response,
+        counted: Counted,
+        first_request: &mut bool,
+    ) -> anyhow::Result<()> {
+        self.inbox.settle(&response.id);
+        self.writer.send(Message::Response(response))?;
+        let cold = *first_request && counted.latency.is_some();
+        self.log.count(
+            &counted.feature,
+            counted.flags,
+            counted.outcome,
+            counted.latency,
+            cold,
+        );
+        if cold {
+            *first_request = false;
+        }
+        if let Some(miss) = counted.miss {
+            let read = session
+                .document(&miss.path)
+                .map(|d| (d.reads(miss.position), d.text.clone()));
+            self.log.event(
+                "miss",
+                miss.event(read.as_ref().map(|(at, text)| (*at, text.as_str()))),
+            );
+        }
+        Ok(())
+    }
+
+    /// Answer `request` with `why` its index leaves it no whole answer
+    /// (DEC-811): `RequestFailed`, whose message the spec says is for people.
+    fn refuse(
+        &self,
+        request: &Request,
+        since: std::time::Instant,
+        why: String,
+        first_request: &mut bool,
+    ) -> anyhow::Result<()> {
+        self.log.event(
+            "index_wait",
+            serde_json::json!({
+                "op": request.method,
+                "status": "refused",
+                "ms": ms(since.elapsed()),
+            }),
+        );
+        self.inbox.settle(&request.id);
+        let code = lsp_server::ErrorCode::RequestFailed as i32;
+        self.writer
+            .send(Response::new_err(request.id.clone(), code, why).into())?;
+        self.log.count(
+            &feature_of(&request.method),
+            String::new(),
+            Outcome::NotIndexed,
+            Some(since.elapsed()),
+            std::mem::take(first_request),
+        );
+        Ok(())
+    }
 }
 
 /// What a successor needs from the running session.
@@ -763,6 +877,8 @@ struct Counted {
     /// A definition or hover that came back empty or unsure, logged once the
     /// answer is sent (DEC-083).
     miss: Option<miss::Miss>,
+    /// The handler's reason for an empty answer, if it gave one.
+    why: Option<String>,
 }
 
 /// The operation, without the protocol's namespace: `definition`, `hover`,
@@ -799,6 +915,7 @@ fn dispatch(
             outcome: Outcome::Error("internal"),
             latency: None,
             miss: None,
+            why: None,
         };
         let code = lsp_server::ErrorCode::InternalError as i32;
         (Response::new_err(id, code, panicked.to_string()), counted)
@@ -874,7 +991,7 @@ fn answer(
             path,
             position,
             outcome: outcome.label(),
-            why,
+            why: why.clone(),
         });
     let counted = Counted {
         feature: feature_of(&method),
@@ -882,6 +999,7 @@ fn answer(
         outcome,
         latency: Some(elapsed),
         miss,
+        why,
     };
 
     let response = match (result, code) {

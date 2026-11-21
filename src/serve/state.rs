@@ -386,6 +386,11 @@ impl Session {
         std::mem::take(&mut self.resume)
     }
 
+    /// Found unindexed since the loop last asked: it is about to index it.
+    pub(crate) fn will_index(&self, root: &Path) -> bool {
+        self.unindexed.iter().any(|r| r == root)
+    }
+
     /// Checkouts found unindexed since the last call.
     pub(crate) fn take_unindexed(&mut self) -> Vec<PathBuf> {
         std::mem::take(&mut self.unindexed)

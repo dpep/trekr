@@ -196,9 +196,21 @@ pub(crate) struct View {
     /// Indexed this session, and not to be again unasked. One that succeeded
     /// is in the store, and never asked about here.
     failed: HashSet<PathBuf>,
+    /// Running, queued, or to be run again.
+    coming: HashSet<PathBuf>,
 }
 
 impl View {
+    /// Whether this session's index of `root` is running or will run.
+    pub(crate) fn coming(&self, root: &Path) -> bool {
+        self.coming.contains(root)
+    }
+
+    /// Whether this session indexes at all.
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled
+    }
+
     /// What is under way for `root`, as a hover may say it.
     pub(crate) fn of(&self, root: &Path) -> Background {
         if !self.enabled || self.failed.contains(root) {
@@ -290,6 +302,13 @@ impl Indexer {
                 .done
                 .iter()
                 .filter(|root| !queued(root))
+                .cloned()
+                .collect(),
+            coming: self
+                .queue
+                .iter()
+                .chain(self.running.as_ref().map(|job| &job.root))
+                .chain(self.waiting.iter().map(|(root, _)| root))
                 .cloned()
                 .collect(),
         }

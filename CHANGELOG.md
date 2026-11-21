@@ -147,6 +147,15 @@
   LSP client, which writes the first and a `\n` after each body, had the
   connection closed at `initialize`. A missing or unreadable
   `Content-Length` still closes it.
+- **`trekr --lsp` no longer answers empty while a checkout is first
+  indexed**: definition answered `null`, and references the open file's
+  sites alone, until the index's first part landed, with nothing said.
+  Now a definition waits for that part, and references wait for the whole
+  index, as `--refs` does; other requests, `$/cancelRequest` and
+  `shutdown` are served meanwhile. A request still waiting after 30 s or
+  at shutdown is refused with `RequestFailed`, saying the checkout is being
+  indexed; with indexing turned off (`trekr.index: false`), at once,
+  naming `trekr --index`.
 
 ## 0.10.2 — 2026-11-20
 

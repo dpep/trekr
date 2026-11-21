@@ -2431,7 +2431,7 @@ fn workspace_symbol_widens_when_the_clients_root_is_not_a_checkout() {
     let answer = session.request("workspace/symbol", serde_json::json!({"query": "Sprocket"}));
     let names: Vec<&str> = answer["result"]
         .as_array()
-        .expect("symbols, not null")
+        .unwrap_or_else(|| panic!("symbols, not null: {answer}"))
         .iter()
         .map(|s| s["name"].as_str().unwrap())
         .collect();
@@ -6061,7 +6061,7 @@ fn a_file_opened_behind_anothers_first_index_is_handed_to_it() {
 }
 
 #[test]
-fn answers_from_a_partial_index_say_so_and_rule_nothing_out() {
+fn answers_from_a_partial_index_say_so_and_references_wait_for_the_whole() {
     let (dir, db) = scratch("warming");
     git(&dir, &["init", "-q"]);
     let source = concat!(
@@ -6172,15 +6172,44 @@ fn answers_from_a_partial_index_say_so_and_rule_nothing_out() {
         }),
     );
     assert_eq!(listed["result"]["isIncomplete"], true, "{listed}");
-    assert_eq!(
-        refs(&mut session),
-        vec![14, 12],
-        "Widget's call is not ruled out against a partial index — listed after Gadget's"
+    // References are about the whole checkout: asked mid-index they wait for
+    // it (DEC-811), and are answered whole the moment it ends.
+    let waiting = send_request(
+        &mut session,
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 5, "character": 6},
+            "context": {"includeDeclaration": true},
+        }),
+    );
+    let outline = send_request(
+        &mut session,
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    let (_, before) = answer_to(&mut session, outline);
+    assert!(
+        !before.contains(&waiting),
+        "answered from the partial index"
     );
 
     store
         .execute("DELETE FROM meta WHERE key = ?1", [key])
         .unwrap();
+    let (answer, _) = answer_to(&mut session, waiting);
+    let lines: Vec<u64> = answer["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("references: {answer}"))
+        .iter()
+        .map(|l| l["range"]["start"]["line"].as_u64().unwrap() + 1)
+        .filter(|line| *line > 8)
+        .collect();
+    assert_eq!(
+        lines,
+        vec![14],
+        "Widget's call ruled out, as a whole index does"
+    );
     let hover = hover_at(&mut session, &dir, 11, 9);
     assert!(!hover.contains("still indexing"), "{hover}");
     assert_eq!(refs(&mut session), vec![14]);
@@ -6573,6 +6602,194 @@ fn a_templates_answers_read_the_open_buffers_of_the_files_they_follow() {
         definition(&mut session, show, 1, 5),
         ["widgets_controller.rb:7"]
     );
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A `git` on `PATH` whose index listing (`ls-files -s`) waits until the
+/// returned gate file exists, so a test decides when the index may run. A
+/// shim removed with its test, or two minutes, opens it too: the index child
+/// outlives the server, and must not outlive the test by much.
+fn gated_git(dir: &Path) -> (PathBuf, PathBuf) {
+    let shim = dir.with_extension("gated-git");
+    fs::create_dir_all(&shim).unwrap();
+    let gate = shim.join("open");
+    let real = fs::canonicalize(support::git_only().join("git")).unwrap();
+    let wrapper = shim.join("git");
+    let (g, s, r) = (gate.display(), shim.display(), real.display());
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in *'ls-files -s'*) n=0; while [ ! -e '{g}' ] && [ -d '{s}' ] && [ $n -lt 2400 ]; do /bin/sleep 0.05; n=$((n+1)); done ;; esac\nexec '{r}' \"$@\"\n"
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(
+        &wrapper,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    (shim, gate)
+}
+
+/// A never-indexed Ruby project (it has a Gemfile, so the server indexes it
+/// at start) behind `gated_git`, with `app.rb` open.
+fn unindexed_session(label: &str, env: &[(&str, &str)]) -> (PathBuf, PathBuf, Session) {
+    let (dir, db) = scratch(label);
+    let source = repo(&dir);
+    fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    let (shim, gate) = gated_git(&dir);
+    let path = shim.to_string_lossy().into_owned();
+    let mut vars = vec![("PATH", path.as_str())];
+    vars.extend_from_slice(env);
+    let mut session = Session::start_with(&db, &dir, &vars);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    (dir, gate, session)
+}
+
+/// Send a request without waiting for its answer; its id.
+fn send_request(session: &mut Session, method: &str, params: serde_json::Value) -> i64 {
+    session.next_id += 1;
+    let id = session.next_id;
+    session.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": method, "params": params
+    }));
+    id
+}
+
+/// Read until the response to `id`: it, and the ids of the other responses
+/// read on the way.
+fn answer_to(session: &mut Session, id: i64) -> (serde_json::Value, Vec<i64>) {
+    let mut others = Vec::new();
+    loop {
+        let message = session.read();
+        if message.get("method").is_some() {
+            continue;
+        }
+        match message.get("id").and_then(|v| v.as_i64()) {
+            Some(got) if got == id => return (message, others),
+            Some(got) => others.push(got),
+            None => {}
+        }
+    }
+}
+
+/// Go to Definition on `w.save`, in app.rb.
+fn save_at(dir: &Path) -> serde_json::Value {
+    serde_json::json!({
+        "textDocument": {"uri": uri_of(dir, "app.rb")},
+        "position": {"line": 7, "character": 6},
+    })
+}
+
+/// A definition asked before the checkout's first index has read anything
+/// waits for it rather than answering empty, and the loop serves other
+/// requests and cancellations meanwhile.
+#[test]
+fn a_definition_asked_before_the_index_waits_for_it_while_the_loop_serves() {
+    let (dir, gate, mut session) = unindexed_session("wait-index", &[]);
+    let waiting = send_request(&mut session, "textDocument/definition", save_at(&dir));
+
+    let outline = send_request(
+        &mut session,
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    let (symbols, before) = answer_to(&mut session, outline);
+    assert!(symbols["result"].is_array(), "the outline needs no index");
+    assert!(
+        !before.contains(&waiting),
+        "the definition was answered before the index"
+    );
+
+    let withdrawn = send_request(&mut session, "textDocument/definition", save_at(&dir));
+    session.notify("$/cancelRequest", serde_json::json!({"id": withdrawn}));
+    let (cancelled, _) = answer_to(&mut session, withdrawn);
+    assert_eq!(cancelled["error"]["code"], -32800, "{cancelled}");
+
+    fs::write(&gate, "").unwrap();
+    let (answer, _) = answer_to(&mut session, waiting);
+    let found: Vec<(String, u64)> = answer["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("locations, once indexed: {answer}"))
+        .iter()
+        .map(|l| {
+            let uri = l["uri"].as_str().unwrap();
+            let file = uri.rsplit('/').next().unwrap().to_string();
+            (file, l["range"]["start"]["line"].as_u64().unwrap())
+        })
+        .collect();
+    assert_eq!(found, [("app.rb".to_string(), 1)], "Widget#save");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(dir.with_extension("gated-git"));
+}
+
+/// A request still waiting when its wait runs out, or when the session
+/// shuts down, is refused with `RequestFailed` saying the checkout is being
+/// indexed — never answered empty.
+#[test]
+fn a_request_the_index_outlasts_is_refused_saying_why() {
+    let (dir, gate, mut session) =
+        unindexed_session("wait-refused", &[("TREKR_TEST_INDEX_WAIT_MS", "300")]);
+    let references = session.request(
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 1, "character": 6},
+            "context": {"includeDeclaration": true},
+        }),
+    );
+    assert_eq!(references["error"]["code"], -32803, "{references}");
+    let message = references["error"]["message"].as_str().unwrap();
+    assert!(
+        message.contains("not indexed yet") || message.contains("still being indexed"),
+        "{message}"
+    );
+
+    let parked = send_request(&mut session, "textDocument/definition", save_at(&dir));
+    let shutdown = send_request(&mut session, "shutdown", serde_json::Value::Null);
+    let (answer, _) = answer_to(&mut session, parked);
+    assert_eq!(answer["error"]["code"], -32803, "{answer}");
+    let (done, _) = answer_to(&mut session, shutdown);
+    assert!(done["error"].is_null(), "{done}");
+
+    // Let the index child the gate holds finish rather than outlive the test.
+    fs::write(&gate, "").unwrap();
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(dir.with_extension("gated-git"));
+}
+
+/// With background indexing turned off, a request that would answer empty
+/// from a checkout nobody indexed is refused at once, saying how to index it.
+#[test]
+fn with_indexing_off_an_unindexed_checkout_is_refused_not_answered_empty() {
+    let (dir, db) = scratch("wait-off");
+    repo(&dir);
+    fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    let mut session = Session::start(&db, &dir);
+    session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": format!("file://{}", dir.display()),
+            "capabilities": {},
+            "initializationOptions": {"index": false},
+        }),
+    );
+    session.notify("initialized", serde_json::json!({}));
+    let answer = session.request("textDocument/definition", save_at(&dir));
+    assert_eq!(answer["error"]["code"], -32803, "{answer}");
+    let message = answer["error"]["message"].as_str().unwrap();
+    assert!(message.contains("trekr --index"), "{message}");
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
