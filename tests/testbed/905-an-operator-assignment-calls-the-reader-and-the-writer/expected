@@ -6,3 +6,6 @@ dead app/models/widget.rb Widget#count=single-caller Widget#count==single-caller
 dead app/models/widget.rb Widget#size=single-caller Widget#size==single-caller
 refs Widget#total confirmed=1
 def app/models/user.rb:5:7 status=resolved owner=Widget name=total
+# The writer is written over its reader's name, not one column wider: just
+# after `total` is the reader, as it is for any name.
+def app/models/user.rb:5:12 status=resolved owner=Widget name=total

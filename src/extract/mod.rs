@@ -5451,7 +5451,7 @@ impl<'pr> Extractor<'_> {
             let Ok(name) = String::from_utf8(name.as_slice().to_vec()) else {
                 return;
             };
-            let fact = self.call_fact(
+            let mut fact = self.call_fact(
                 name,
                 receiver.as_ref(),
                 false,
@@ -5460,6 +5460,9 @@ impl<'pr> Extractor<'_> {
                 false,
                 None,
             );
+            // The writer is written as its reader: `total=` spans `total`.
+            fact.written
+                .get_or_insert((message.end_offset() - message.start_offset()) as u32);
             self.facts.calls.push(fact);
         }
     }

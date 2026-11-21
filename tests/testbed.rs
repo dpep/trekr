@@ -314,32 +314,31 @@ fn lsp_outgoing(lsp: &mut Lsp, dir: &Path, target: &str) -> Option<Option<String
         serde_json::json!({ "item": item }),
     );
     let calls = outgoing.as_array()?;
-    let covers = |range: &serde_json::Value| {
+    // The range under the caret, else the one ending at it: `--def` just
+    // after a name answers that name.
+    let covers = |range: &serde_json::Value, after: bool| {
         let (start, end) = (&range["start"], &range["end"]);
-        start["line"] == line - 1
-            && start["character"]
-                .as_u64()
-                .is_some_and(|c| c < u64::from(col))
-            && end["character"]
-                .as_u64()
-                .is_some_and(|c| c >= u64::from(col))
+        let start = start["character"].as_u64().unwrap_or(u64::MAX);
+        let end = end["character"].as_u64().unwrap_or(0);
+        let col = u64::from(col);
+        range["start"]["line"] == line - 1
+            && start < col
+            && if after { end == col - 1 } else { end >= col }
     };
-    Some(
-        calls
-            .iter()
-            .find(|call| {
-                call["fromRanges"]
-                    .as_array()
-                    .is_some_and(|ranges| ranges.iter().any(covers))
-            })
-            .map(|call| {
-                let to = &call["to"];
-                let start = &to["selectionRange"]["start"];
-                let full = site(dir, &to["uri"], start);
-                full.rsplit_once(':')
-                    .map_or(full.clone(), |(at, _)| at.to_string())
-            }),
-    )
+    let reaching = |after: bool| {
+        calls.iter().find(|call| {
+            call["fromRanges"]
+                .as_array()
+                .is_some_and(|ranges| ranges.iter().any(|r| covers(r, after)))
+        })
+    };
+    Some(reaching(false).or_else(|| reaching(true)).map(|call| {
+        let to = &call["to"];
+        let start = &to["selectionRange"]["start"];
+        let full = site(dir, &to["uri"], start);
+        full.rsplit_once(':')
+            .map_or(full.clone(), |(at, _)| at.to_string())
+    }))
 }
 
 /// A path relative to the staged checkout, when it is in it.

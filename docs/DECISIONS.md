@@ -16921,7 +16921,9 @@ is the measurement, and it takes any repo with history.
 
 **Decided.** `w.count ||= 0`, `w.total += 1` and `w.label &&= x` record two
 calls at the name: the reader (no argument), then the writer (one), on the
-receiver as written, so `--refs` and `--dead` count both. `||=` and `&&=`
+receiver as written, so `--refs` and `--dead` count both. Both span the
+name as written: the writer `total=` covers `total`, not a column past it,
+so `--def` just after the name answers the reader. `||=` and `&&=`
 may skip the writer at runtime; it is still a caller, as a call under an
 `if` is. A safe-navigation form (`w&.count ||= 0`) is the same node, so
 the same handler reads it (not pinned by a case). **Not** the index forms (`h[k] ||= v`, `h[k] += 1`):
