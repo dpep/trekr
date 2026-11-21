@@ -17477,3 +17477,24 @@ method defined on an object and tiers by DEC-796 instead. Testbed 797.
 body, "no call names it", though `--def` placed the call on it.
 
 **No store change.** The mark is not stored (DEC-562).
+
+## DEC-798 — A bare call on `main` that lands on a top-level `def` is its call
+
+**Decided.** DEC-311 tiers a call against a top-level `def` by what its
+receiver's lookup finds: nothing is `possible`, a method of the receiver's
+own excludes it. Since DEC-445 a call at the top of a file runs on `main`,
+whose lookup answers with the one top-level `def` of the name, labelled
+Object's — which DEC-311 read as the receiver's own method and excluded.
+When the method found is that top-level `def`, the call is `confirmed`, as
+`--def` places it. Testbed 798.
+
+**Why.** `def helper_top; 1; end; helper_top` in a script: `--dead` graded
+`helper_top` `unreferenced`, `clear`.
+
+**Not done: `--refs` at a top-level `def`.** It still exits 64, "--refs
+takes a method's definition": the position names a method whose owner is
+the top level, which no `Owner#name` query can spell (`--dead` asks with
+an owner of `""`). Answering needs a decision on how that owner is written
+in a query and in `--json`'s `owner` (`""`, as `--dead` prints it, or
+`Object`, as `--def` does), and `cmd_refs` taking a query rather than its
+text.

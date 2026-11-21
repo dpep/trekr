@@ -165,6 +165,7 @@
 795-self-in-an-objects-method-is-that-object 732d8d295fc2f511
 796-refs-on-an-objects-method-counts-calls-it-may-take 4076bf39d1798e64
 797-an-object-at-the-top-level-is-an-object a423b7a455d1ec60
+798-refs-at-a-top-level-def c8d2dd9651a7a254
 800-a-predicate-matcher-references-its-predicate 402b329dc578cb3f
 801-a-test-cases-test-method-is-run-by-its-runner 108ccef07d52b101
 802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it b7fae01938694bf2

@@ -107,6 +107,10 @@
   as the object's**, as it does in a class: there `top_write`, called as
   `io.top_write`, was `unreferenced`, `clear`, and so was a method only its
   body calls. Both are `single-caller`, `lower`.
+- **`--dead` counts a bare call at the top of a script as a call of the
+  top-level method it runs**: `def helper_top; …; end; helper_top` left
+  `helper_top` `unreferenced`, `clear`, though `--def` on the call
+  answers it.
 
 ## 0.10.2 — 2026-11-20
 

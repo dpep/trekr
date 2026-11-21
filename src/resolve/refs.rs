@@ -489,6 +489,23 @@ fn tier(
                 0,
                 Some(Ruling::DifferentOwner),
             ),
+            // `main`'s lookup answers with the top-level `def` itself, as
+            // Object's (DEC-445).
+            Some(found)
+                if super::top_level_defs(tree, &call.name).iter().any(|d| {
+                    (&d.site.path, d.site.line, d.site.col)
+                        == (&found.site.path, found.site.line, found.site.col)
+                }) =>
+            {
+                here(
+                    Tier::Confirmed,
+                    receiver_type,
+                    Some(String::new()),
+                    "a call on `main` runs the method defined at the top level",
+                    0,
+                    None,
+                )
+            }
             Some(found) => here(
                 Tier::Excluded,
                 receiver_type,

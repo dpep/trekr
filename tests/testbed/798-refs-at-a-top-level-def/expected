@@ -1,3 +1,7 @@
 # A top-level `def` is Object's private method: a bare call on `main`
 # reaches it.
 def lib/t.rb:3:1 status=resolved owner=Object via=main
+# `--dead` graded `helper_top` `unreferenced`, `clear`, though the bare
+# call below it resolves to it: `main`'s lookup answers with the def as
+# Object's, and DEC-311's rule took that for a method of the receiver's own.
+dead lib/t.rb #helper_top=single-caller #unused_top=unreferenced
