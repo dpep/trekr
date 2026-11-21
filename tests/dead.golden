@@ -197,6 +197,8 @@
 913-a-concerns-class-methods-module-is-no-candidate 55fc35c42ab304ad
 930-a-test-only-methods-spec-goes-with-it 88269e2a6ae5b0a0
 935-a-spec-goes-only-where-it-tests-nothing-live 3e95e31caba9cfcf
+936-a-minitest-tests-setup-is-weighed aae4042b84b03057
+937-a-reopened-test-base-runs-its-setup-everywhere 1073eda59ab3b6c4
 940-a-nested-guard-only-under-validates d0077d05ca0ae951
 941-class-shift-onto-a-local da8f39fc75fc934d
 942-a-call-written-as-an-assignment-target d9e9a03582dd67b9

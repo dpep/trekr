@@ -427,6 +427,15 @@ impl Weigh<'_, '_> {
             end: span.end,
             nesting,
         };
+        if let Some(hook) = shape
+            .hooks_before(span)
+            .find(|h| h.kind == SpanKind::Unseen)
+        {
+            return Err(format!(
+                "setup names a method its class does not define, at line {}",
+                hook.start.line
+            ));
+        }
         // What an example asserts may be what a hook did before it.
         let mut spans = vec![(path.to_string(), span.start, span.end)];
         spans.extend(
@@ -434,6 +443,10 @@ impl Weigh<'_, '_> {
                 .hooks_before(span)
                 .map(|h| (path.to_string(), h.start, h.end)),
         );
+        // A Minitest test runs the setup its class inherits too.
+        if span.kind == SpanKind::Example && (span.call.is_empty() || span.call == "test") {
+            spans.extend(self.inherited_setup(path, shape, span)?);
+        }
         self.weigh(spans, &from)?;
         if span.kind == SpanKind::Group {
             for example in shape.examples_in(span) {
@@ -448,6 +461,100 @@ impl Weigh<'_, '_> {
             }
         }
         Ok(())
+    }
+
+    /// The hooks a Minitest test's class runs from its ancestors and its
+    /// other bodies: each checkout body's `setup` and statements, read as its
+    /// own body's are. Refused when an ancestor is unindexed (its hooks are
+    /// unseen) unless it is a framework's test base, whose checkout
+    /// reopenings are weighed whether the chain reaches them or not.
+    fn inherited_setup(
+        &self,
+        path: &str,
+        shape: &Shape,
+        span: &Span,
+    ) -> Result<Vec<(String, Pos, Pos)>, String> {
+        let Some(scope) = shape
+            .around(span.start)
+            .into_iter()
+            .rev()
+            .find(|s| s.kind == SpanKind::Scope)
+        else {
+            return Ok(Vec::new());
+        };
+        let facts = self
+            .files
+            .facts(path)
+            .ok_or_else(|| format!("unread {path}"))?;
+        let class = facts
+            .defs
+            .iter()
+            .find(|d| {
+                matches!(d.kind, crate::core::Kind::Class | crate::core::Kind::Module)
+                    && d.pos.line == scope.start.line
+            })
+            .ok_or_else(|| format!("no class opens line {}", scope.start.line))?;
+        let mut written = vec![class.name.clone()];
+        written.extend(class.nesting.iter().cloned());
+        let fqn = self
+            .tree
+            .scope_fqn(&written)
+            .ok_or_else(|| format!("{} unplaced", class.name))?;
+        let base = |name: &str| TEST_BASES.contains(&name.trim_start_matches("::"));
+        let ancestry = self.tree.ancestors(&fqn);
+        if let Some(hidden) = ancestry.unresolved.iter().find(|name| !base(name)) {
+            return Err(format!("{fqn} inherits {hidden}, unindexed"));
+        }
+        let names = ancestry
+            .chain
+            .iter()
+            .map(String::as_str)
+            .chain(TEST_BASES)
+            .collect::<Vec<_>>();
+        let mut out = Vec::new();
+        for name in names {
+            for site in self.tree.sites(name) {
+                if !self.tree.in_checkout(&site.path) {
+                    continue;
+                }
+                let relative = self.relative(&site.path);
+                if relative == path && site.line == scope.start.line {
+                    continue;
+                }
+                // A live module mixed into the test class: its setup is live code.
+                if !in_tests(&relative) {
+                    let facts = self
+                        .files
+                        .facts(&relative)
+                        .ok_or_else(|| format!("unread {relative}"))?;
+                    if let Some(def) = facts.defs.iter().find(|d| {
+                        d.kind == crate::core::Kind::Method
+                            && !d.singleton
+                            && SETUP.contains(&d.name.as_str())
+                            && self.tree.scope_fqn(&d.nesting).as_deref() == Some(name)
+                    }) {
+                        return Err(format!("{name}#{} ({relative}) runs first", def.name));
+                    }
+                    continue;
+                }
+                let other = self
+                    .shape(&relative)
+                    .ok_or_else(|| format!("unread {relative}"))?;
+                let hooks = other
+                    .scope_hooks(site.line)
+                    .ok_or_else(|| format!("no body read at {relative}:{}", site.line))?;
+                for hook in hooks {
+                    if hook.kind == SpanKind::Unseen {
+                        return Err(format!(
+                            "setup names a method its class does not define, at {relative}:{}",
+                            hook.start.line
+                        ));
+                    }
+                    out.push((relative.clone(), hook.start, hook.end));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Every call in the spans, and in each body they reach through test
@@ -857,6 +964,12 @@ enum SpanKind {
     /// any call named with a `!`. Not an `after`,
     /// which runs once the example has asserted what it asserts.
     Hook,
+    /// A class or module body: a Minitest test class's examples run its
+    /// `setup` and the statements of its body as hooks.
+    Scope,
+    /// A hook whose body is not read: `setup :name` with no `def name` in
+    /// its class. A unit it runs before is none.
+    Unseen,
 }
 
 struct Span {
@@ -936,6 +1049,32 @@ const READ_ELSEWHERE: [&str; 9] = [
     "include_examples",
     "pending",
     "skip",
+];
+
+/// What Minitest runs before each test: a method of the name, and Active
+/// Support's `setup` callback.
+const SETUP: [&str; 3] = ["before_setup", "setup", "after_setup"];
+
+/// What Minitest runs once the test has asserted, as an `after` hook.
+const TEARDOWN: [&str; 3] = ["before_teardown", "teardown", "after_teardown"];
+
+/// Test base classes whose own hooks are the framework's: an unindexed one
+/// hides nothing of the checkout's, but a reopening in the checkout does.
+const TEST_BASES: [&str; 14] = [
+    "Minitest::Test",
+    "MiniTest::Test",
+    "Minitest::Spec",
+    "MiniTest::Unit::TestCase",
+    "Test::Unit::TestCase",
+    "ActiveSupport::TestCase",
+    "ActionDispatch::IntegrationTest",
+    "ActionController::TestCase",
+    "ActionView::TestCase",
+    "ActionMailer::TestCase",
+    "ActionDispatch::SystemTestCase",
+    "ActiveJob::TestCase",
+    "ActionCable::Channel::TestCase",
+    "Rails::Generators::TestCase",
 ];
 
 /// Calls that include a shared group's hooks and `let`s into the group
@@ -1125,6 +1264,99 @@ impl Shape {
                     self.span(SpanKind::Hook, &name, name.clone(), &statement.location());
                 }
             }
+
+            /// A class or module body, as a Minitest test class runs it
+            /// around each test: its `setup` methods and `setup` callbacks,
+            /// and each statement of its body that is no test, `teardown`
+            /// or definition, are hooks.
+            fn scope_body(&mut self, body: Option<ruby_prism::Node<'_>>) {
+                let Some(body) = body else {
+                    return;
+                };
+                let Some(statements) = body.as_statements_node() else {
+                    self.span(SpanKind::Hook, "", String::new(), &body.location());
+                    return;
+                };
+                let defs: Vec<ruby_prism::DefNode<'_>> = statements
+                    .body()
+                    .iter()
+                    .filter_map(|s| s.as_def_node())
+                    .filter(|d| d.receiver().is_none())
+                    .collect();
+                for statement in statements.body().iter() {
+                    if let Some(def) = statement.as_def_node() {
+                        let name = String::from_utf8_lossy(def.name().as_slice()).into_owned();
+                        if def.receiver().is_none() && SETUP.contains(&name.as_str()) {
+                            self.span(SpanKind::Hook, &name, name.clone(), &def.location());
+                        }
+                        continue;
+                    }
+                    if statement.as_class_node().is_some() || statement.as_module_node().is_some() {
+                        continue;
+                    }
+                    if let Some(call) = statement.as_call_node()
+                        && self.on_rspec(&call)
+                    {
+                        let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+                        let own_span = [&GROUPS[..], &SHARED[..], &EXAMPLES[..]]
+                            .iter()
+                            .any(|names| names.contains(&name.as_str()));
+                        if own_span || TEARDOWN.contains(&name.as_str()) {
+                            continue;
+                        }
+                        if !SETUP.contains(&name.as_str()) {
+                            self.span(SpanKind::Hook, &name, name.clone(), &statement.location());
+                            continue;
+                        }
+                        // The callback's block, a lambda, or the method a
+                        // symbol names, not the `setup` call: a test class's
+                        // `def setup` is no candidate for it.
+                        let args = call.arguments().map(|a| a.arguments().iter().collect());
+                        for arg in args.unwrap_or_else(Vec::new) {
+                            let Some(symbol) = arg.as_symbol_node() else {
+                                self.span(SpanKind::Hook, &name, name.clone(), &arg.location());
+                                continue;
+                            };
+                            match defs
+                                .iter()
+                                .find(|d| d.name().as_slice() == symbol.unescaped())
+                            {
+                                Some(def) => {
+                                    self.span(SpanKind::Hook, &name, name.clone(), &def.location())
+                                }
+                                None => self.span(
+                                    SpanKind::Unseen,
+                                    &name,
+                                    name.clone(),
+                                    &arg.location(),
+                                ),
+                            }
+                        }
+                        if let Some(block) = call.block() {
+                            self.span(SpanKind::Hook, &name, name.clone(), &block.location());
+                        }
+                        continue;
+                    }
+                    self.span(SpanKind::Hook, "", String::new(), &statement.location());
+                }
+            }
+
+            /// No receiver, or `RSpec`: what opens a group or an example.
+            fn on_rspec(&self, call: &ruby_prism::CallNode<'_>) -> bool {
+                call.receiver().is_none_or(|r| {
+                    let loc = r.location();
+                    let text = &self.source[loc.start_offset()..loc.end_offset()];
+                    text == b"RSpec" || text == b"::RSpec"
+                })
+            }
+
+            fn scope(&mut self, path: &ruby_prism::Node<'_>, loc: &ruby_prism::Location<'_>) {
+                let at = path.location();
+                let name =
+                    String::from_utf8_lossy(&self.source[at.start_offset()..at.end_offset()])
+                        .into_owned();
+                self.span(SpanKind::Scope, "", name, loc);
+            }
         }
         impl<'pr> Visit<'pr> for Walk<'_> {
             fn visit_call_node(&mut self, call: &ruby_prism::CallNode<'pr>) {
@@ -1132,11 +1364,7 @@ impl Shape {
                 if call.receiver().is_none() {
                     self.implied_by(call, &name);
                 }
-                let on_rspec = call.receiver().is_none_or(|r| {
-                    let loc = r.location();
-                    let text = &self.source[loc.start_offset()..loc.end_offset()];
-                    text == b"RSpec" || text == b"::RSpec"
-                });
+                let on_rspec = self.on_rspec(call);
                 let kind = if !on_rspec || call.block().and_then(|b| b.as_block_node()).is_none() {
                     None
                 } else if GROUPS.contains(&name.as_str()) {
@@ -1178,6 +1406,18 @@ impl Shape {
                 ruby_prism::visit_block_argument_node(self, node);
             }
 
+            fn visit_class_node(&mut self, node: &ruby_prism::ClassNode<'pr>) {
+                self.scope(&node.constant_path(), &node.location());
+                self.scope_body(node.body());
+                ruby_prism::visit_class_node(self, node);
+            }
+
+            fn visit_module_node(&mut self, node: &ruby_prism::ModuleNode<'pr>) {
+                self.scope(&node.constant_path(), &node.location());
+                self.scope_body(node.body());
+                ruby_prism::visit_module_node(self, node);
+            }
+
             fn visit_def_node(&mut self, def: &ruby_prism::DefNode<'pr>) {
                 let name = String::from_utf8_lossy(def.name().as_slice()).into_owned();
                 if def.receiver().is_none() && name.starts_with("test_") {
@@ -1202,8 +1442,13 @@ impl Shape {
             .map(|at| {
                 (0..spans.len())
                     .filter(|&g| {
-                        g != at
-                            && matches!(spans[g].kind, SpanKind::Group | SpanKind::Shared)
+                        // A class a group's body writes is a hook of that
+                        // group, not of its own body.
+                        (spans[g].start, spans[g].end) != (spans[at].start, spans[at].end)
+                            && matches!(
+                                spans[g].kind,
+                                SpanKind::Group | SpanKind::Shared | SpanKind::Scope
+                            )
                             && spans[g].covers(&spans[at])
                     })
                     .min_by_key(|&g| {
@@ -1249,12 +1494,31 @@ impl Shape {
             .zip(&self.group_of)
             .filter_map(move |(h, group)| {
                 let g = &self.spans[(*group)?];
-                (h.kind == SpanKind::Hook
+                (matches!(h.kind, SpanKind::Hook | SpanKind::Unseen)
                     && !span.covers(h)
                     && g.covers(span)
                     && g.start != span.start)
                     .then_some(h)
             })
+    }
+
+    /// The hooks of the class or module body that opens at `line`, as a
+    /// Minitest test class runs them; `None` for no body there.
+    fn scope_hooks(&self, line: u32) -> Option<Vec<&Span>> {
+        let at = self
+            .spans
+            .iter()
+            .position(|s| s.kind == SpanKind::Scope && s.start.line == line)?;
+        Some(
+            self.spans
+                .iter()
+                .zip(&self.group_of)
+                .filter(|(h, group)| {
+                    matches!(h.kind, SpanKind::Hook | SpanKind::Unseen) && **group == Some(at)
+                })
+                .map(|(h, _)| h)
+                .collect(),
+        )
     }
 
     /// The examples a group holds, however deep.
