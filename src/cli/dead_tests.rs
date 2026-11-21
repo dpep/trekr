@@ -130,6 +130,8 @@ pub(super) fn plan(
             target: &target,
             verdicts: HashMap::new(),
         };
+        // A test of a method that reaches live code tests that code too.
+        let spare = clear && weigh.closed().is_ok();
         let mut units: Vec<Unit> = Vec::new();
         let written: Vec<(String, Pos)> = sites
             .iter()
@@ -162,7 +164,7 @@ pub(super) fn plan(
                 .find(|s| matches!(s.kind, SpanKind::Group | SpanKind::Shared))
                 .map(|s| s.block());
             // A shared group's body runs in whichever group includes it.
-            if !clear || around.iter().any(|s| s.kind == SpanKind::Shared) {
+            if !spare || around.iter().any(|s| s.kind == SpanKind::Shared) {
                 continue;
             }
             // The outermost that holds nothing else: a group before the
@@ -431,6 +433,138 @@ impl Weigh<'_, '_> {
             }
         }
         Ok(touched)
+    }
+
+    /// Whether the target, and what builds its class (`initialize`, a
+    /// `self.new`), reach nothing else of the checkout: deleting a test of
+    /// it then loses a test of nothing live.
+    fn closed(&self) -> Result<(), String> {
+        let target = self.target;
+        let mut seen = Vec::new();
+        let def = self.def_at(&target.path, target.line, &target.name)?;
+        // A macro's method runs what the macro made, unread here.
+        if let Some(via) = def.via.as_deref().filter(|via| !via.starts_with("attr_")) {
+            return Err(format!("made by {via}"));
+        }
+        self.live_body(&target.path, &def, &mut seen)?;
+        for (singleton, name) in [(false, "initialize"), (true, "new")] {
+            let Some(found) = self.tree.lookup(&target.owner, singleton, name) else {
+                continue;
+            };
+            if !self.tree.in_checkout(&found.site.path) {
+                continue;
+            }
+            let relative = self.relative(&found.site.path);
+            let def = self.def_at(&relative, found.site.line, name)?;
+            self.live_body(&relative, &def, &mut seen)?;
+        }
+        Ok(())
+    }
+
+    /// The method `name` defined at `line` of a file.
+    fn def_at(&self, path: &str, line: u32, name: &str) -> Result<Def, String> {
+        let facts = self
+            .files
+            .facts(path)
+            .ok_or_else(|| format!("unread {path}"))?;
+        facts
+            .defs
+            .iter()
+            .filter(|d| d.kind == crate::core::Kind::Method && d.pos.line == line && d.name == name)
+            .min_by_key(|d| d.end_line)
+            .cloned()
+            .ok_or_else(|| format!("no body at {path}:{line}"))
+    }
+
+    /// Every call, name sent and constant read in a checkout method's body
+    /// lands outside the checkout, on the target, or on building its class.
+    fn live_body(
+        &self,
+        path: &str,
+        def: &Def,
+        seen: &mut Vec<(String, u32)>,
+    ) -> Result<(), String> {
+        if seen.iter().any(|(p, l)| p == path && *l == def.pos.line) {
+            return Ok(());
+        }
+        seen.push((path.to_string(), def.pos.line));
+        let facts = self
+            .files
+            .facts(path)
+            .ok_or_else(|| format!("unread {path}"))?;
+        let (_, start, end) = body(path, def);
+        let within = |at: Pos| start <= at && at <= end;
+        for send in facts.sends.iter().filter(|s| within(s.call)) {
+            match &send.name {
+                SentName::Symbol(name) | SentName::String(name) => {
+                    if *name != self.target.name && self.live_named(name) {
+                        return Err(format!("sends {name} at {path}:{}", send.call.line));
+                    }
+                }
+                SentName::Shape(_) | SentName::Computed => {
+                    return Err(format!("computed send at {path}:{}", send.call.line));
+                }
+            }
+        }
+        for call in facts
+            .calls
+            .iter()
+            .filter(|c| within(c.pos) && c.recv != RecvShape::Symbol)
+        {
+            let answer = crate::resolve::method_at(self.tree, &facts, call, path);
+            let sites = answer
+                .sites
+                .iter()
+                .map(|s| (&s.site, s.method.as_ref().map(|m| m.owner.as_str())))
+                .chain(
+                    answer
+                        .candidates
+                        .iter()
+                        .map(|c| (&c.site, Some(c.owner.as_str()))),
+                );
+            for (site, owner) in sites {
+                if !self.tree.in_checkout(&site.path) {
+                    continue;
+                }
+                let relative = self.relative(&site.path);
+                if relative == self.target.path && site.line == self.target.line {
+                    continue;
+                }
+                // Weighed by `closed` as the class's own building.
+                if matches!(call.name.as_str(), "new" | "initialize")
+                    && owner == Some(self.target.owner.as_str())
+                {
+                    continue;
+                }
+                return Err(format!(
+                    "{}#{} ({relative}:{}) at {path}:{}",
+                    owner.unwrap_or("?"),
+                    call.name,
+                    site.line,
+                    call.pos.line
+                ));
+            }
+            let settled = answer.status == crate::tree::Status::Resolved
+                || matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv);
+            if !settled && call.name != self.target.name && self.live_named(&call.name) {
+                return Err(format!("`{}` on a receiver no type settles", call.name));
+            }
+        }
+        for read in facts.const_refs.iter().filter(|r| within(r.pos)) {
+            let Some(fqn) = self.tree.resolve_at(&read.name, &read.nesting, path).fqn else {
+                continue;
+            };
+            if fqn == self.target.owner {
+                continue;
+            }
+            let live = self.tree.sites(&fqn).iter().any(|site| {
+                self.tree.in_checkout(&site.path) && !in_tests(&self.relative(&site.path))
+            });
+            if live {
+                return Err(format!("reads {fqn} at {path}:{}", read.pos.line));
+            }
+        }
+        Ok(())
     }
 
     /// What one call reaches of the checkout.

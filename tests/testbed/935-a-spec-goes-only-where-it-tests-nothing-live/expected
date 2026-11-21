@@ -4,3 +4,8 @@
 # listed at runtime): deleting those specs loses a test of live code. Only a
 # `clear` row plans units.
 dead lib Lowered#shine=test-only&~public_send
+# What the method reaches was never weighed: `initialize` was exempt
+# however much it ran, and the method's own body could call live code or
+# read a live constant, so its spec was the only test of that code. Each
+# body is weighed now, and one that reaches live code yields no unit.
+dead lib Tally#total=test-only& Mention#rewrite=test-only& Mention#slug=test-only&
