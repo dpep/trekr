@@ -1,0 +1,8 @@
+# A test-only method's row said how many tests call it and where the first
+# is, so finding its spec code meant reading every spec by hand. Each row
+# now lists its test_sites, each with the example and the innermost group
+# written around it (DEC-730): an `it` in a nested `describe`, a call in
+# a `subject` (a group, no example), an example in a file's one group.
+# The tiers are asserted here; the sites, with their examples and groups,
+# are pinned byte for byte by tests/dead.golden.
+dead lib Widget#total=test-only Widget#label=test-only Widget#mixed=test-only Widget#peek=test-only Widget#tally=test-only Widget#shade=test-only Widget#build=test-only Gadget#spin=test-only Gizmo#whirl=test-only

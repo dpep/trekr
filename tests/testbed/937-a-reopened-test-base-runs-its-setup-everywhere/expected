@@ -1,6 +1,0 @@
-# A test helper that reopens `ActiveSupport::TestCase` gives every test its
-# `setup`, though an unindexed Rails hides that `ActionDispatch::
-# IntegrationTest` inherits it: the integration test was a unit, the only
-# test of the live code that setup runs. A framework test base's checkout
-# bodies are weighed for every Minitest test.
-dead lib Reopened#value=test-only&

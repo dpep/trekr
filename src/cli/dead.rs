@@ -69,11 +69,10 @@ pub(super) struct MethodDetail {
     /// Reached from outside the repo, where no caller can be seen (DEC-657).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) entry_point: Option<EntryPoint>,
-    /// A `test-only` row's tests, each site with its example and group;
-    /// the spec code that goes with it, and the members that leaves
-    /// unread (DEC-730).
-    #[serde(flatten)]
-    pub(super) tests: Option<Box<dead_tests::Tests>>,
+    /// A `test-only` row's tests, each site with its example and group
+    /// (DEC-730).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) test_sites: Option<Vec<dead_tests::TestSite>>,
 }
 
 #[derive(Serialize)]
@@ -1477,7 +1476,7 @@ fn dead_in(
                 route: route.cloned().map(|(path, line)| Site { path, line }),
                 convention: convention.as_ref().map(ConventionSite::of),
                 entry_point,
-                tests: (tier == DeadTier::TestOnly).then(|| {
+                test_sites: (tier == DeadTier::TestOnly).then(|| {
                     let mut sites: Vec<dead_tests::TestSite> = ways_in
                         .iter()
                         .map(|r| dead_tests::TestSite {
@@ -1489,11 +1488,7 @@ fn dead_in(
                         })
                         .collect();
                     sites.sort_by(|a, b| (&a.path, a.line, a.col).cmp(&(&b.path, b.line, b.col)));
-                    Box::new(dead_tests::Tests {
-                        test_sites: sites,
-                        delete_with: Vec::new(),
-                        frees: Vec::new(),
-                    })
+                    sites
                 }),
             }),
         };
@@ -1548,13 +1543,7 @@ fn dead_in(
     let mut shared_rows = Vec::new();
     let unincluded = members::dead_shared_groups(&checkout_files, &scope, &mut shared_rows);
     let context = crate::resolve::members::Context::new(&tree, &checkout_files);
-    dead_tests::plan(
-        &tree,
-        &checkout_files,
-        &context,
-        &root_str,
-        &mut rows[ours..],
-    );
+    dead_tests::place(&checkout_files, &root_str, &mut rows[ours..]);
     for (file, def) in &group_members {
         let relative = relative(file);
         let in_unincluded = !unincluded.is_empty()

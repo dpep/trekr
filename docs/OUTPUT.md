@@ -453,77 +453,13 @@ discourse (DEC-652), a `clear` one was reached only by tests 21 times in 26
 one 7 in 25. A public `test-only` method in a library's `lib/` is usually
 its API, so it is graded `lower` as an entry point (below).
 
-**Its tests, and what goes with it** (DEC-730). A `test-only` method row
-carries `test_sites`: each call, symbol and `super` a test writes (`path`,
-`line`, `col`), with the `example` it is written in (an `it`, `specify`,
-`its`, Active Support's `test`, a `test_` method) and the innermost `group`
-(`describe`, `context`), each as `name`, `line`, `end_line`; absent where
-there is none (a hook, a `let`, a helper). `delete_with` lists the spec code
-to delete with the method — `kind` `example`, `group`, or `file` (the group
-is all the file holds besides `require`s), with `path`, `name`, `line`,
-`end_line` — and `frees` the spec members (`kind` `let`, `subject` or
-`method`; `name`, `path`, `line`) every read of which is in that code, so
-they are unread once it goes. Both are empty where nothing qualifies. The
-reason says how many sites the units hold, and what they are.
-
-A unit is spec code whose deletion loses no test of live code, so every
-rule refuses rather than guesses. Only a `clear` row has units, and only
-when the method reaches nothing live: its body, its class's `initialize`
-and `self.new` call nothing of the checkout's but the method and the
-class's own building, send no name another checkout method has, and read
-no checkout constant but the class and its namespaces; a method a macro
-made (other than `attr_*`) has none, nor does one whose class has an
-ancestor in an indexed gem (an Active Record model: its callbacks run on
-`new`), nor does one whose class defines a method Ruby or
-RSpec calls unwritten (`==`, `hash`, `<=>`, `to_s`, `each`,
-`method_missing` and kin: `eq` compares with `==`). A unit is then the
-outermost group, else the example, around a site, when:
-
-- every call in it, and in each hook of the groups around it (what an
-  example asserts may be what one of those did), and in every body those
-  reach through test code — a `let` or `subject` read (`is_expected`
-  reads the `subject`), a helper called — lands outside the checkout, on
-  the method, on its class being built (`Widget.new`), or in a test. A
-  hook is a `before`, `around` or `before_all`, a `let_it_be`, any call
-  named with a `!` that takes a block (`let!`, `fab!`), and any other
-  statement of the group's body that is no RSpec DSL (a helper's macro, an
-  assignment). A Minitest test's hooks are its class body's `setup`
-  methods, `setup` callbacks and other statements, and those of its
-  ancestors and of any reopened framework test base
-  (`ActiveSupport::TestCase`) in the checkout; an unindexed ancestor that
-  is no framework base, or a `setup :name` with no `def name` beside it,
-  leaves no unit. A `let` read outside the unit is the one the unit's
-  examples see: a nested group's `let` replaces an outer one. An implicit
-  `subject` or `described_class` builds the described class, so keeps the
-  unit unless that is the method's own; a helper a module the group
-  includes answers from live code keeps it; and no checkout constant but
-  the method's class is read there;
-- no call there trekr cannot settle, and no name sent or called unwritten
-  (`&:name`, `have_attributes`' keys, `be_visible`'s `visible?`,
-  `have_key`'s `has_key?`, `its`' attribute, `change(obj, :attr)`'s
-  attribute), has a name the checkout's
-  own code (outside its tests) defines, other than the method itself: an
-  untyped `record.id` may be any `id`, an untyped `x.label` any `label`;
-- no name is sent there but a literal one, and none includes a shared
-  context around it (`include_context`, `include_examples`); none is in a
-  shared group's body;
-- for a group, each example in it reaches the method;
-- no statement outside it shares its first or last line (`it {…}; it {…}`),
-  and it holds no class or module body, constant write or shared group
-  definition, which another file may name.
-
-An `after` hook is not weighed: it runs once the example has asserted. A
-shared context included by metadata, a helper `RSpec.configure` includes,
-a global `config.before`, and a gem call that builds another checkout
-class (`Fabricate(:post)`) are not either. `frees` is one step: a
-member only freed members read is found by running `--dead` again after
-deleting.
-
-Measured (DEC-730): on discourse and mastodon (`app lib`), 0 of 301
-`test-only` rows carry a unit; on 84 suites under `~/code/lib/ruby`, 5 of
-3,527, all on one row its grading wrongly calls `clear`. The first ship's 34 units included 6 that
-held the only test of live code; every unit on a `clear` row there was a
-method that calls live code. Units come where a method is self-contained.
+**Its tests** (DEC-730). A `test-only` method row carries `test_sites`:
+each call, symbol and `super` a test writes (`path`, `line`, `col`), with
+the `example` it is written in (an `it`, `specify`, `its`, Active Support's
+`test`, a `test_` method) and the innermost `group` (`describe`, `context`,
+a shared group's body), each as `name`, `line`, `end_line`; either absent
+where there is none (a hook, a `let`, a helper; a Minitest class is no
+group).
 
 ### Entry points
 
@@ -653,8 +589,8 @@ of the time on three such batches before each was read. So every row is
 - Per tier: `overridden_by` (`shadowed`), `overrides` (`override`),
   `super_from` (`super-only`), `convention.by` (`convention-only`),
   `caller` with its own `tier` (`single-caller`), `cascaded_from`
-  when deleting that caller frees it, and `test_sites`, `delete_with` and
-  `frees` (`test-only` methods).
+  when deleting that caller frees it, and `test_sites` (`test-only`
+  methods).
 - `visibility`, and `entry_point` when there is one.
 - The evidence counted: a method row's `confirmed`/`possible` callers,
   `symbol_refs` (its name as a symbol), `super_refs`, `mentions_by_name`

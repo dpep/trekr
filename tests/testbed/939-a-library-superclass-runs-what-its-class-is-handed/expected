@@ -1,7 +1,0 @@
-# A gem's superclass may call back into a class by names it is never
-# handed: building a Gadget runs its `after_build`, which calls the live
-# `Notifier.ping`, and the spec of `Gadget#label` was its only test. A
-# method whose class has an indexed library ancestor has no unit; a plain
-# class beside it still does.
-dead lib Plain#plain_label=test-only&spec/plain_spec.rb:1
-dead lib Gadget#label=test-only&
