@@ -685,7 +685,8 @@ was read from an older one.
 A path gem inside the checkout (a lockfile `PATH` spec, `path:` or a
 `path "dir" do` block, not the checkout itself) is graded as a gem: its
 files are its, so a use of its constants counts, and its own files naming it do not. Its code is still
-the checkout's for every other gem: an engine's use of a gem counts. Its
+the checkout's for every other gem: an engine's use of a gem counts,
+and its `require` does once the engine is not itself a row (DEC-802). Its
 gemspec is the one in the source whose `name` is the gem's, as Bundler
 picks it (`billing_engine.gemspec` for billing-engine), else the file
 named for the gem when the name is computed (DEC-800). Two gems found in
@@ -699,8 +700,8 @@ The rows, from least evidence to most:
   to the test group.
 - `convention-only` — no Ruby uses it, but something loads it by name
   (`convention.by`, with `path`, `line` and `text`): `gem`, another gem
-  of the bundle, not itself a row (a row's require only lowers it),
-  requires it without depending on it in
+  of the bundle, not itself a row (a row's require only lowers it) or a
+  row such a gem requires, requires it without depending on it in
   the lockfile (or, with none, its specification) — lograge's
   `require "logstash-event"`; a `require_relative` loads the requirer's
   own file; `symbol`, a symbol naming it to the gem it

@@ -17577,3 +17577,27 @@ unread, and a gem the app uses was among them (hunt 2's cbra). The
 no-lock resolver (`declared.rs`) skips the block's gems, as it skips
 `path:`, so a same-named gem on a gem server is not indexed in their
 place. Testbed 881.
+
+## DEC-802 — A require loads what it names only when its requirer is loaded
+
+**Decided.** DEC-770's rule — another gem's require credits a candidate
+only when the requirer is not itself a row — now holds both ways it did
+not:
+
+- **A path gem's require.** A `require` written in a path gem inside the
+  checkout counted as the app's own, whatever that gem's grade: with
+  gem_a unused, its `require "gem_b"` made gem_b used (hunt 2's chain).
+  Such a require now waits until the rows are known, and credits when its
+  gem is not a row; one only rows write lowers the candidate, as a
+  bundled gem's does. The wait is a fixpoint with the dependency step:
+  each credit can make another requirer used. A path gem's constants and
+  methods still count as the checkout's (DEC-770), unchanged here.
+- **A row a loaded gem requires is loaded.** `required_by_bundle` took a
+  row requirer as never loaded, even when a loaded gem requires that row:
+  hchain_d (used) requires hchain_b (a row), which requires hchain_c,
+  which was lowered "itself a row requires it" (hunt 2's chain3). Every
+  require of a candidate is collected once, then requirers are taken as
+  loaded to a fixpoint: a gem that is not a row, then each row one of
+  them requires. hchain_c is `convention-only`, by hchain_b.
+
+Testbed 882.

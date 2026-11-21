@@ -1,0 +1,7 @@
+# Another gem's require loads a gem only when the requirer is itself
+# loaded (DEC-770). A path gem's require counted as the app's own, so
+# gem_b, required only by gem_a, which nothing uses, was not a row; gem_c,
+# required by gem_d, which the app uses, still is not. And a row another
+# loaded gem requires is loaded too: kit_d (used) requires kit_b, which
+# requires kit_c, which was lowered as "required by a row".
+dead Gemfile gem_a=unreferenced gem_b=unreferenced~itself gem_c=none gem_d=none kit_d=none kit_b=convention-only kit_c=convention-only~

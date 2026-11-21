@@ -444,7 +444,14 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
         })
         .collect();
     sources.extend(scripts.sources());
+    // A path gem's require loads what it names only once that gem is
+    // loaded: weighed below, when the rows are known (DEC-770).
+    let mut pending: Vec<(String, Evidence)> = Vec::new();
     for (path, raw) in &sources {
+        let requirer = match layers.of(&at(path)) {
+            Layer::Gem(gem) => Some(gem),
+            _ => None,
+        };
         let source = crate::extract::ruby_source(path, raw);
         for required in crate::query::require::requires_in(&source) {
             if required.anchor.is_some()
@@ -458,17 +465,17 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
                 .count() as u32
                 + 1;
             for gem in features.of(&required.path) {
-                credit(
-                    &mut uses,
-                    &layers,
-                    Evidence {
-                        name: gem,
-                        by: "require",
-                        what: required.path.clone(),
-                        path: at(path),
-                        line,
-                    },
-                );
+                let evidence = Evidence {
+                    name: gem,
+                    by: "require",
+                    what: required.path.clone(),
+                    path: at(path),
+                    line,
+                };
+                match &requirer {
+                    Some(by) => pending.push((by.clone(), evidence)),
+                    None => credit(&mut uses, &layers, evidence),
+                }
             }
         }
     }
@@ -587,75 +594,84 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
         .iter()
         .map(|name| (name.as_str(), lock.closure(name)))
         .collect();
-    let used_through: Vec<String> = uses
-        .keys()
-        .filter(|gem| !direct.contains(gem.as_str()))
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let by_name: HashMap<&str, &Declaration> =
+        declared.iter().map(|(d, _)| (d.name.as_str(), d)).collect();
     let mut shared: HashMap<String, (String, Vec<String>)> = HashMap::new();
     loop {
-        let credited = |name: &str, uses: &HashMap<String, Uses>| {
-            uses.get(name).is_some_and(|u| u.any().is_some())
-        };
-        let mut moved = false;
-        for name in &direct_names {
-            if credited(name, &uses) {
-                continue;
-            }
-            for brought in closures[name.as_str()]
-                .iter()
-                .filter(|b| used_through.contains(b))
-            {
-                let kept = direct_names.iter().any(|other| {
-                    other != name
-                        && credited(other, &uses)
-                        && closures[other.as_str()].contains(brought)
-                });
-                if kept {
+        let used_through: Vec<String> = uses
+            .keys()
+            .filter(|gem| !direct.contains(gem.as_str()))
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        loop {
+            let credited = |name: &str, uses: &HashMap<String, Uses>| {
+                uses.get(name).is_some_and(|u| u.any().is_some())
+            };
+            let mut moved = false;
+            for name in &direct_names {
+                if credited(name, &uses) {
                     continue;
                 }
-                let holders: Vec<String> = direct_names
+                for brought in closures[name.as_str()]
                     .iter()
-                    .filter(|other| *other != name && closures[other.as_str()].contains(brought))
-                    .cloned()
-                    .collect();
-                if holders.is_empty() {
-                    let first = uses[brought].any().cloned();
-                    if let Some(first) = first {
-                        uses.entry(name.clone()).or_default().add(Evidence {
-                            name: name.clone(),
-                            by: "dependency",
-                            what: format!("{brought} ({} `{}`)", first.by, first.what),
-                            ..first
-                        });
-                        moved = true;
-                        break;
+                    .filter(|b| used_through.contains(b))
+                {
+                    let kept = direct_names.iter().any(|other| {
+                        other != name
+                            && credited(other, &uses)
+                            && closures[other.as_str()].contains(brought)
+                    });
+                    if kept {
+                        continue;
                     }
-                } else {
-                    shared
-                        .entry(name.clone())
-                        .or_insert_with(|| (brought.clone(), holders));
+                    let holders: Vec<String> = direct_names
+                        .iter()
+                        .filter(|other| {
+                            *other != name && closures[other.as_str()].contains(brought)
+                        })
+                        .cloned()
+                        .collect();
+                    if holders.is_empty() {
+                        let first = uses[brought].any().cloned();
+                        if let Some(first) = first {
+                            uses.entry(name.clone()).or_default().add(Evidence {
+                                name: name.clone(),
+                                by: "dependency",
+                                what: format!("{brought} ({} `{}`)", first.by, first.what),
+                                ..first
+                            });
+                            moved = true;
+                            break;
+                        }
+                    } else {
+                        shared
+                            .entry(name.clone())
+                            .or_insert_with(|| (brought.clone(), holders));
+                    }
                 }
             }
+            if !moved {
+                break;
+            }
         }
-        if !moved {
+        // A requirer that is a gem of its own and not a row is loaded.
+        let before = pending.len();
+        let (loaded, waiting): (Vec<_>, Vec<_>) = pending
+            .into_iter()
+            .partition(|(by, _)| by_name.get(by.as_str()).is_none_or(|d| !is_row(&uses, d)));
+        pending = waiting;
+        for (_, evidence) in loaded {
+            credit(&mut uses, &layers, evidence);
+        }
+        if pending.len() == before {
             break;
         }
     }
 
     let texts = Texts::read(root, &manifests);
-    // A row: no use outside the tests, unless it is in a group for them.
-    let is_row = |declaration: &Declaration| {
-        let found = uses.get(&declaration.name);
-        let tested_only = found.is_some_and(|u| u.live.is_none() && u.tests > 0);
-        let in_test_group = declaration
-            .groups
-            .iter()
-            .any(|g| g == "test" || g == "development");
-        found.and_then(|u| u.live.as_ref()).is_none() && !(tested_only && in_test_group)
-    };
+    let is_row = |declaration: &Declaration| is_row(&uses, declaration);
     let unused: Vec<&Declaration> = declared
         .iter()
         .map(|(d, _)| d)
@@ -826,6 +842,17 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
     })
 }
 
+/// A row: no use outside the tests, unless it is in a group for them.
+fn is_row(uses: &HashMap<String, Uses>, declaration: &Declaration) -> bool {
+    let found = uses.get(&declaration.name);
+    let tested_only = found.is_some_and(|u| u.live.is_none() && u.tests > 0);
+    let in_test_group = declaration
+        .groups
+        .iter()
+        .any(|g| g == "test" || g == "development");
+    found.and_then(|u| u.live.as_ref()).is_none() && !(tested_only && in_test_group)
+}
+
 /// The candidates a gem of the bundle requires without depending on them —
 /// lograge's `require "logstash-event"` for its Logstash formatter — each
 /// with that gem, file and line: an optional dependency, which the app
@@ -862,15 +889,11 @@ fn required_by_bundle(
     if wanted.is_empty() {
         return Ok(found);
     }
-    // A requirer that is itself a row is weighed last: nothing is seen to
-    // load it, though a Railtie may (better_errors, binding_of_caller).
-    let rows: HashSet<&str> = candidates.iter().map(|d| d.name.as_str()).collect();
-    let mut gems: Vec<(bool, &String, &String)> = installed
-        .iter()
-        .map(|(gem, dir)| (rows.contains(gem.as_str()), gem, dir))
-        .collect();
+    // Each require of a candidate by another gem, in gem order.
+    let mut hits: Vec<(String, Required)> = Vec::new();
+    let mut gems: Vec<(&String, &String)> = installed.iter().collect();
     gems.sort();
-    for (row, gem, dir) in gems {
+    for (gem, dir) in gems {
         let (root, prefix) = layers.store_root(dir);
         let requiring = store.files_calling(root, "require")?;
         for path in requiring.iter().filter(|p| p.starts_with(prefix.as_str())) {
@@ -893,10 +916,7 @@ fn required_by_bundle(
                 let Some(candidate) = wanted.get(&required.path) else {
                     continue;
                 };
-                if candidate == gem
-                    || found.contains_key(candidate)
-                    || lock.closure(gem).contains(candidate)
-                {
+                if candidate == gem || lock.closure(gem).contains(candidate) {
                     continue;
                 }
                 let line = raw[..required.span.start.min(raw.len())]
@@ -904,23 +924,54 @@ fn required_by_bundle(
                     .filter(|b| **b == b'\n')
                     .count() as u32
                     + 1;
-                found.insert(
+                hits.push((
                     candidate.clone(),
                     Required {
                         by: gem.clone(),
                         path: format!("{root}/{path}"),
                         line,
-                        by_row: row,
+                        by_row: false,
                     },
-                );
+                ));
             }
         }
+    }
+    // A requirer that is not a row is loaded, and so is a row it requires:
+    // hchain_d (used) requires hchain_b, which requires hchain_c.
+    let rows: HashSet<&str> = candidates.iter().map(|d| d.name.as_str()).collect();
+    let mut loaded: HashSet<&str> = installed
+        .keys()
+        .map(String::as_str)
+        .filter(|gem| !rows.contains(gem))
+        .collect();
+    loop {
+        let mut moved = false;
+        for (candidate, required) in &hits {
+            if found.contains_key(candidate) || !loaded.contains(required.by.as_str()) {
+                continue;
+            }
+            found.insert(candidate.clone(), required.clone());
+            loaded.insert(candidate.as_str());
+            moved = true;
+        }
+        if !moved {
+            break;
+        }
+    }
+    // One only rows require lowers it: nothing is seen to load them,
+    // though a Railtie may (better_errors, binding_of_caller).
+    for (candidate, required) in hits {
+        found.entry(candidate).or_insert(Required {
+            by_row: true,
+            ..required
+        });
     }
     Ok(found)
 }
 
 /// Another gem's require of a candidate: who, where, and whether the
 /// requirer is itself a row, which only lowers the candidate.
+#[derive(Clone)]
 struct Required {
     by: String,
     path: String,

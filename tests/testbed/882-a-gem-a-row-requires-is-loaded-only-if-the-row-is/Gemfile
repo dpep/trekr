@@ -1,0 +1,8 @@
+source "https://rubygems.org"
+gem "gem_a", path: "engines/gem_a"
+gem "gem_b", path: "engines/gem_b"
+gem "gem_c", path: "engines/gem_c"
+gem "gem_d", path: "engines/gem_d"
+gem "kit_d"
+gem "kit_b"
+gem "kit_c"
