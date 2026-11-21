@@ -1,0 +1,7 @@
+# A predicate matcher's call was tiered as if the queried method were
+# defined on no object: `--refs` on one object's `ready?` ruled out
+# `expect(widget).to be_ready` as Widget's own, though it counted
+# `widget.ready?` as a call that may run it (DEC-827). Both are one call.
+refs Shop.ready? confirmed=0 possible=2 excluded=0
+refs lib/widget.rb:7:11 confirmed=0 possible=2 excluded=0
+refs Widget#ready? confirmed=2 possible=0

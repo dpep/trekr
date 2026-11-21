@@ -345,7 +345,7 @@ pub(crate) fn tier_call_with(
     let mut reference = match made {
         _ if call.name == query.name => tier(tree, facts, call, path, query, target, on),
         _ if let Some(predicate) = matcher_predicate(call, query) => {
-            tier_matcher(tree, facts, call, &predicate, path, query, target)
+            tier_matcher(tree, facts, call, &predicate, path, query, target, on)
         }
         Some(made) => tier_construct(tree, made, call, path, query, target),
         None => {
@@ -367,6 +367,7 @@ pub(crate) fn tier_call_with(
 /// subject — unless the group, RSpec or a gem defines the matcher's name,
 /// when that method runs instead and RSpec's `method_missing` never does
 /// (DEC-090, DEC-659).
+#[allow(clippy::too_many_arguments)]
 fn tier_matcher(
     tree: &Tree,
     facts: &Facts,
@@ -375,6 +376,7 @@ fn tier_matcher(
     path: &str,
     query: &Query,
     target: Option<&str>,
+    on: &[DefinedOn],
 ) -> Reference {
     let receiver = super::receiver_of(tree, facts, matcher, path);
     let defined = match super::example_member(tree, facts, matcher, path) {
@@ -400,7 +402,7 @@ fn tier_matcher(
                 from: None,
                 called_as: None,
             },
-            None => tier(tree, facts, predicate, path, query, target, &[]),
+            None => tier(tree, facts, predicate, path, query, target, on),
         };
     };
     Reference {

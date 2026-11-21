@@ -983,6 +983,11 @@ ruby tests/testbed/825-a-block-in-an-objects-method-may-change-self/app/a.rb 3ac
 ruby tests/testbed/826-an-instances-method-is-not-its-classs/app/a.rb e76c36d541e867eb
 ruby tests/testbed/827-an-objects-method-overrides-its-classs/app/a.rb ffdd56bfc809b8ed
 ruby tests/testbed/828-an-object-an-ivar-or-parentheses-hold/app/a.rb e97153d287065b9a
+ruby tests/testbed/855-a-predicate-matcher-may-run-an-objects-method/lib/widget.rb 3d2b55efc13e4652
+ruby tests/testbed/855-a-predicate-matcher-may-run-an-objects-method/rspec-core/lib/rspec/core/example_group.rb d88eafe305e0fd5d
+ruby tests/testbed/855-a-predicate-matcher-may-run-an-objects-method/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281
+ruby tests/testbed/855-a-predicate-matcher-may-run-an-objects-method/rspec-expectations/lib/rspec/expectations/syntax.rb 239a5775c154560d
+ruby tests/testbed/855-a-predicate-matcher-may-run-an-objects-method/spec/widget_spec.rb dd7e9c8119bfdfc6
 ruby tests/testbed/870-a-gem-is-used-through-its-constants-requires-and-mixins/Gemfile eb9ece9254db72df
 ruby tests/testbed/870-a-gem-is-used-through-its-constants-requires-and-mixins/app/models/report.rb ad8cfdd419271fe3
 ruby tests/testbed/870-a-gem-is-used-through-its-constants-requires-and-mixins/spec/report_spec.rb 95f5e19a1851d68b

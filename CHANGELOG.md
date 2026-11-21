@@ -168,6 +168,10 @@
 - **`--no-index` beside another trekr's first index says it is under
   way**: its `not_indexed` reason was "this checkout has never been
   indexed"; it is "another trekr is indexing it now (…)".
+- **`--refs` on a method defined on one object counts a predicate
+  matcher as it counts the call**: `expect(widget).to be_ready` was
+  ruled out as Widget's own `ready?`, while `widget.ready?` was `possible`;
+  both are `possible`, in Find References too.
 
 ## 0.10.2 — 2026-11-20
 
