@@ -1551,59 +1551,7 @@ fn dead_in(
 /// the row names it in `cascaded_from` (DEC-680). One step only, so a
 /// cycle, or a chain whose top is no such root, frees nothing.
 fn note_candidate_callers(rows: &mut [DeadRow], defs: &[WrittenDef]) {
-    struct Span {
-        path: String,
-        start: (u32, u32),
-        end: u32,
-        /// The candidate's name; `None` for a live def.
-        name: Option<String>,
-        root: Option<Cascade>,
-    }
-    let mut spans: Vec<Span> = rows
-        .iter()
-        .map(|row| Span {
-            path: row.path.clone(),
-            start: (row.line, row.col),
-            end: row.end_line().unwrap_or(0),
-            name: Some(row.name.clone()),
-            root: (matches!(row.detail, Detail::Method(_))
-                && matches!(row.tier, DeadTier::Unreferenced | DeadTier::TestOnly)
-                && row.confidence == Grade::Clear)
-                .then(|| Cascade {
-                    name: dead_name(row),
-                    path: row.path.clone(),
-                    line: row.line,
-                    tier: row.tier,
-                }),
-        })
-        .collect();
-    // A live def may be the innermost around the call, or tie with a
-    // candidate for it: either way no candidate certainly holds it.
-    let calling: HashSet<&str> = rows
-        .iter()
-        .filter_map(|row| match &row.detail {
-            Detail::Method(MethodDetail {
-                caller: Some(caller),
-                ..
-            }) => Some(caller.path.as_str()),
-            _ => None,
-        })
-        .collect();
-    let candidates: HashSet<(&str, (u32, u32))> =
-        spans.iter().map(|s| (s.path.as_str(), s.start)).collect();
-    let live: Vec<Span> = defs
-        .iter()
-        .filter(|def| calling.contains(def.path.as_str()))
-        .filter(|def| !candidates.contains(&(def.path.as_str(), def.start)))
-        .map(|def| Span {
-            path: def.path.clone(),
-            start: def.start,
-            end: def.end,
-            name: None,
-            root: None,
-        })
-        .collect();
-    spans.extend(live);
+    let spans = caller_spans(rows, defs);
     for row in rows.iter_mut() {
         let clear = row.confidence == Grade::Clear;
         let Detail::Method(MethodDetail {
@@ -1622,12 +1570,10 @@ fn note_candidate_callers(rows: &mut [DeadRow], defs: &[WrittenDef]) {
         // The innermost: a call in a `def` nested in another is the inner's.
         // A def's end has no column, so two that tie may each hold the call.
         let around: Vec<&Span> = spans
-            .iter()
-            .filter(|s| {
-                s.path == caller.path
-                    && s.start <= (caller.line, caller.col)
-                    && caller.line <= s.end
-            })
+            .get(caller.path.as_str())
+            .into_iter()
+            .flatten()
+            .filter(|s| s.start <= (caller.line, caller.col) && caller.line <= s.end)
             .collect();
         let Some(narrowest) = around.iter().map(|s| s.end - s.start.0).min() else {
             continue;
@@ -1651,6 +1597,69 @@ fn note_candidate_callers(rows: &mut [DeadRow], defs: &[WrittenDef]) {
         *cascaded_from = root.cloned().map(Box::new);
         row.reason = format!("{}; its caller, {name}, is itself {what}", row.reason);
     }
+}
+
+/// A def a candidate's one call may be written in.
+struct Span {
+    start: (u32, u32),
+    end: u32,
+    /// The candidate's name; `None` for a live def.
+    name: Option<String>,
+    root: Option<Cascade>,
+}
+
+/// Every candidate's span, and every live def's in a file a candidate is
+/// called from, by path: each row looks up only its caller's file.
+fn caller_spans(rows: &[DeadRow], defs: &[WrittenDef]) -> HashMap<String, Vec<Span>> {
+    let mut spans: HashMap<&str, Vec<Span>> = HashMap::new();
+    for row in rows {
+        let root = (matches!(row.detail, Detail::Method(_))
+            && matches!(row.tier, DeadTier::Unreferenced | DeadTier::TestOnly)
+            && row.confidence == Grade::Clear)
+            .then(|| Cascade {
+                name: dead_name(row),
+                path: row.path.clone(),
+                line: row.line,
+                tier: row.tier,
+            });
+        spans.entry(row.path.as_str()).or_default().push(Span {
+            start: (row.line, row.col),
+            end: row.end_line().unwrap_or(0),
+            name: Some(row.name.clone()),
+            root,
+        });
+    }
+    // A live def may be the innermost around the call, or tie with a
+    // candidate for it: either way no candidate certainly holds it.
+    let calling: HashSet<&str> = rows
+        .iter()
+        .filter_map(|row| match &row.detail {
+            Detail::Method(MethodDetail {
+                caller: Some(caller),
+                ..
+            }) => Some(caller.path.as_str()),
+            _ => None,
+        })
+        .collect();
+    let candidates: HashSet<(&str, (u32, u32))> = rows
+        .iter()
+        .map(|row| (row.path.as_str(), (row.line, row.col)))
+        .collect();
+    for def in defs {
+        let path = def.path.as_str();
+        if calling.contains(path) && !candidates.contains(&(path, def.start)) {
+            spans.entry(path).or_default().push(Span {
+                start: def.start,
+                end: def.end,
+                name: None,
+                root: None,
+            });
+        }
+    }
+    spans
+        .into_iter()
+        .map(|(path, spans)| (path.to_owned(), spans))
+        .collect()
 }
 
 /// `path:line`, as text shows a path.
