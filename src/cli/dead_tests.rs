@@ -172,7 +172,9 @@ pub(super) fn plan(
             let candidates = around
                 .iter()
                 .filter(|s| s.kind == SpanKind::Group)
-                .chain(around.iter().rev().find(|s| s.kind == SpanKind::Example));
+                .chain(around.iter().rev().find(|s| s.kind == SpanKind::Example))
+                // A unit is deleted by its lines: none another statement shares.
+                .filter(|s| s.alone);
             let here: Vec<Pos> = written
                 .iter()
                 .filter(|(p, _)| *p == path)
@@ -739,6 +741,8 @@ struct Span {
     name: String,
     start: Pos,
     end: Pos,
+    /// Nothing but blanks or a comment shares its first and last lines.
+    alone: bool,
 }
 
 impl Span {
@@ -845,11 +849,26 @@ impl Shape {
         }
         impl Walk<'_> {
             fn span(&mut self, kind: SpanKind, name: String, loc: &ruby_prism::Location<'_>) {
+                let (from, to) = (loc.start_offset(), loc.end_offset());
+                let before = &self.source[..from];
+                let before = &before[before
+                    .iter()
+                    .rposition(|b| *b == b'\n')
+                    .map_or(0, |at| at + 1)..];
+                let after = &self.source[to..];
+                let after = &after[..after
+                    .iter()
+                    .position(|b| *b == b'\n')
+                    .unwrap_or(after.len())];
+                let after = after.trim_ascii_start();
+                let alone =
+                    before.trim_ascii().is_empty() && (after.is_empty() || after[0] == b'#');
                 self.spans.push(Span {
                     kind,
                     name,
-                    start: self.lines.pos(loc.start_offset()),
-                    end: self.lines.pos(loc.end_offset().saturating_sub(1)),
+                    start: self.lines.pos(from),
+                    end: self.lines.pos(to.saturating_sub(1)),
+                    alone,
                 });
             }
         }
