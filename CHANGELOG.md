@@ -33,10 +33,14 @@
 - **`--dead` says what spec code goes with a `test-only` method**: the
   row lists each test site (`test_sites`) with the example and group around
   it, and `delete_with` names the groups, examples or whole spec files to
-  delete with the method — only where every call in them, and in the hooks
-  that run before them, lands on the method, on its class being built, or
-  outside the checkout. `frees` names the `let`s and `subject`s left unread
-  once they go; one step, so run `--dead` again after deleting.
+  delete with the method — only on a `clear` row whose method, and its
+  class's `initialize`, reach nothing else of the checkout, and only where
+  every call in that spec code, in the hooks and setup that run before it,
+  and in the names it calls unwritten (`&:name`, `be_visible`), lands on
+  the method, on its class being built, or outside the checkout. Strict
+  by design: on discourse and mastodon no row qualifies. `frees` names the
+  `let`s and `subject`s left unread once they go; one step, so run
+  `--dead` again after deleting.
 
 ### Fixed
 

@@ -17154,25 +17154,55 @@ are in, as `method_blocks` already reads a file: nothing new is extracted
 or stored, so no store bump. Run for `test-only` method rows only; a
 `test-only` class's spec file is not weighed (below).
 
-**The rule, in trekr's own call data.** A unit is the outermost group,
-else the example, around a site, when:
+**The promise.** A `delete_with` unit is spec code whose deletion loses no
+test of live code. Coverage is cheap to give up; that promise is not, so
+every rule below refuses rather than guesses.
 
-1. Every call written in it, in each `before`, `prepend_before`,
-   `append_before` or `around` hook and `let!` or `subject!` of the groups
-   around it, and in every body those reach through test code, lands
-   outside the checkout, on the method itself, on its class being built
-   (`new` or `initialize` of the method's owner), or in a test. "Lands" is
-   `resolve::method_at`'s answer — its definition sites and its residue
-   candidates, all of them. A body reached is a group member a call reads
-   (`members::named_by`; `is_expected`, `are_expected` and a bare `should`
-   read the `subject`), or a method defined in a test file a call resolves
-   to; at most 64 bodies, past which it is no unit.
+**The rule, in trekr's own call data.** Only a `clear` row plans units: a
+row its own grading says may be called (a helper Rails mixes into a view,
+a name config holds, a module listed at runtime) has no spec to spare.
+Nor does a method that reaches live code: its body, its owner's
+`initialize` and `self.new` (looked up through the chain, when in the
+checkout) are each weighed, and every call there must land outside the
+checkout, on the target, or on building its class; every name sent must
+be a literal no other checkout method has; no checkout constant but the
+owner may be read. A method a macro made (other than `attr_*`) is
+refused, its body unread; so is one whose owner's chain defines a Ruby
+protocol method in the checkout (`==`, `eql?`, `hash`, `<=>`, `===`,
+`to_s`, `to_str`, `each`, `inspect`, `coerce`, `method_missing`,
+`respond_to?` and kin), which Ruby and RSpec call with no call written:
+`eq` compares with `==`. A unit is then the outermost group, else the
+example, around a site, when:
+
+1. Every call written in it, in each hook of the groups around it, and in
+   every body those reach through test code, lands outside the checkout,
+   on the method itself, on its class being built (`new` or
+   `initialize` of the method's owner, weighed above), or in a test. A
+   hook is a `before`, `prepend_before`, `append_before`, `around` or
+   `before_all`, a `let_it_be`, any call named with a `!` that takes a
+   block (`let!`, `subject!`, `fab!`: `members::eager`'s notion), and any
+   other statement of the group's body that is no RSpec DSL read
+   elsewhere — a helper's macro (`with_registry`), an assignment, an `if`
+   around hooks. "Lands" is `resolve::method_at`'s answer — its
+   definition sites and its residue candidates, all of them. A body
+   reached is a group member a call reads (`members::named_by`;
+   `is_expected`, `are_expected` and a bare `should` read the `subject`),
+   or a method defined in a test file a call resolves to; at most 64
+   bodies, past which it is no unit. A member read outside the unit (in a
+   `let`, a hook, a helper) resolves from the group the unit is written
+   in, as RSpec runs it: a nested `let(:size)` replaces the outer one an
+   outer `let(:widget)` reads.
 2. A call `method_at` does not resolve, with a receiver (not implicit or
    `self`, whose lookup is the group's ancestry), keeps the unit when the
    checkout's own code outside its tests defines any method of its name
-   but the target (`Tree::named`). An untyped `record.id` may be any `id`.
+   but the target (`Tree::named`) — the target's own name included, since
+   another class's method of it may answer. An untyped `record.id` may be
+   any `id`.
 3. A send's name must be a literal; a literal that names a live method
-   keeps the unit as a call would.
+   keeps the unit as a call would. So does a name called with no call
+   written: `&:name`, `have_attributes`' keys, a predicate matcher's
+   question (`be_visible` asks `visible?` or `visibles?`, `have_key`
+   asks `has_key?`), `its`' attribute.
 4. No `include_context` or `include_examples` is written in a group around
    it (or in it): what the shared group's hooks do is unweighed. No site
    in a shared group's body or an `it_behaves_like` block yields a unit.
@@ -17181,7 +17211,9 @@ else the example, around a site, when:
    checkout still tests something.
 
 A group that is the file's one top-level statement besides `require`s is
-`file`. Units inside another are dropped.
+`file`. Units inside another are dropped. A unit is deleted by its lines,
+so one sharing a line with any statement outside it (`it {…}; it {…}`)
+is none.
 
 **Why hooks count and `after` does not.** The first cut weighed only the
 example's span. Read by hand, mastodon's `follow_service_spec` "disables
@@ -17197,29 +17229,41 @@ though its other group tests the templates, which no Ruby call reaches.
 units, with no caveat (a name sent at runtime may read it). A member only
 freed members read needs a second `--dead` after deleting.
 
-**Measured** (`--dead app lib`, discourse and mastodon as benched in
-session 36's corpora). Final rule: 17 of 301 `test-only` method rows
-carry a unit (discourse 15 of 275, mastodon 2 of 26); 34 units (22
-examples, 11 groups, 1 file). All 34 read by hand: none holds a test of
-anything else of the checkout's. The first cut (span only, no rule 5)
-claimed 51; of the 17 it lost, 5 were wrong (the onebox file; two
-follow-service examples; two `WorkerBatch#jobs` examples whose `before`
-is `add_jobs` or `remove_job`), 3 arguable (`muting_reblogs?` examples
-whose `before` is `follow!` with the option it reads), and the rest lost
-to setup a hook does (`user.user_option.timezone = nil`) that the strict
-rule cannot tell from a subject. `frees` fired once under
-the first cut (a `let(:store)`, correct) and never under the final rule:
-it is pinned by the testbed, not measured. The pass cost about 1.6 s of a
-discourse `--dead`.
+**Measured** (`--dead app lib`, discourse d55f1dcce56 and mastodon
+967f7de). The first ship claimed 34 units on 17 of 301 `test-only` rows,
+every one read by hand as testing nothing else. A hunt broke that: 6 of
+the 34 held the only test of live code, by paths the rule never weighed
+(a `lower` row's caller, an `initialize` that computes, a target that
+calls or reads live code). Under the rule above both corpora carry **0
+units** (discourse 0 of 275 rows, 114 of them `clear`; mastodon 0 of 26,
+6 `clear`). Taking only `clear` rows leaves 19 units on 9 rows; weighing
+what the method reaches removes all 9, each read by hand: `human_status`
+and `ok?` call `status`, which runs `check`; `has_matcher?` builds a
+`Matcher`; `message_id_rfc_format` calls `is_message_id_rfc?`;
+`TypeRegistry#get!` calls `get`; `gravatar_template` calls `email_hash`;
+`number_of_flags` reads `Reviewable`; `rewrite_text` reads
+`NON_TRAILING_MENTION_CHAR_CLASS`; `find_remote!` calls `find_remote`.
+Each held a test of live code. `readable_name` is the one conservative
+refusal: an untyped `name` may be any checkout `name`, though on a
+fabricated user the callbacks it reads are live anyway. So precision is
+vacuous here (0 of 0) and the yield is nil on these suites: the feature
+fires where a method is self-contained — a value object's arithmetic, a
+formatter — and the testbed (cases 930, 935) pins that it does, and
+refuses each hunt shape. `frees` never fired on either corpus, before or
+after.
 
-**What keeps the yield low.** Most sites sit in examples that build
-another class (`Guardian.new`), call an untyped receiver whose name the
-app defines (discourse's `Fabricate` returns untyped records, so `.id`,
-`.user`, `.topic` match app methods), or run a hook that calls the app.
-Each is a miss, not an error. Typing `Fabricate(:user)` would lift it, and
-belongs to the resolver.
+**`frees` and the nested `let`.** A member read in a body outside the
+unit already resolved the way RSpec runs it in `members::reads`
+(DEC-096), so `frees` needed no change: the hunt's override shape was
+checked against a build without the unit-side fix and frees nothing
+either way.
 
-**Not built.** A `test-only` class's spec file (the constant rows are
+**Not built.** A gem call that builds a checkout object of another class
+(`Fabricate(:post)` saves a model, running its callbacks) lands outside
+the checkout and is not weighed; nor is an indexed library ancestor
+calling back into the owner by a name it is not handed (an Active Record
+callback on the owner's own class: building one runs it). An unindexed
+ancestor already lowers the row, so has no unit. A `test-only` class's spec file (the constant rows are
 `dead_consts`', another lane's); a Minitest class as a group; following
 an `include_context` into its body rather than refusing; a metadata-
 included shared context and `RSpec.configure`'s hooks and helpers, which

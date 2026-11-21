@@ -465,31 +465,50 @@ is all the file holds besides `require`s), with `path`, `name`, `line`,
 they are unread once it goes. Both are empty where nothing qualifies. The
 reason says how many sites the units hold, and what they are.
 
-A unit is the outermost group, else the example, around a site, when:
+A unit is spec code whose deletion loses no test of live code, so every
+rule refuses rather than guesses. Only a `clear` row has units, and only
+when the method reaches nothing live: its body, its class's `initialize`
+and `self.new` call nothing of the checkout's but the method and the
+class's own building, send no name another checkout method has, and read
+no checkout constant but the class; a method a macro made (other than
+`attr_*`) has none, nor does one whose class defines a method Ruby or
+RSpec calls unwritten (`==`, `hash`, `<=>`, `to_s`, `each`,
+`method_missing` and kin: `eq` compares with `==`). A unit is then the
+outermost group, else the example, around a site, when:
 
-- every call in it, and in each `before` or `around` hook, `let!` or
-  `subject!` of the groups around it (what an example asserts may be what
-  one of those did), and in every body those reach through test code — a
-  `let` or `subject` read (`is_expected` reads the `subject`), a helper
-  called — lands outside the checkout, on the method, on its class being
-  built (`Widget.new`), or in a test;
-- no call there trekr cannot settle has a name the checkout's own code
-  (outside its tests) defines, other than the method's: an untyped
-  `record.id` may be any `id`, so it keeps the unit;
+- every call in it, and in each hook of the groups around it (what an
+  example asserts may be what one of those did), and in every body those
+  reach through test code — a `let` or `subject` read (`is_expected`
+  reads the `subject`), a helper called — lands outside the checkout, on
+  the method, on its class being built (`Widget.new`), or in a test. A
+  hook is a `before`, `around` or `before_all`, a `let_it_be`, any call
+  named with a `!` that takes a block (`let!`, `fab!`), and any other
+  statement of the group's body that is no RSpec DSL (a helper's macro, an
+  assignment). A `let` read outside the unit is the one the unit's
+  examples see: a nested group's `let` replaces an outer one;
+- no call there trekr cannot settle, and no name sent or called unwritten
+  (`&:name`, `have_attributes`' keys, `be_visible`'s `visible?`,
+  `have_key`'s `has_key?`, `its`' attribute), has a name the checkout's
+  own code (outside its tests) defines, other than the method itself: an
+  untyped `record.id` may be any `id`, an untyped `x.label` any `label`;
 - no name is sent there but a literal one, and none includes a shared
   context around it (`include_context`, `include_examples`); none is in a
   shared group's body;
-- for a group, each example in it reaches the method.
+- for a group, each example in it reaches the method;
+- no statement outside it shares its first or last line (`it {…}; it {…}`).
 
 An `after` hook is not weighed: it runs once the example has asserted. A
 shared context included by metadata, a helper `RSpec.configure` includes,
-and a global `config.before` are not either. `frees` is one step: a member
-only freed members read is found by running `--dead` again after deleting.
+a global `config.before`, a gem call that builds another checkout class
+(`Fabricate(:post)`), and a library superclass calling back into the
+class (an Active Record callback) are not either. `frees` is one step: a
+member only freed members read is found by running `--dead` again after
+deleting.
 
-Measured (DEC-730): on discourse and mastodon (`app lib`), 17 of 301
-`test-only` rows carry a unit; 34 of 34 units read by hand held nothing
-else of the checkout's. Strict by design: most sites sit in an example that
-also builds another class or calls an untyped receiver.
+Measured (DEC-730): on discourse and mastodon (`app lib`), 0 of 301
+`test-only` rows carry a unit. The first ship's 34 units included 6 that
+held the only test of live code; every unit on a `clear` row there was a
+method that calls live code. Units come where a method is self-contained.
 
 ### Entry points
 
