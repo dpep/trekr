@@ -1278,7 +1278,14 @@ fn check_case(
     let mut placed_defs: Vec<(String, String, Owed)> = Vec::new();
     // `dead Gemfile` grades the bundle (DEC-670): the code snapshot is the
     // other cases', and would grade the fake gems under `vendor/`.
-    let code = |line: &str| line.starts_with("dead ") && !line.starts_with("dead Gemfile");
+    let code = |line: &str| {
+        line.strip_prefix("dead ").is_some_and(|rest| {
+            let target = rest.split_whitespace().next().unwrap_or_default();
+            !["Gemfile", "gems.rb", ".gemspec", ".lock", ".locked"]
+                .iter()
+                .any(|name| target.ends_with(name))
+        })
+    };
     if expectations.lines().any(code) {
         let snapshot = dead_snapshot(&db, &dir);
         dead_rows_are_queryable(&db, &dir, label, &snapshot, failures);
@@ -1455,8 +1462,36 @@ fn check_case(
                 }
             }
             "dead" => {
-                let (answer, _) = trekr(&db, &dir, &["--dead", target, "--json"]);
-                check_dead(label, line, &answer, failures);
+                let (answer, code) = trekr(&db, &dir, &["--dead", target, "--json"]);
+                // `referenced=a,b`: the gems `--dead Gemfile` found in use, by
+                // name, sorted; `exit=N`: its exit code.
+                let mut rest = Vec::new();
+                for token in line.split_whitespace() {
+                    if let Some(want) = token.strip_prefix("referenced=") {
+                        let mut got: Vec<&str> = answer["referenced"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|r| r["name"].as_str())
+                            .collect();
+                        got.sort();
+                        let want: Vec<&str> = want.split(',').filter(|n| !n.is_empty()).collect();
+                        if got != want {
+                            failures.push(format!(
+                                "{label}: {line}\n      referenced: expected {want:?}, got {got:?}"
+                            ));
+                        }
+                    } else if let Some(want) = token.strip_prefix("exit=") {
+                        if want.parse::<i32>().ok() != Some(code) {
+                            failures.push(format!(
+                                "{label}: {line}\n      exit: expected {want}, got {code}"
+                            ));
+                        }
+                    } else {
+                        rest.push(token);
+                    }
+                }
+                check_dead(label, &rest.join(" "), &answer, failures);
             }
             "symbols" => {
                 let (answer, _) = trekr(&db, &dir, &["--symbols", target, "--json"]);
