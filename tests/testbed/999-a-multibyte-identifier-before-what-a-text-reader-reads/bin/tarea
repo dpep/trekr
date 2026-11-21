@@ -1,0 +1,4 @@
+#!/usr/bin/env ruby
+año.descendants
+año.const_get(nombre)
+UsedKit.render(señal)

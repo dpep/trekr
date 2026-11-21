@@ -1,0 +1,7 @@
+# A multi-byte identifier (`año`, legal Ruby) just before a token the
+# text readers scan for: `.descendants`, `.const_get`, `T.unsafe(...)`, a
+# route, a YAML scalar, a Slim or Jbuilder line, a script. `--dead`
+# panicked where a reader sliced the line one byte past the character's
+# start. Every reader that scans text by hand reads this case.
+dead app/models/pieza.rb Pieza=unreferenced~año.const_get
+dead Gemfile used_kit=none idle_kit=unreferenced~ exit=0

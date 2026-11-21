@@ -7,6 +7,7 @@
 //! never a resolved reference.
 
 use super::super::built::{TEMPLATES, Texts};
+use crate::core::text::{is_ident, trailing_run};
 use crate::core::{RecvShape, RecvValue};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -650,12 +651,7 @@ fn computed_const_gets(line: &str) -> Vec<String> {
         }
         let namespace = match receiver.strip_suffix("\")") {
             Some(inner) => inner.rsplit('"').next().unwrap_or(""),
-            None => {
-                let start = receiver
-                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
-                    .map_or(0, |i| i + 1);
-                &receiver[start..]
-            }
+            None => trailing_run(receiver, |c| is_ident(c) || c == ':'),
         };
         if is_constant_path(namespace)
             && namespace != "Object"
@@ -850,13 +846,7 @@ fn unscoped_lookup(line: &str) -> Option<String> {
             continue;
         }
         let receiver = match before {
-            Some(b'.') => {
-                let head = &line[..at - 1];
-                let from = head
-                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || "_:.@".contains(c)))
-                    .map_or(0, |i| i + 1);
-                &head[from..]
-            }
+            Some(b'.') => trailing_run(&line[..at - 1], |c| is_ident(c) || ":.@".contains(c)),
             _ => "",
         };
         let namespace = receiver.trim_start_matches("::");
@@ -927,10 +917,7 @@ fn listings(line: &str, calls: &[&str]) -> Vec<String> {
                 .strip_suffix(')')
                 .and_then(|b| b.rsplit_once("T.unsafe("))
                 .map_or(before, |(_, inner)| inner.trim());
-            let start = before
-                .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
-                .map_or(0, |i| i + 1);
-            let name = &before[start..];
+            let name = trailing_run(before, |c| is_ident(c) || c == ':');
             let after = &rest[at + call.len()..];
             let whole = !after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_');
             if whole && is_constant_path(name) {

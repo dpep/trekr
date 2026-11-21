@@ -1,6 +1,12 @@
 //! Runs of characters at a text's edge, for the readers that scan Ruby by
 //! hand. Each returns a subslice, so the caller never computes a byte offset:
-//! `rfind(..).map_or(0, |i| i + 1)` lands inside a multi-byte character.
+//! `rfind(..).map_or(0, |i| i + 1)` lands inside a multi-byte character
+//! (DEC-835).
+
+/// A character Ruby allows in an identifier: any non-ASCII one is.
+pub(crate) fn is_ident(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii()
+}
 
 /// The longest suffix of `text` whose characters all satisfy `keep`.
 pub(crate) fn trailing_run(text: &str, keep: impl Fn(char) -> bool) -> &str {
@@ -53,8 +59,7 @@ mod tests {
 
     #[test]
     fn a_run_of_multibyte_characters_is_kept_whole() {
-        let ident = |c: char| c.is_alphanumeric() || c == '_';
-        assert_eq!(trailing_run("x.año", ident), "año");
-        assert_eq!(leading_run("日本.x", ident), "日本");
+        assert_eq!(trailing_run("x.año", is_ident), "año");
+        assert_eq!(leading_run("日本.x", is_ident), "日本");
     }
 }

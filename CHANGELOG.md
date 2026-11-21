@@ -179,6 +179,10 @@
   matcher as it counts the call**: `expect(widget).to be_ready` was
   ruled out as Widget's own `ready?`, while `widget.ready?` was `possible`;
   both are `possible`, in Find References too.
+- **`--dead` no longer panics on a non-ASCII identifier**: `año.descendants`,
+  `año.const_get(name)` or `T.unsafe(año).descendants` in the checkout's
+  Ruby panicked ("not a char boundary"). The receiver is read whole, so a
+  caveat names `año.const_get`.
 
 ## 0.10.2 — 2026-11-20
 

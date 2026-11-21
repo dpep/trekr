@@ -18403,3 +18403,27 @@ do hold the word (cached already), and `--dead` 3 % of its CPU, most of it
 **Noted, not fixed here:** by the same reading, that order dependence
 exists today: whether a file's templates reach a `render` filter depends
 on whether an earlier call cached the file.
+## DEC-835 — A reader that scans Ruby as text takes a run through `core::text`
+
+**Decided.** A text reader that wants the name before or after a point (the
+receiver of `.const_get`, the constant before `.descendants`, the word under
+a cursor) asks `core::text::trailing_run` or `leading_run` for it. Each
+returns the subslice, so no caller computes the byte offset. A name is read
+with `is_ident`, Ruby's own rule, where any non-ASCII character is part of
+an identifier: `año.const_get` is `año`'s, not `o`'s.
+
+**Why.** `rfind(|c| !word(c)).map_or(0, |i| i + 1)` is the shape everyone
+writes, and its `+ 1` lands inside a multi-byte character. It shipped in
+`built.rs` (c05b8cb5) and in three places in `dead_consts/named.rs`, where
+`año.descendants` in a model panicked `--dead`; `dead_gems`' `words()`
+(f680e2d8) was the same class by another route. Each fix re-derived the
+boundary by hand.
+
+**Not absorbed.** `dead_gems`' `words()` is a forward tokenizer over bytes
+that only compares ASCII bytes. A run helper would not make it safer.
+
+**Guard.** The testbed runs `--dead .` on every case and fails on any
+trekr panic, and case 999 puts a multi-byte identifier before what each
+text reader looks for.
+
+Test: testbed 999; `core::text`'s unit tests.

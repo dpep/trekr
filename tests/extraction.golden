@@ -1256,6 +1256,15 @@ ruby tests/testbed/998-an-engines-gemspec-with-no-lockfile-is-graded/Gemfile 786
 ruby tests/testbed/998-an-engines-gemspec-with-no-lockfile-is-graded/app/models/widget.rb 63e26dbefaa01406
 ruby tests/testbed/998-an-engines-gemspec-with-no-lockfile-is-graded/engines/core/core.gemspec b208cb29ab73b1a7
 ruby tests/testbed/998-an-engines-gemspec-with-no-lockfile-is-graded/engines/core/lib/core.rb 22198830efb1deac
+ruby tests/testbed/999-a-multibyte-identifier-before-what-a-text-reader-reads/Gemfile 27724c23569d7044
+ruby tests/testbed/999-a-multibyte-identifier-before-what-a-text-reader-reads/app/controllers/widgets_controller.rb fc6b1e35b29a874f
+ruby tests/testbed/999-a-multibyte-identifier-before-what-a-text-reader-reads/app/models/pieza.rb 2c74e6a3f0a2cbc0
+ruby tests/testbed/999-a-multibyte-identifier-before-what-a-text-reader-reads/app/models/widget.rb e919c657b16893d5
+ruby tests/testbed/999-a-multibyte-identifier-before-what-a-text-reader-reads/app/views/widgets/show.json.jbuilder 53cb4ce6d3a17c0b
+ruby tests/testbed/999-a-multibyte-identifier-before-what-a-text-reader-reads/config/routes.rb dc7b5ae4e4bbaeb2
+ruby tests/testbed/999-a-multibyte-identifier-before-what-a-text-reader-reads/lib/tasks/tareas.rake c3dc28c6b57edb3f
+ruby tests/testbed/999-a-multibyte-identifier-before-what-a-text-reader-reads/vendor/bundle/ruby/9.8.0/gems/idle_kit-1.0/lib/idle_kit.rb 3c0cbdc0d83d959e
+ruby tests/testbed/999-a-multibyte-identifier-before-what-a-text-reader-reads/vendor/bundle/ruby/9.8.0/gems/used_kit-1.0/lib/used_kit.rb 94f2bce36e2e2447
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
