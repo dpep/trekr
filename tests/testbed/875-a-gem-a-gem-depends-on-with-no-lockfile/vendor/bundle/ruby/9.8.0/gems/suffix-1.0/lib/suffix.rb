@@ -1,0 +1,2 @@
+module Suffix
+end

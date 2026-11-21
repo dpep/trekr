@@ -1,0 +1,11 @@
+source "https://rubygems.org"
+
+gem "slim_kit"
+gem "builder_kit"
+gem "arbre_kit"
+gem "danger_kit"
+gem "thor_kit"
+gem "pager_kit"
+gem "loader_kit"
+gem "jb_kit"
+gem "idle"

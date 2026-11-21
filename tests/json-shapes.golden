@@ -75,6 +75,7 @@
 --dead $.candidates[].mentions_by_name: int
 --dead $.candidates[].name: string
 --dead $.candidates[].needed_by: array
+--dead $.candidates[].needed_by[]: string
 --dead $.candidates[].overridden_by: array
 --dead $.candidates[].overridden_by[]: string
 --dead $.candidates[].overrides: array
@@ -110,8 +111,10 @@
 --dead $.candidates[].test_sites[].path: string
 --dead $.candidates[].test_sites[].root: string
 --dead $.candidates[].tier: string {convention-only,override,shadowed,single-caller,super-only,test-only,unreferenced}
---dead $.candidates[].version: string
+--dead $.candidates[].version: null|string
 --dead $.candidates[].visibility: string
+--dead $.code: int
+--dead $.error: string
 --dead $.index: object
 --dead $.index.cause: string
 --dead $.index.hint: string
@@ -119,6 +122,7 @@
 --dead $.index.refreshed_files: array
 --dead $.index.refreshed_files[]: string
 --dead $.index.stale: bool
+--dead $.kind: string {usage}
 --dead $.referenced: array
 --dead $.referenced[]: object
 --dead $.referenced[].by: string

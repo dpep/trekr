@@ -1,0 +1,6 @@
+# `--dead Gemfile` (DEC-670) read only what the index reads, so a gem used
+# only in a Slim, Builder, Arbre or Jb view, a Thor file or a Dangerfile was a
+# `clear` `unreferenced` row though code names it. The plain-Ruby ones are
+# parsed (a constant, a method of a gem's module, a require); a Slim view's
+# words are read. idle, named nowhere, stays clear.
+dead Gemfile slim_kit=none builder_kit=none arbre_kit=none danger_kit=none thor_kit=none pager_kit=none loader_kit=none jb_kit=none idle=unreferenced~

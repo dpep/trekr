@@ -1,0 +1,23 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    addon (1.0)
+    framer (1.0)
+    json_x (1.0)
+    loose (1.0)
+    parallel_x (1.0)
+    runner_kit (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  addon
+  framer
+  json_x
+  loose
+  parallel_x
+  runner_kit
+
+BUNDLED WITH
+   2.5.0

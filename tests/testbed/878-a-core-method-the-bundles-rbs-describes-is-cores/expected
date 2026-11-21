@@ -1,0 +1,5 @@
+# Core is read from the Ruby's own rbs, which can be older than the rbs the
+# bundle declares. rbs polyfills `Module#ruby2_keywords` for Rubies without
+# it, so the app's `ruby2_keywords` call credited rbs. A method the bundle's
+# rbs describes under `core/` is core's, and credits no gem.
+dead Gemfile rbs=unreferenced

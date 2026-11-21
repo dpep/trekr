@@ -1,0 +1,7 @@
+# Another gem's require makes a gem `convention-only` (DEC-670), but only a
+# require that loads the gem: runner_kit's `require_relative "parallel_x"`
+# loads its own file; loose, which requires json_x, is itself a row, so it
+# only lowers json_x: nothing is seen to load loose, though a Railtie may
+# (better_errors loading binding_of_caller). framer, which the app uses, requiring
+# addon without depending on it is the case the rule is for.
+dead Gemfile parallel_x=unreferenced~ json_x=unreferenced~row addon=convention-only~ loose=unreferenced~ runner_kit=none framer=none

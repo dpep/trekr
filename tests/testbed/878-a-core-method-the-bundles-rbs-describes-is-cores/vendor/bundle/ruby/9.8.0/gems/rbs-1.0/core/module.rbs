@@ -1,0 +1,3 @@
+class Module
+  private def ruby2_keywords: (*Symbol method_names) -> nil
+end

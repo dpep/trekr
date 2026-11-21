@@ -1,0 +1,5 @@
+source "https://rubygems.org"
+
+gem "local_kit", path: "vendor/local_kit"
+gem "spare_kit", path: "vendor/spare_kit"
+gemspec path: "engines/widget"

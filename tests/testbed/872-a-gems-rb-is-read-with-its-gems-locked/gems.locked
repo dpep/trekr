@@ -1,0 +1,15 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    idle (1.0)
+    tidy (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  idle
+  tidy
+
+BUNDLED WITH
+   2.5.0

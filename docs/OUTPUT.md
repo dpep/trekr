@@ -635,23 +635,37 @@ of the time on three such batches before each was read. So every row is
 
 ### Gems: `--dead Gemfile`
 
-Handed a `Gemfile`, `gems.rb` or `*.gemspec` (alone: code and gems are
-graded apart), `--dead` grades the gems it declares instead (DEC-670),
-one row per `gem` line (`kind: gem`, `path` and `line` the declaration).
-A Gemfile's `gemspec` adds the gemspecs' dependencies. A gem only the
+Handed a `Gemfile`, `gems.rb` or `*.gemspec` at the checkout's root
+(alone: code and gems are graded apart), `--dead` grades the gems it
+declares instead (DEC-670), one row per `gem` line (`kind: gem`, `path`
+and `line` the declaration). A Gemfile's `gemspec` adds the gemspecs'
+dependencies, from the directory its `path:` names. A gem only the
 lockfile names is not the app's to remove: it is never a row, and
-`summary.transitive` counts them.
+`summary.transitive` counts them. A lockfile, or a manifest in a
+subdirectory (whose own bundle the index did not locate), is a usage
+error, exit 64 (DEC-771).
 
 A gem is used — not listed, and in `referenced` with the first evidence
 (`by`: `constant`, `require`, `method`, `declaration`, `dependency`;
-`what`, `path`, `line`) — when the checkout, its extensionless scripts
-included, names a constant the gem owns, requires one of its files, calls
-a method a module of its own (or a class it reopens) defines that no more
-than three gems and neither the checkout nor Ruby define, reopens a class
-it owns, or uses a gem only it brings. A constant several gems declare is
-the one whose `lib/` has its file, else the one named for it, else the one
-the others depend on; a module none of those picks is no gem's. A
-`require: false` gem's methods count only once a require of it is seen.
+`what`, `path`, `line`) — when the checkout names a constant the gem owns,
+requires one of its files, calls a method a module of its own (or a class
+it reopens) defines that no more than three gems and neither the checkout
+nor Ruby define, reopens a class it owns, or uses a gem only it brings.
+The checkout here is what the index reads, plus the Ruby it does not
+(DEC-770): extensionless scripts, Builder, Arbre, Jb, axlsx and Prawn
+views, Thor files, `Dangerfile`, `Thorfile`, `.irbrc` and `.pryrc`,
+parsed; and Slim views, whose words are read — a constant path, a method
+name, a `require "…"`. A constant several gems declare is the one whose
+`lib/` has its file, else the one named for it, else the one the others
+depend on; a module none of those picks is no gem's. A `require: false`
+gem's methods count only once a require of it is seen. Ruby's methods
+include those the bundle's own rbs describes under `core/`, though core
+was read from an older one.
+
+A path gem inside the checkout (a lockfile `PATH` spec or `path:`, not the
+checkout itself) is graded as a gem: its files are its, so a use of its
+constants counts, and its own files naming it do not. Its code is still
+the checkout's for every other gem: an engine's use of a gem counts.
 
 The rows, from least evidence to most:
 
@@ -660,8 +674,11 @@ The rows, from least evidence to most:
   to the test group.
 - `convention-only` — no Ruby uses it, but something loads it by name
   (`convention.by`, with `path`, `line` and `text`): `gem`, another gem
-  of the bundle requires it without depending on it (lograge's
-  `require "logstash-event"`); `symbol`, a symbol naming it to the gem it
+  of the bundle, not itself a row (a row's require only lowers it),
+  requires it without depending on it in
+  the lockfile (or, with none, its specification) — lograge's
+  `require "logstash-event"`; a `require_relative` loads the requirer's
+  own file; `symbol`, a symbol naming it to the gem it
   plugs into (`provider :saml`); `config`, a config, CI file, Procfile or
   a Ruby string in `config/` names it, an adapter `database.yml` names
   (`postgresql` for pg), or a file in `config/` is named for it
@@ -672,7 +689,10 @@ nothing naming it, and what would settle it: not installed (its files
 were not read), or a path or git gem; declared for some platforms only;
 a Railtie or Engine, which runs at boot through `Bundler.require`; a
 method it defines on a class it does not own, a module it mixes into one,
-or an `on_load` hook; a command it installs that nothing read runs; a
+or an `on_load` hook (a class it declares beside a constant of the same
+name, `class PReadFile` by `PReadFile = ::File`, is its own); a command
+its specification installs that nothing read runs (one that lists none
+installs none, whatever `bin/` holds); a
 compiled extension; rake tasks or generators it ships; a name that makes
 it a plugin of a bundled gem (`rubocop-rails`); the development group; a
 gem it brings that the app uses, which others bring too.
@@ -681,8 +701,9 @@ Per row: `version` and `gem_dir` (`null` when not installed), `groups`,
 `bundler_require` (`name`, `paths`, or `off` for `require: false`),
 `needed_by` (gems that depend on it, so removing the line keeps it in the
 bundle), `executables`, `test_refs`. `summary` counts `declared`,
-`referenced`, `transitive`, the rows per tier and per confidence; text
-lists `referenced` with `--explain`.
+`referenced` (gems found in use that are not rows: a `test-only` row is
+not one), `transitive`, the rows per tier and per confidence; text lists
+`referenced` with `--explain`.
 
 Hand-checked on ten checkouts (mastodon, discourse, rails, sidekiq,
 rubocop, faraday, graphql, flipper, webmock, widget_shop; 508 declared

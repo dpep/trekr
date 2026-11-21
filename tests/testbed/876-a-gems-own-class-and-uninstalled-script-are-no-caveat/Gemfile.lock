@@ -1,0 +1,15 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    file_ext (1.0)
+    mimer (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  file_ext
+  mimer
+
+BUNDLED WITH
+   2.5.0

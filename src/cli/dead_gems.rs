@@ -25,6 +25,21 @@ pub(super) fn is_manifest(path: &Path) -> bool {
     matches!(name, "Gemfile" | "gems.rb") || name.ends_with(".gemspec")
 }
 
+/// Whether `--dead` was handed a bundle's file: a manifest, or a lockfile,
+/// which is refused for the manifest beside it.
+pub(super) fn is_bundle_file(path: &Path) -> bool {
+    is_manifest(path) || lockfile_manifest(path).is_some()
+}
+
+/// The manifest a lockfile locks: `Gemfile` for `Gemfile.lock`.
+fn lockfile_manifest(path: &Path) -> Option<&'static str> {
+    match path.file_name()?.to_str()? {
+        "Gemfile.lock" => Some("Gemfile"),
+        "gems.locked" => Some("gems.rb"),
+        _ => None,
+    }
+}
+
 /// One gem the manifest declares and nothing is seen to use.
 #[derive(Serialize)]
 struct GemRow {
@@ -106,6 +121,13 @@ pub(super) fn cmd_dead_gems(
     paths: &[PathBuf],
     explain: bool,
 ) -> anyhow::Result<ExitCode> {
+    if let Some((lockfile, manifest)) = paths.iter().find_map(|p| Some((p, lockfile_manifest(p)?)))
+    {
+        return Err(Failure::Usage.error(format!(
+            "--dead grades the gems a manifest declares: pass the {manifest}, not {}",
+            lockfile.display()
+        )));
+    }
     if let Some(other) = paths.iter().find(|p| !is_manifest(p)) {
         return Err(Failure::Usage.error(format!(
             "--dead grades a Gemfile's gems apart from code: `--dead Gemfile`, then `--dead {}`",
@@ -119,6 +141,19 @@ pub(super) fn cmd_dead_gems(
             return Err(Failure::NotFound.error(format!("no such file: {}", path.display())));
         }
         let root = named_checkout(path)?;
+        // A Gemfile in a subdirectory has a bundle of its own, which the
+        // index did not locate: graded against the root's, every answer
+        // would come from the wrong gems and the wrong code.
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let dir = canonical(path).parent().map(Path::to_path_buf);
+        if dir.as_deref() != Some(canonical(&root).as_path()) {
+            return Err(Failure::Usage.error(format!(
+                "--dead grades the bundle at a checkout's root, which the index located; \
+                 {} is in a subdirectory of {}, whose bundle it did not",
+                path.display(),
+                root.display()
+            )));
+        }
         if let Some(code) = autoindex::ensure(out, &store, &root, Need::Whole)? {
             return Ok(code);
         }
@@ -248,6 +283,15 @@ pub(super) fn cmd_dead_gems(
     Ok(exit_on(found))
 }
 
+/// Counts `evidence` for its gem, unless it is in the gem's own files: a
+/// path gem inside the checkout naming itself is no use of it.
+fn credit(uses: &mut HashMap<String, Uses>, layers: &Layers, evidence: Evidence) {
+    if layers.of(&evidence.path) == Layer::Gem(evidence.name.clone()) {
+        return;
+    }
+    uses.entry(evidence.name.clone()).or_default().add(evidence);
+}
+
 const TIERS: [DeadTier; 3] = [
     DeadTier::Unreferenced,
     DeadTier::TestOnly,
@@ -273,12 +317,17 @@ struct Graded {
 fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> {
     let root_str = root.to_string_lossy().into_owned();
     let declared = declared_in(root, manifest);
-    let lock = ["Gemfile.lock", "gems.locked"]
-        .iter()
-        .find_map(|name| crate::scan::read_text(root.join(name)).ok())
-        .map(|text| Lock::parse(&text))
-        .unwrap_or_default();
-    let installed: HashMap<String, String> = store.gem_names(&root_str)?.into_iter().collect();
+    let mut installed: HashMap<String, String> = store.gem_names(&root_str)?.into_iter().collect();
+    let lock_text = crate::scan::read_text(crate::gems::bundle_files(root).1).ok();
+    let mut in_checkout = HashSet::new();
+    for (name, dir) in path_gems(root, lock_text.as_deref(), manifest, &declared) {
+        in_checkout.insert(dir.clone());
+        installed.entry(name).or_insert(dir);
+    }
+    let lock = match &lock_text {
+        Some(text) => Lock::parse(text),
+        None => Lock::from_installed(&installed),
+    };
     let direct: HashSet<&str> = declared.iter().map(|(d, _)| d.name.as_str()).collect();
     let transitive = installed
         .keys()
@@ -294,7 +343,7 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
         .filter(|(name, _)| direct.contains(name.as_str()) || lock.needs.contains_key(name))
         .map(|(name, path)| (path, name))
         .collect();
-    let layers = Layers::new(&root_str, &installed, default);
+    let layers = Layers::new(&root_str, &installed, default, in_checkout);
     let owned = Owned::new(&tree, &layers, &lock);
     let mut uses: HashMap<String, Uses> = HashMap::new();
     let manifests: HashSet<String> = declared
@@ -327,41 +376,54 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
             .clone()
             .unwrap_or_else(|| written.to_string());
         for gem in owned.of_name(&fqn) {
-            uses.entry(gem.clone()).or_default().add(Evidence {
-                name: gem.clone(),
-                by: "constant",
-                what: fqn.clone(),
-                path: at(&row.path),
-                line: row.line,
-            });
+            credit(
+                &mut uses,
+                &layers,
+                Evidence {
+                    name: gem.clone(),
+                    by: "constant",
+                    what: fqn.clone(),
+                    path: at(&row.path),
+                    line: row.line,
+                },
+            );
         }
     }
     // A class the app reopens is used: `module Devise` in an initializer.
+    // A path gem inside the checkout reopening another gem's class counts.
     for (fqn, gems) in &owned.by_fqn {
-        let Some(site) = tree
+        let sites: Vec<_> = tree
             .sites(fqn)
             .into_iter()
-            .find(|site| layers.of(&site.path) == Layer::App)
-        else {
-            continue;
-        };
-        let relative = site.path[root_str.len() + 1..].to_string();
-        if manifests.contains(&relative) {
-            continue;
-        }
+            .filter(|site| {
+                layers.is_checkouts(&site.path)
+                    && site
+                        .path
+                        .strip_prefix(layers.app.as_str())
+                        .is_some_and(|relative| !manifests.contains(relative))
+            })
+            .collect();
         for gem in gems {
-            uses.entry(gem.clone()).or_default().add(Evidence {
-                name: gem.clone(),
-                by: "declaration",
-                what: fqn.clone(),
-                path: site.path.clone(),
-                line: site.line,
-            });
+            let own = Layer::Gem(gem.clone());
+            let Some(site) = sites.iter().find(|site| layers.of(&site.path) != own) else {
+                continue;
+            };
+            credit(
+                &mut uses,
+                &layers,
+                Evidence {
+                    name: gem.clone(),
+                    by: "declaration",
+                    what: fqn.clone(),
+                    path: site.path.clone(),
+                    line: site.line,
+                },
+            );
         }
     }
 
     // Requires: a literal path one of the gems' files answers to.
-    let mut features = Features::new(store, &installed)?;
+    let mut features = Features::new(store, &layers, &installed)?;
     features.names.extend(
         direct
             .iter()
@@ -395,14 +457,33 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
                 .count() as u32
                 + 1;
             for gem in features.of(&required.path) {
-                uses.entry(gem.clone()).or_default().add(Evidence {
+                credit(
+                    &mut uses,
+                    &layers,
+                    Evidence {
+                        name: gem,
+                        by: "require",
+                        what: required.path.clone(),
+                        path: at(path),
+                        line,
+                    },
+                );
+            }
+        }
+    }
+    for (path, required, line) in scripts.word_requires() {
+        for gem in features.of(&required) {
+            credit(
+                &mut uses,
+                &layers,
+                Evidence {
                     name: gem,
                     by: "require",
-                    what: required.path.clone(),
-                    path: at(path),
+                    what: required.clone(),
+                    path: at(&path),
                     line,
-                });
-            }
+                },
+            );
         }
     }
 
@@ -440,6 +521,10 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
     );
     let mut asked: HashSet<(String, bool)> = HashSet::new();
     let mut in_core: HashMap<String, bool> = HashMap::new();
+    let rbs_core = installed
+        .get("rbs")
+        .map(|dir| rbs_core_names(&Path::new(dir).join("core")))
+        .unwrap_or_default();
     for (name, path) in called {
         if !asked.insert((name.clone(), in_tests(&path))) {
             continue;
@@ -447,9 +532,11 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
         let defined = &defines[&name];
         // Core's methods are not in the store; the tree knows them.
         let core = *in_core.entry(name.clone()).or_insert_with(|| {
-            tree.named(&name)
-                .iter()
-                .any(|def| layers.of(&def.site.path) == Layer::Other)
+            rbs_core.contains(&name)
+                || tree
+                    .named(&name)
+                    .iter()
+                    .any(|def| layers.of(&def.site.path) == Layer::Other)
         });
         if core {
             continue;
@@ -468,13 +555,17 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
             if !mixin && owned.owns(gem, &owner) {
                 continue;
             }
-            uses.entry(gem.clone()).or_default().add(Evidence {
-                name: gem.clone(),
-                by: "method",
-                what: name.clone(),
-                path: at(&path),
-                line: 0,
-            });
+            credit(
+                &mut uses,
+                &layers,
+                Evidence {
+                    name: gem.clone(),
+                    by: "method",
+                    what: name.clone(),
+                    path: at(&path),
+                    line: 0,
+                },
+            );
         }
     }
     for found in uses.values_mut() {
@@ -554,31 +645,37 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
     }
 
     let texts = Texts::read(root, &manifests);
+    // A row: no use outside the tests, unless it is in a group for them.
+    let is_row = |declaration: &Declaration| {
+        let found = uses.get(&declaration.name);
+        let tested_only = found.is_some_and(|u| u.live.is_none() && u.tests > 0);
+        let in_test_group = declaration
+            .groups
+            .iter()
+            .any(|g| g == "test" || g == "development");
+        found.and_then(|u| u.live.as_ref()).is_none() && !(tested_only && in_test_group)
+    };
     let unused: Vec<&Declaration> = declared
         .iter()
         .map(|(d, _)| d)
-        .filter(|d| uses.get(&d.name).is_none_or(|u| u.live.is_none()))
+        .filter(|d| is_row(d))
         .collect();
     // A default gem counts too: rubocop declares ostruct for YARD, which
     // requires it and a newer Ruby no longer ships it.
-    let soft = required_by_bundle(store, &installed, &lock, &unused)?;
+    let soft = required_by_bundle(store, &layers, &installed, &lock, &unused)?;
     let mut rows = Vec::new();
     let mut referenced = Vec::new();
     for (declaration, file) in &declared {
         let name = &declaration.name;
         let found = uses.get(name);
         let tested_only = found.is_some_and(|u| u.live.is_none() && u.tests > 0);
-        if let Some(evidence) = found.and_then(|u| u.any()) {
-            referenced.push(Evidence {
-                name: name.clone(),
-                ..evidence.clone()
-            });
-        }
-        let in_test_group = declaration
-            .groups
-            .iter()
-            .any(|g| g == "test" || g == "development");
-        if found.and_then(|u| u.live.as_ref()).is_some() || (tested_only && in_test_group) {
+        if !is_row(declaration) {
+            if let Some(evidence) = found.and_then(|u| u.any()) {
+                referenced.push(Evidence {
+                    name: name.clone(),
+                    ..evidence.clone()
+                });
+            }
             continue;
         }
         let gem_dir = installed.get(name).cloned();
@@ -628,7 +725,8 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
                     false => format!("group {}", declaration.groups.join(", ")),
                 }
             ));
-        } else if let Some((by, path, line)) = soft.get(name) {
+        } else if let Some(required) = soft.get(name).filter(|r| !r.by_row) {
+            let Required { by, path, line, .. } = required;
             row.tier = DeadTier::ConventionOnly;
             reason.push(format!(
                 "no Ruby of the checkout uses it, but {by} requires it at {}:{line}, \
@@ -703,6 +801,15 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
             installed: &installed,
             shared: shared.get(name),
         })?;
+        let mut caveats = caveats;
+        if let Some(required) = soft.get(name).filter(|r| r.by_row) {
+            caveats.push(format!(
+                "{}, itself a row, requires it ({}:{}), and loads it if anything loads {0}",
+                required.by,
+                shown(&required.path),
+                required.line
+            ));
+        }
         if !caveats.is_empty() {
             row.confidence = Grade::Lower;
             row.caveat = caveats.join("; ");
@@ -723,10 +830,11 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
 /// declares for it.
 fn required_by_bundle(
     store: &Store,
+    layers: &Layers,
     installed: &HashMap<String, String>,
     lock: &Lock,
     candidates: &[&Declaration],
-) -> anyhow::Result<HashMap<String, (String, String, u32)>> {
+) -> anyhow::Result<HashMap<String, Required>> {
     let mut wanted: HashMap<String, String> = HashMap::new();
     for declaration in candidates {
         let name = &declaration.name;
@@ -735,8 +843,12 @@ fn required_by_bundle(
             paths.extend(listed.iter().cloned());
         }
         if let Some(dir) = installed.get(name) {
-            paths.extend(store.file_map(dir)?.into_keys().filter_map(|path| {
-                let feature = path.strip_prefix("lib/")?.strip_suffix(".rb")?;
+            let (root, prefix) = layers.store_root(dir);
+            paths.extend(store.file_map(root)?.into_keys().filter_map(|path| {
+                let feature = path
+                    .strip_prefix(prefix.as_str())?
+                    .strip_prefix("lib/")?
+                    .strip_suffix(".rb")?;
                 (!feature.contains('/')).then(|| feature.to_string())
             }));
         }
@@ -744,15 +856,23 @@ fn required_by_bundle(
             wanted.entry(path).or_insert_with(|| name.clone());
         }
     }
-    let mut found: HashMap<String, (String, String, u32)> = HashMap::new();
+    let mut found: HashMap<String, Required> = HashMap::new();
     if wanted.is_empty() {
         return Ok(found);
     }
-    let mut gems: Vec<(&String, &String)> = installed.iter().collect();
+    // A requirer that is itself a row is weighed last: nothing is seen to
+    // load it, though a Railtie may (better_errors, binding_of_caller).
+    let rows: HashSet<&str> = candidates.iter().map(|d| d.name.as_str()).collect();
+    let mut gems: Vec<(bool, &String, &String)> = installed
+        .iter()
+        .map(|(gem, dir)| (rows.contains(gem.as_str()), gem, dir))
+        .collect();
     gems.sort();
-    for (gem, dir) in gems {
-        for path in store.files_calling(dir, "require")? {
-            let Ok(raw) = crate::scan::read_source(Path::new(dir).join(&path)) else {
+    for (row, gem, dir) in gems {
+        let (root, prefix) = layers.store_root(dir);
+        let requiring = store.files_calling(root, "require")?;
+        for path in requiring.iter().filter(|p| p.starts_with(prefix.as_str())) {
+            let Ok(raw) = crate::scan::read_source(Path::new(root).join(path)) else {
                 continue;
             };
             let mentions = wanted.iter().any(|(needle, candidate)| {
@@ -762,7 +882,10 @@ fn required_by_bundle(
                 continue;
             }
             for required in crate::query::require::requires_in(&raw) {
-                if required.anchor.is_some() {
+                // minitest's `require_relative "parallel"` is its own file.
+                if required.anchor.is_some()
+                    || required.verb == crate::query::require::Verb::RequireRelative
+                {
                     continue;
                 }
                 let Some(candidate) = wanted.get(&required.path) else {
@@ -781,12 +904,63 @@ fn required_by_bundle(
                     + 1;
                 found.insert(
                     candidate.clone(),
-                    (gem.clone(), format!("{dir}/{path}"), line),
+                    Required {
+                        by: gem.clone(),
+                        path: format!("{root}/{path}"),
+                        line,
+                        by_row: row,
+                    },
                 );
             }
         }
     }
     Ok(found)
+}
+
+/// Another gem's require of a candidate: who, where, and whether the
+/// requirer is itself a row, which only lowers the candidate.
+struct Required {
+    by: String,
+    path: String,
+    line: u32,
+    by_row: bool,
+}
+
+/// The path gems inside the checkout (not the checkout itself), each with
+/// its directory under `root`: the lockfile's `PATH` specs, and a `path:`
+/// the lockfile does not name. Their files are indexed as the checkout's,
+/// and are theirs.
+fn path_gems(
+    root: &Path,
+    lockfile: Option<&str>,
+    manifest: &Path,
+    declared: &[(Declaration, String)],
+) -> Vec<(String, String)> {
+    let checkout = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut found = lockfile
+        .map(|text| crate::gems::path_gems_in(root, text))
+        .unwrap_or_default();
+    for (declaration, _) in declared {
+        let Some(path) = &declaration.path else {
+            continue;
+        };
+        if found.iter().any(|(name, _)| *name == declaration.name) {
+            continue;
+        }
+        let Ok(dir) = std::fs::canonicalize(manifest.parent().unwrap_or(root).join(path)) else {
+            continue;
+        };
+        if dir.starts_with(&checkout) && dir != checkout {
+            found.push((declaration.name.clone(), dir));
+        }
+    }
+    found
+        .into_iter()
+        .filter_map(|(name, dir)| {
+            let relative = dir.strip_prefix(&checkout).ok()?;
+            Some((name, root.join(relative).to_string_lossy().into_owned()))
+        })
+        .collect()
 }
 
 /// The gems the manifest declares, each with the file (relative to the
@@ -806,8 +980,8 @@ fn declared_in(root: &Path, manifest: &Path) -> Vec<(Declaration, String)> {
     };
     let top = read(manifest);
     let mut files = vec![(manifest.to_path_buf(), top.gems)];
-    if top.pulls_gemspec {
-        let dir = manifest.parent().unwrap_or(root);
+    for dir in &top.gemspecs {
+        let dir = manifest.parent().unwrap_or(root).join(dir);
         let mut specs: Vec<PathBuf> = std::fs::read_dir(dir)
             .into_iter()
             .flatten()
@@ -852,6 +1026,8 @@ struct Layers {
     /// The stdlib's files a default gem owns, when the manifest declares
     /// that gem: Ruby's copy of json is json's, whichever copy answers.
     default: HashMap<String, String>,
+    /// The directories of path gems inside the checkout, indexed with it.
+    in_checkout: HashSet<String>,
 }
 
 impl Layers {
@@ -859,6 +1035,7 @@ impl Layers {
         app: &str,
         installed: &HashMap<String, String>,
         default: HashMap<String, String>,
+        in_checkout: HashSet<String>,
     ) -> Layers {
         let mut gems: Vec<(String, String)> = installed
             .iter()
@@ -869,6 +1046,32 @@ impl Layers {
             app: format!("{app}/"),
             gems,
             default,
+            in_checkout,
+        }
+    }
+
+    /// Whether `path` is the checkout's own code: the app's, or a path gem's
+    /// inside it — not a gem bundled into `vendor/bundle`.
+    fn is_checkouts(&self, path: &str) -> bool {
+        match self.of(path) {
+            Layer::App => true,
+            Layer::Gem(_) => self.in_checkout.iter().any(|dir| {
+                path.strip_prefix(dir.as_str())
+                    .is_some_and(|r| r.starts_with('/'))
+            }),
+            _ => false,
+        }
+    }
+
+    /// The store root holding a gem's files, and the prefix of its paths
+    /// there: its own, or the checkout's for a path gem inside it. A gem
+    /// bundled into `vendor/bundle` is under the checkout too, but is its
+    /// own root.
+    fn store_root<'a>(&'a self, dir: &'a str) -> (&'a str, String) {
+        let app = self.app.trim_end_matches('/');
+        match dir.strip_prefix(&self.app) {
+            Some(relative) if self.in_checkout.contains(dir) => (app, format!("{relative}/")),
+            _ => (dir, String::new()),
         }
     }
 
@@ -1085,6 +1288,51 @@ fn method_names(
         .collect())
 }
 
+/// The method names the bundle's rbs declares for Ruby core, under its
+/// `core/`. Core is read from the Ruby's own rbs, which may be older: rbs
+/// 4's `Module#ruby2_keywords` is core's, not a polyfill rbs is used for.
+fn rbs_core_names(dir: &Path) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(dir) = todo.pop() {
+        for path in std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+        {
+            if path.is_dir() {
+                todo.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rbs") {
+                continue;
+            }
+            let Ok(text) = crate::scan::read_text(&path) else {
+                continue;
+            };
+            for line in text.lines() {
+                let line = line.trim_start();
+                let line = line
+                    .strip_prefix("private ")
+                    .or_else(|| line.strip_prefix("public "))
+                    .unwrap_or(line);
+                let Some(rest) = line.strip_prefix("def ") else {
+                    continue;
+                };
+                let rest = rest
+                    .strip_prefix("self?.")
+                    .or_else(|| rest.strip_prefix("self."))
+                    .unwrap_or(rest);
+                if let Some((name, _)) = rest.split_once(':') {
+                    names.insert(name.trim().to_string());
+                }
+            }
+        }
+    }
+    names
+}
+
 /// The first line of `path` that calls `name`.
 fn call_line(path: &str, name: &str) -> Option<u32> {
     let raw = crate::scan::read_source(path).ok()?;
@@ -1105,12 +1353,18 @@ struct Features {
 }
 
 impl Features {
-    fn new(store: &Store, installed: &HashMap<String, String>) -> anyhow::Result<Features> {
+    fn new(
+        store: &Store,
+        layers: &Layers,
+        installed: &HashMap<String, String>,
+    ) -> anyhow::Result<Features> {
         let mut by_path: HashMap<String, Vec<String>> = HashMap::new();
         for (name, dir) in installed {
-            for path in store.file_map(dir)?.into_keys() {
+            let (root, prefix) = layers.store_root(dir);
+            for path in store.file_map(root)?.into_keys() {
                 let Some(feature) = path
-                    .strip_prefix("lib/")
+                    .strip_prefix(prefix.as_str())
+                    .and_then(|p| p.strip_prefix("lib/"))
                     .and_then(|p| p.strip_suffix(".rb"))
                 else {
                     continue;
@@ -1147,39 +1401,73 @@ impl Features {
     }
 }
 
-/// The checkout's Ruby scripts with no extension (`bin/setup`), which the
-/// index does not read: their requires, constants and calls count too.
+/// Ruby the index does not read: scripts with no extension (`bin/setup`),
+/// and files Ruby in all but name — a Builder, Arbre or Jb view, a Thor
+/// file, a `Dangerfile`, an `.irbrc` — whose requires, constants and calls
+/// count too. A Slim view, which nothing here parses, counts by its words.
 struct Scripts {
     files: Vec<(String, Vec<u8>, crate::core::Facts)>,
+    /// Each Slim view's words: a constant path or a method name, by line.
+    words: Vec<(String, Vec<(u32, String)>)>,
 }
+
+/// Plain Ruby the index leaves out, by extension or by name.
+const PLAIN_RUBY: [&str; 6] = [".builder", ".arb", ".jb", ".axlsx", ".prawn", ".thor"];
+const PLAIN_RUBY_NAMES: [&str; 4] = ["Dangerfile", "Thorfile", ".irbrc", ".pryrc"];
 
 impl Scripts {
     fn read(root: &Path) -> Scripts {
-        let files = tracked(root)
-            .into_iter()
-            .filter(|path| !path.rsplit('/').next().unwrap_or(path).contains('.'))
-            .filter_map(|path| {
-                let raw = crate::scan::read_source(root.join(&path)).ok()?;
-                let text = String::from_utf8_lossy(&raw);
-                if !super::views::ruby_script(&path, &text) {
-                    return None;
-                }
-                let facts = crate::extract::extract(&raw);
-                Some((path, raw, facts))
-            })
-            .collect();
-        Scripts { files }
+        let mut scripts = Scripts {
+            files: Vec::new(),
+            words: Vec::new(),
+        };
+        for path in tracked(root) {
+            let name = path.rsplit('/').next().unwrap_or(&path);
+            let plain = PLAIN_RUBY.iter().any(|ext| name.ends_with(ext))
+                || PLAIN_RUBY_NAMES.contains(&name);
+            let slim = name.ends_with(".slim");
+            if !plain && !slim && name.contains('.') {
+                continue;
+            }
+            let Ok(raw) = crate::scan::read_source(root.join(&path)) else {
+                continue;
+            };
+            if slim {
+                scripts
+                    .words
+                    .push((path, words(&String::from_utf8_lossy(&raw))));
+                continue;
+            }
+            if !plain && !super::views::ruby_script(&path, &String::from_utf8_lossy(&raw)) {
+                continue;
+            }
+            let facts = crate::extract::extract(&raw);
+            scripts.files.push((path, raw, facts));
+        }
+        scripts
     }
 
     fn const_refs(&self) -> impl Iterator<Item = crate::store::ConstRefRow> + '_ {
-        self.files.iter().flat_map(|(path, _, facts)| {
+        let parsed = self.files.iter().flat_map(|(path, _, facts)| {
             facts.const_refs.iter().map(|r| crate::store::ConstRefRow {
                 path: path.clone(),
                 name: r.name.clone(),
                 nesting: r.nesting.clone(),
                 line: r.pos.line,
             })
-        })
+        });
+        let worded = self.words.iter().flat_map(|(path, words)| {
+            words
+                .iter()
+                .filter(|(_, word)| word.starts_with(|c: char| c.is_ascii_uppercase()))
+                .map(|(line, word)| crate::store::ConstRefRow {
+                    path: path.clone(),
+                    name: word.clone(),
+                    nesting: Vec::new(),
+                    line: *line,
+                })
+        });
+        parsed.chain(worded)
     }
 
     fn sources(&self) -> impl Iterator<Item = (String, Vec<u8>)> + '_ {
@@ -1189,10 +1477,78 @@ impl Scripts {
     }
 
     fn calls(&self) -> impl Iterator<Item = (String, String)> + '_ {
-        self.files
-            .iter()
-            .flat_map(|(path, _, facts)| facts.calls.iter().map(|c| (c.name.clone(), path.clone())))
+        let parsed = self.files.iter().flat_map(|(path, _, facts)| {
+            facts.calls.iter().map(|c| (c.name.clone(), path.clone()))
+        });
+        let worded = self.words.iter().flat_map(|(path, words)| {
+            words
+                .iter()
+                .filter(|(_, word)| !word.starts_with(|c: char| c.is_ascii_uppercase()))
+                .map(|(_, word)| (word.clone(), path.clone()))
+        });
+        parsed.chain(worded)
     }
+
+    /// The paths a Slim view's `require "…"` names, each with its line.
+    fn word_requires(&self) -> impl Iterator<Item = (String, String, u32)> + '_ {
+        self.words.iter().flat_map(|(path, words)| {
+            words.iter().filter_map(|(line, word)| {
+                let required = word.strip_prefix("require ")?;
+                Some((path.clone(), required.to_string(), *line))
+            })
+        })
+    }
+}
+
+/// A text's words, by line: each constant path (`Diffy::Diff`), method
+/// name (`paginate`, `valid?`), and `require <path>` for a literal require.
+fn words(text: &str) -> Vec<(u32, String)> {
+    let mut found = Vec::new();
+    for (at, line) in text.lines().enumerate() {
+        let line_no = at as u32 + 1;
+        let bytes = line.as_bytes();
+        let named = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+        let mut i = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if !(b.is_ascii_alphabetic() || b == b'_') || (i > 0 && named(bytes[i - 1])) {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < bytes.len() && named(bytes[i]) {
+                i += 1;
+            }
+            if b.is_ascii_uppercase() {
+                // `Diffy::Diff`: the whole path, as Ruby looks it up.
+                while line[i..].starts_with("::")
+                    && bytes.get(i + 2).is_some_and(|c| c.is_ascii_uppercase())
+                {
+                    i += 2;
+                    while i < bytes.len() && named(bytes[i]) {
+                        i += 1;
+                    }
+                }
+            } else if matches!(bytes.get(i), Some(b'?' | b'!')) {
+                i += 1;
+            }
+            // `Foo::Bar`'s `Bar` is no constant of its own.
+            if start >= 2 && &line[start - 2..start] == "::" {
+                continue;
+            }
+            let word = &line[start..i];
+            found.push((line_no, word.to_string()));
+            if word == "require" {
+                let rest = line[i..].trim_start_matches([' ', '(']);
+                if let Some(quote) = rest.chars().next().filter(|c| matches!(c, '"' | '\''))
+                    && let Some((required, _)) = rest[1..].split_once(quote)
+                {
+                    found.push((line_no, format!("require {required}")));
+                }
+            }
+        }
+    }
+    found
 }
 
 /// The checkout's files as git lists them, relative.
@@ -1612,8 +1968,15 @@ fn caveats(w: Weigh<'_>) -> anyhow::Result<Vec<String>> {
 /// module mixed into it, an `on_load` hook — which acts once loaded.
 fn patch(w: &Weigh<'_>, dir: &str) -> anyhow::Result<Option<String>> {
     let name = &w.declaration.name;
-    let roots = crate::store::Roots::of(vec![dir.to_string()]);
-    if let Some(hook) = w.store.load_hooks(&roots)?.into_iter().next() {
+    let roots = crate::store::Roots::of(vec![w.layers.store_root(dir).0.to_string()]);
+    // A path gem's root is the checkout's: only its own files are its.
+    let its = |path: &str| w.layers.of(path) == Layer::Gem(name.clone());
+    if let Some(hook) = w
+        .store
+        .load_hooks(&roots)?
+        .into_iter()
+        .find(|hook| its(&hook.path))
+    {
         return Ok(Some(format!(
             "it hooks into {} as it loads ({}:{}), acting with nothing naming it",
             hook.target,
@@ -1625,7 +1988,7 @@ fn patch(w: &Weigh<'_>, dir: &str) -> anyhow::Result<Option<String>> {
         .store
         .ancestry(&roots)?
         .into_iter()
-        .filter(|edge| edge.relation != "superclass");
+        .filter(|edge| edge.relation != "superclass" && its(&edge.path));
     for edge in mixins {
         let Some((first, nesting)) = edge.owner.split_first() else {
             continue;
@@ -1652,7 +2015,7 @@ fn patch(w: &Weigh<'_>, dir: &str) -> anyhow::Result<Option<String>> {
     }
     let mut found = None;
     w.store.each_method(&roots, |row| {
-        if found.is_some() || w.layers.of(&row.path) != Layer::Gem(name.clone()) {
+        if found.is_some() || !its(&row.path) {
             return;
         }
         let owner = w.tree.owner(&row);
@@ -1661,7 +2024,10 @@ fn patch(w: &Weigh<'_>, dir: &str) -> anyhow::Result<Option<String>> {
         } else {
             owner
         };
-        if !w.owned.owns(name, &owner) && !w.owned.of_name(&owner).contains(name) {
+        if !w.owned.owns(name, &owner)
+            && !w.owned.of_name(&owner).contains(name)
+            && !w.owned.owns(name, &placed(&row.nesting))
+        {
             found = Some((owner, row.path.clone(), row.line, row.name.clone()));
         }
     })?;
@@ -1672,6 +2038,20 @@ fn patch(w: &Weigh<'_>, dir: &str) -> anyhow::Result<Option<String>> {
             shown(&path)
         )
     }))
+}
+
+/// The class a nesting's `class`/`module` keywords open, as written:
+/// `class PReadFile` in `MiniMime::Db` opens `MiniMime::Db::PReadFile`, though
+/// the lookup finds `PReadFile = ::File` there too.
+fn placed(nesting: &[String]) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for name in nesting.iter().rev().filter(|n| !n.starts_with('(')) {
+        match name.strip_prefix("::") {
+            Some(rooted) => parts = vec![rooted],
+            None => parts.push(name),
+        }
+    }
+    parts.join("::")
 }
 
 /// The bundled gem a gem's name says it plugs into: `rubocop` for

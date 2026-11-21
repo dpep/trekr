@@ -34,14 +34,17 @@ pub(crate) struct Declaration {
     pub(crate) platforms: Vec<String>,
     /// `path:`, `git:` or `github:`: not a release from a gem server.
     pub(crate) local: bool,
+    /// `path:`'s directory, as written.
+    pub(crate) path: Option<String>,
 }
 
-/// What a Gemfile or gemspec declares, in source order. `gemspec` (a
-/// Gemfile pulling in the checkout's gemspec) is reported as `pulls_gemspec`.
+/// What a Gemfile or gemspec declares, in source order. Each `gemspec` (a
+/// Gemfile pulling in a gemspec's dependencies) is the directory it reads,
+/// `.` unless `path:` names another.
 #[derive(Debug, Default)]
 pub(crate) struct Declared {
     pub(crate) gems: Vec<Declaration>,
-    pub(crate) pulls_gemspec: bool,
+    pub(crate) gemspecs: Vec<String>,
 }
 
 pub(crate) fn declarations(source: &[u8]) -> Declared {
@@ -87,6 +90,7 @@ impl Reader<'_> {
         }
         let mut require = Require::Auto;
         let mut local = false;
+        let mut path = None;
         for arg in &args[1..] {
             let Some(options) = arg.as_keyword_hash_node() else {
                 continue;
@@ -99,7 +103,11 @@ impl Reader<'_> {
                 match symbol(&assoc.key()).as_deref() {
                     Some("group" | "groups") => groups.extend(names(&value)),
                     Some("platform" | "platforms") => platforms.extend(names(&value)),
-                    Some("path" | "git" | "github") => local = true,
+                    Some("path") => {
+                        local = true;
+                        path = string(&value);
+                    }
+                    Some("git" | "github") => local = true,
                     Some("require") => {
                         require = if value.as_false_node().is_some() {
                             Require::Off
@@ -122,6 +130,7 @@ impl Reader<'_> {
             require,
             platforms,
             local,
+            path,
         })
     }
 }
@@ -160,7 +169,18 @@ impl<'pr> Visit<'pr> for Reader<'_> {
             b"add_dependency" | b"add_runtime_dependency" => Some(false),
             b"add_development_dependency" => Some(true),
             b"gemspec" if node.receiver().is_none() => {
-                self.found.pulls_gemspec = true;
+                let path = node
+                    .arguments()
+                    .into_iter()
+                    .flat_map(|args| args.arguments().iter())
+                    .filter_map(|arg| arg.as_keyword_hash_node())
+                    .flat_map(|options| options.elements().iter())
+                    .filter_map(|e| e.as_assoc_node())
+                    .find(|assoc| symbol(&assoc.key()).as_deref() == Some("path"))
+                    .and_then(|assoc| string(&assoc.value()));
+                self.found
+                    .gemspecs
+                    .push(path.unwrap_or_else(|| ".".to_string()));
                 None
             }
             _ => None,
@@ -257,6 +277,22 @@ impl Lock {
         lock
     }
 
+    /// With no lockfile, what each installed gem's specification says it
+    /// needs: a gem without a lock still brings its dependencies.
+    pub(crate) fn from_installed(installed: &HashMap<String, String>) -> Lock {
+        let mut lock = Lock::default();
+        for (name, dir) in installed {
+            let dir = std::path::Path::new(dir);
+            let version = dir
+                .file_name()
+                .and_then(|base| base.to_str()?.strip_prefix(&format!("{name}-")))
+                .unwrap_or_default();
+            let needs = super::declared::runtime_needs(dir, name, version);
+            lock.needs.insert(name.clone(), needs.into_iter().collect());
+        }
+        lock
+    }
+
     /// Every gem `name` brings into the bundle, itself excluded.
     pub(crate) fn closure(&self, name: &str) -> BTreeSet<String> {
         let mut seen = BTreeSet::new();
@@ -285,7 +321,9 @@ impl Lock {
 
 /// An installed gem's specification, as rubygems writes it: the commands
 /// it installs (`executables`) and whether it compiles (`extensions`). A
-/// list that is not literal is `None`, for the caller to look on disk.
+/// list that is not literal is `None`, for the caller to look on disk; one
+/// not written is empty, as rubygems defaults it (mini_mime ships a
+/// `bin/db_pull_request` it does not install).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Spec {
     pub(crate) executables: Option<Vec<String>>,
@@ -318,7 +356,10 @@ pub(crate) fn spec(source: &[u8]) -> Spec {
         }
     }
     let parsed = ruby_prism::parse(source);
-    let mut finder = Finder(Spec::default());
+    let mut finder = Finder(Spec {
+        executables: Some(Vec::new()),
+        extensions: false,
+    });
     finder.visit(&parsed.node());
     finder.0
 }
@@ -342,9 +383,10 @@ end
 gem "lograge", group: [:production]
 gem "local", path: "vendor/local"
 gemspec
+gemspec path: "engines/widget"
 "#,
         );
-        assert!(found.pulls_gemspec);
+        assert_eq!(found.gemspecs, [".", "engines/widget"]);
         let by = |name: &str| found.gems.iter().find(|g| g.name == name).unwrap();
         assert_eq!((by("rails").line, by("rails").col), (2, 1));
         assert_eq!(by("rails").require, Require::Auto);
@@ -359,6 +401,7 @@ gemspec
         );
         assert_eq!(by("lograge").groups, ["production"]);
         assert!(by("local").local);
+        assert_eq!(by("local").path.as_deref(), Some("vendor/local"));
         assert!(!by("rails").local);
     }
 
@@ -409,5 +452,7 @@ end
             spec(b"Gem::Specification.new { |s| s.executables = s.files.grep(%r{^exe/}) }");
         assert_eq!(computed.executables, None);
         assert!(!computed.extensions);
+        let unwritten = spec(b"Gem::Specification.new { |s| s.name = \"mini_mime\" }");
+        assert_eq!(unwritten.executables, Some(Vec::new()));
     }
 }

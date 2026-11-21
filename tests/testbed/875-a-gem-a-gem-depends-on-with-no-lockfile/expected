@@ -1,0 +1,5 @@
+# With no lockfile, what a gem depends on is read from its specification:
+# addr requires suffix and depends on it, so suffix is no optional
+# dependency the app declares for addr (DEC-670's `convention-only` by
+# `gem`), and with nothing else naming it, it is a plain row.
+dead Gemfile addr=none suffix=unreferenced

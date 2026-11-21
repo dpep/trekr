@@ -1,0 +1,6 @@
+# A caveat lowers a row only for a way in that exists. A specification
+# that writes no `executables` installs none, whatever `bin/` holds; and
+# `class PReadFile` beside `PReadFile = ::File` opens the gem's own class,
+# not File. Both lowered mimer, which nothing uses. A method a gem does
+# define on File still lowers file_ext.
+dead Gemfile mimer=unreferenced~ file_ext=unreferenced~File

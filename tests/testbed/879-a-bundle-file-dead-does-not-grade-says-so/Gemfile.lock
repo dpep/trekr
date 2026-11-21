@@ -1,0 +1,15 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    checker (1.0)
+    used_kit (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  checker
+  used_kit
+
+BUNDLED WITH
+   2.5.0

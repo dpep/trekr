@@ -1,0 +1,7 @@
+# `referenced` is the gems found in use that are not rows; a `test-only` row
+# (checker) was listed there too. A lockfile is refused for its Gemfile,
+# not graded as code. A Gemfile in a subdirectory has a bundle the index
+# never located, so it is refused rather than graded against the root's.
+dead Gemfile referenced=used_kit checker=test-only used_kit=none
+dead Gemfile.lock exit=64
+dead sub/Gemfile exit=64

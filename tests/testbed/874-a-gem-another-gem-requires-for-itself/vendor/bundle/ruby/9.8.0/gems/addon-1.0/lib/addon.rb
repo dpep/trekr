@@ -1,0 +1,2 @@
+module Addon
+end

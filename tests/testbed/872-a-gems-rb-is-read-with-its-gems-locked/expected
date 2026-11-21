@@ -1,0 +1,5 @@
+# Bundler reads `gems.rb` and `gems.locked` as it reads a Gemfile and its
+# lock. Read only as `Gemfile.lock`, the bundle was never located, so every
+# gem `gems.rb` declares read "not installed", and tidy, which the app
+# names, was a row.
+dead gems.rb tidy=none idle=unreferenced~

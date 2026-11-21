@@ -361,7 +361,7 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
     // `--context` also says which checkout a name is asked about in.
     let named = cli.refs.is_some() || cli.ancestors.is_some() || cli.input.is_some();
     // `--dead Gemfile` grades the bundle's gems (DEC-670).
-    let gems_scope = cli.dead.iter().any(|path| dead_gems::is_manifest(path));
+    let gems_scope = cli.dead.iter().any(|path| dead_gems::is_bundle_file(path));
     for (on, flag, applies) in [
         (cli.explain, "--explain", position || gems_scope),
         (

@@ -66,9 +66,10 @@ pub(super) fn resolve(
         .map(|entry| entry.path())
         .collect();
     entries.sort();
+    let gemfile = super::bundle_files(repo).0;
     for path in entries {
         let is_gemspec = path.extension().is_some_and(|e| e == "gemspec");
-        let is_gemfile = path.file_name().is_some_and(|n| n == "Gemfile");
+        let is_gemfile = path == gemfile;
         if !is_gemspec && !is_gemfile {
             continue;
         }
@@ -296,6 +297,14 @@ impl Needs {
             .or_insert_with(|| runtime_dependencies(&copy.path, &copy.name, &copy.written).into())
             .clone()
     }
+}
+
+/// The names of an installed gem's runtime dependencies.
+pub(crate) fn runtime_needs(dir: &Path, name: &str, version: &str) -> Vec<String> {
+    runtime_dependencies(dir, name, version)
+        .into_iter()
+        .map(|dependency| dependency.name)
+        .collect()
 }
 
 /// An installed gem's runtime dependencies, from the gemspec rubygems wrote
@@ -695,15 +704,13 @@ fn meets(version: &Version, requirement: &str) -> bool {
 /// Gemfile `ruby` line's requirements (`"~> 3.4"`; a bare version is the
 /// version it names, read as `project_ruby`).
 pub(super) fn ruby_requirements(repo: &Path) -> Vec<(String, String)> {
+    let gemfile = super::bundle_files(repo).0;
     let mut entries: Vec<PathBuf> = std::fs::read_dir(repo)
         .into_iter()
         .flatten()
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension().is_some_and(|e| e == "gemspec")
-                || path.file_name().is_some_and(|n| n == "Gemfile")
-        })
+        .filter(|path| path.extension().is_some_and(|e| e == "gemspec") || *path == gemfile)
         .collect();
     entries.sort();
     entries

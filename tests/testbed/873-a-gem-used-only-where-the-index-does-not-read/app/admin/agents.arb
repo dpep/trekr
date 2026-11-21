@@ -1,0 +1,3 @@
+panel "Agents" do
+  para ArbreKit.parse("x")
+end

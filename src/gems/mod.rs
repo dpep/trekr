@@ -477,13 +477,22 @@ fn abi_of(version: &str) -> Option<String> {
     (numeric(major) && numeric(minor)).then(|| format!("{major}.{minor}.0"))
 }
 
+/// The checkout's Gemfile and lockfile as Bundler finds them: `Gemfile` and
+/// `Gemfile.lock`, else `gems.rb` and `gems.locked`.
+pub(crate) fn bundle_files(repo: &Path) -> (PathBuf, PathBuf) {
+    if !repo.join("Gemfile").is_file() && repo.join("gems.rb").is_file() {
+        return (repo.join("gems.rb"), repo.join("gems.locked"));
+    }
+    (repo.join("Gemfile"), repo.join("Gemfile.lock"))
+}
+
 /// The Ruby version the checkout names: its version file (`.ruby-version`,
 /// `.tool-versions`, mise's), else the Gemfile's literal `ruby "3.4.1"`.
 fn project_ruby(repo: &Path) -> Option<String> {
     if let Some((version, _)) = version_file(repo) {
         return Some(version);
     }
-    let gemfile = crate::scan::read_text(repo.join("Gemfile")).ok()?;
+    let gemfile = crate::scan::read_text(bundle_files(repo).0).ok()?;
     gemfile.lines().find_map(|line| {
         let rest = line.trim_start().strip_prefix("ruby ")?;
         ruby_version_text(rest.split(',').next()?)
@@ -554,7 +563,7 @@ fn mise_ruby(toml: &str) -> Option<String> {
 /// which bundler writes when the Gemfile has a `ruby` line. `ruby 3.4.7p58`
 /// is `3.4.7`.
 fn lockfile_ruby(repo: &Path) -> Option<String> {
-    let text = crate::scan::read_text(repo.join("Gemfile.lock")).ok()?;
+    let text = crate::scan::read_text(bundle_files(repo).1).ok()?;
     let mut lines = text.lines().skip_while(|line| *line != "RUBY VERSION");
     lines.next()?;
     let written = lines.next()?.trim().strip_prefix("ruby ")?;
@@ -780,6 +789,25 @@ fn gemspec_dir(source: &Path, name: &str, sole: bool) -> Option<PathBuf> {
     specs.next().is_none().then_some(only)
 }
 
+/// Each path gem the lockfile names whose directory is inside the checkout
+/// but is not the checkout itself (a monorepo's engine, `vendor/local_gem`),
+/// with that directory, canonical: the gem is indexed as the checkout's.
+pub(crate) fn path_gems_in(repo: &Path, lockfile: &str) -> Vec<(String, PathBuf)> {
+    let checkout = std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
+    let gems = parse_lockfile(lockfile);
+    let sole = |source: &Source| gems.iter().filter(|g| g.source == *source).count() == 1;
+    gems.iter()
+        .filter_map(|gem| {
+            let Source::Path { remote } = &gem.source else {
+                return None;
+            };
+            let source = std::fs::canonicalize(checkout.join(remote)).ok()?;
+            let dir = gemspec_dir(&source, &gem.name, sole(&gem.source)).unwrap_or(source);
+            (dir.starts_with(&checkout) && dir != checkout).then(|| (gem.name.clone(), dir))
+        })
+        .collect()
+}
+
 /// Where a checkout's gem list came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Resolved {
@@ -811,7 +839,7 @@ pub(crate) fn for_checkout(
     repo: &Path,
     ruby: Option<&stdlib::Stdlib>,
 ) -> (Vec<Located>, Option<Resolved>) {
-    let (mut located, resolved) = match crate::scan::read_text(repo.join("Gemfile.lock")) {
+    let (mut located, resolved) = match crate::scan::read_text(bundle_files(repo).1) {
         Ok(text) => (
             locate(repo, parse_lockfile(&text), ruby),
             Some(Resolved::Lockfile),
@@ -1174,6 +1202,20 @@ BUNDLED WITH
         .unwrap();
         assert_eq!(lockfile_ruby(&repo).as_deref(), Some("3.5.0"), "a dev Ruby");
         std::fs::write(repo.join("Gemfile.lock"), "GEM\n  specs:\n").unwrap();
+        assert_eq!(lockfile_ruby(&repo), None);
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn a_gems_rb_is_read_with_its_gems_locked() {
+        let repo = scratch("gems-rb");
+        std::fs::write(repo.join("gems.rb"), "ruby \"3.3.1\"\n").unwrap();
+        std::fs::write(repo.join("gems.locked"), "RUBY VERSION\n   ruby 3.4.7p58\n").unwrap();
+        assert_eq!(project_ruby(&repo).as_deref(), Some("3.3.1"));
+        assert_eq!(lockfile_ruby(&repo).as_deref(), Some("3.4.7"));
+        // Bundler takes a Gemfile first, and its lock with it.
+        std::fs::write(repo.join("Gemfile"), "gem 'x'\n").unwrap();
+        assert_eq!(bundle_files(&repo).1, repo.join("Gemfile.lock"));
         assert_eq!(lockfile_ruby(&repo), None);
         let _ = std::fs::remove_dir_all(&repo);
     }

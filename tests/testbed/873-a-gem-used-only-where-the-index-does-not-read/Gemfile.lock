@@ -1,0 +1,29 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    arbre_kit (1.0)
+    builder_kit (1.0)
+    danger_kit (1.0)
+    idle (1.0)
+    jb_kit (1.0)
+    loader_kit (1.0)
+    pager_kit (1.0)
+    slim_kit (1.0)
+    thor_kit (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  arbre_kit
+  builder_kit
+  danger_kit
+  idle
+  jb_kit
+  loader_kit
+  pager_kit
+  slim_kit
+  thor_kit
+
+BUNDLED WITH
+   2.5.0

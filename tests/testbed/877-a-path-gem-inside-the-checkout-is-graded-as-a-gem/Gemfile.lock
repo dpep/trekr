@@ -1,0 +1,33 @@
+PATH
+  remote: engines/widget
+  specs:
+    widget (1.0)
+      dropped_dep
+      inflect
+
+PATH
+  remote: vendor/local_kit
+  specs:
+    local_kit (1.0)
+
+PATH
+  remote: vendor/spare_kit
+  specs:
+    spare_kit (1.0)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    dropped_dep (1.0)
+    inflect (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  local_kit!
+  spare_kit!
+  widget!
+
+BUNDLED WITH
+   2.5.0

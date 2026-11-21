@@ -1,0 +1,8 @@
+# A path gem inside the checkout (a monorepo's engine, `vendor/local_kit`)
+# is indexed with the app, so its constants were the app's own: local_kit,
+# which the app names, was an `unreferenced` row. Its files are now its,
+# its use is counted, and its own files naming it are not (spare_kit).
+# `gemspec path:` reads that directory's gemspec, whose dependencies are
+# graded too: inflect, which the engine uses, and dropped_dep, which
+# nothing does.
+dead Gemfile local_kit=none spare_kit=unreferenced~ inflect=none dropped_dep=unreferenced~

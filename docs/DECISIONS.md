@@ -22,7 +22,7 @@ belongs to:
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
-| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 680, 690 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 680, 690, 770, 771, 772 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
 | Scope and housekeeping | 030, 063, 640 |
 
@@ -17293,3 +17293,77 @@ recorded nothing, so the writers were `unreferenced`, `clear`; discourse
 has both shapes (testbed 942). **Not** an index target (`a[i], b = …`):
 it carries no message location, as `h[k] ||= v` does not (DEC-710), so
 `[]=` stays unrecorded there.
+
+## DEC-770 — `--dead Gemfile` reads where a gem may be used that the index does not
+
+**Decided.** Evidence of a gem's use (DEC-670) is read, in the CLI layer,
+from more than the index holds; nothing new is extracted or stored, so no
+store bump:
+
+- **Ruby the index leaves out**: Builder, Arbre, Jb, axlsx and Prawn
+  views, Thor files, `Dangerfile`, `Thorfile`, `.irbrc`, `.pryrc` are
+  plain Ruby, parsed as the extensionless scripts already were; a Slim
+  view, which nothing here parses, by its words (a constant path, a method
+  name, `require "…"`). A hunt found `diffy` in a Slim view, `useragent` in
+  an Arbre page and `public_suffix` in a `Dangerfile` graded `clear`
+  `unreferenced`. Adding these formats to `scan::is_ruby` would serve every
+  command but changes extraction for all of them; left as an option.
+- **A path gem inside the checkout** (a lockfile `PATH` spec or `path:`, not
+  the checkout itself) is a gem: its files are its, a use of its constants
+  counts, and its own files naming it do not. It stays the checkout's code
+  for every other gem, so an engine's use counts. `gemspec path:` is read.
+- **`gems.rb` with `gems.locked`** locate the bundle as `Gemfile` and its
+  lock do (`gems::bundle_files`).
+- **Another gem's require** credits only a `require` (a `require_relative`
+  is the requirer's own file: minitest's `parallel`), by a gem that is not
+  itself a row; a row's require lowers instead (`better_errors`, a row whose
+  Railtie loads it, requires `binding_of_caller`). With no lockfile, what a
+  gem depends on is read from its specification.
+- **Core** includes the method names the bundle's own rbs describes under
+  `core/`: core was read from the Ruby's older rbs, and rbs 4's polyfill of
+  `Module#ruby2_keywords` credited rbs for every `ruby2_keywords` call.
+- **Caveats that were not there**: a specification with no `executables`
+  installs none (mini_mime's `bin/db_pull_request`); `class PReadFile`
+  written beside `PReadFile = ::File` opens the gem's own class.
+
+**Measured** against the hunt's outputs (mastodon, discourse, 42 held-out
+checkouts; 111 rows before, 102 after, all of the drop the two refused
+subdirectory Gemfiles). Changed rows: faker's `parallel` from
+`convention-only` to `unreferenced` `clear` — the only new `clear` row;
+hand-checked, its Gemfile line says "transitive dependency" pinned for
+rubocop, and nothing of faker's loads it (minitest's was a
+`require_relative`); faker's `rbs` newly a row, `lower`; mastodon's
+`binding_of_caller` from `convention-only` to `unreferenced`, `lower`;
+discourse's `rb-fsevent` lost its command caveat, still `lower`.
+
+**Reverses if** a held-out app shows a `clear` row used from a file kind
+this list does not name — then that kind joins it, or `is_ruby` takes it.
+
+## DEC-771 — `--dead` refuses a lockfile and a subdirectory's Gemfile
+
+**Decided.** `--dead Gemfile.lock` (or `gems.locked`) is a usage error, exit
+64, naming the manifest to pass; it was graded as code and found nothing. A
+manifest whose directory is not the checkout's root is refused too: its
+bundle has a lock of its own the index never located, and graded against
+the root's lock and the whole checkout (sidekiq's `myapp/Gemfile`,
+discourse's `migrations/core/Gemfile`) every row was "not installed" and
+every use anywhere counted. Scoping evidence to the directory and locating
+its bundle is the other option; refusing is the one that cannot answer
+wrong.
+
+## DEC-772 — Two `--dead Gemfile` rules left as they are, for a design call
+
+**Method evidence ignores the receiver.** widget_shop-nosorbet credits
+sorbet through Rails' `enum`, sorbet-runtime through puma's `plugin`,
+tapioca through rexml's `boolean`: each hides a candidate. What would fix
+it: credit a call only when `resolve::method_at` leaves its receiver
+untyped or lands it in the gem; measure the rows it shows on the corpora
+and hand-check them before shipping. Dropping a name any definer has on an
+owned class is cheaper but does not reach `enum`.
+
+**A symbol in a Ruby config names a gem.** `namespace :debug` and
+`config.log_level = :debug` credit debug; dropping symbols also drops
+`delivery_method = :letter_opener`, the one other symbol-credited row in
+the corpora, which is a real use. Telling them apart needs a list of which
+settings name gems: a rule with exceptions. Both rows are still rows
+(`convention-only`), so nothing is hidden.
