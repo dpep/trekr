@@ -1,0 +1,15 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    prose_kit (1.0)
+    script_kit (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  prose_kit
+  script_kit
+
+BUNDLED WITH
+   2.6.9

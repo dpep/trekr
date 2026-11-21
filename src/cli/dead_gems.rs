@@ -1643,11 +1643,7 @@ impl Scripts {
             // A file with no extension is Ruby when it parses as Ruby: a
             // shebang, a Ruby DSL's own name (`Fastfile`, `Steepfile`), or
             // neither. Text that is not Ruby hardly ever parses.
-            if !plain
-                && (raw.contains(&0)
-                    || ruby_prism::parse(&raw).errors().next().is_some()
-                    || raw.iter().all(u8::is_ascii_whitespace))
-            {
+            if !plain && (raw.contains(&0) || !parses_as_code(&raw)) {
                 continue;
             }
             let facts = crate::extract::extract(&raw);
@@ -1707,6 +1703,48 @@ impl Scripts {
             })
         })
     }
+}
+
+/// Whether text with no extension is Ruby: it parses, and holds something
+/// prose does not — a literal, a block, parentheses, a receiver, an
+/// assignment, a definition. A `TODO` reading "remove Tomlrb" parses as
+/// two bare calls on a constant, and is prose.
+fn parses_as_code(raw: &[u8]) -> bool {
+    struct Code(bool);
+    impl Code {
+        fn check(&mut self, node: &ruby_prism::Node<'_>) {
+            use ruby_prism::Node;
+            let worded = match node {
+                Node::ProgramNode { .. }
+                | Node::StatementsNode { .. }
+                | Node::ArgumentsNode { .. }
+                | Node::ConstantReadNode { .. }
+                | Node::LocalVariableReadNode { .. } => true,
+                Node::CallNode { .. } => node.as_call_node().is_some_and(|call| {
+                    call.receiver().is_none()
+                        && call.block().is_none()
+                        && call.opening_loc().is_none()
+                }),
+                _ => false,
+            };
+            self.0 |= !worded;
+        }
+    }
+    impl<'pr> ruby_prism::Visit<'pr> for Code {
+        fn visit_branch_node_enter(&mut self, node: ruby_prism::Node<'pr>) {
+            self.check(&node);
+        }
+        fn visit_leaf_node_enter(&mut self, node: ruby_prism::Node<'pr>) {
+            self.check(&node);
+        }
+    }
+    let parsed = ruby_prism::parse(raw);
+    if parsed.errors().next().is_some() {
+        return false;
+    }
+    let mut code = Code(false);
+    ruby_prism::Visit::visit(&mut code, &parsed.node());
+    code.0
 }
 
 /// What a Slim view's line holds below it: Ruby (`ruby:`), text whose
@@ -2711,6 +2749,27 @@ mod tests {
         }
         for prose in ["Text", "Dur", "Prose", "html"] {
             assert!(!ruby.contains(prose), "{prose}: {ruby}");
+        }
+    }
+
+    #[test]
+    fn a_file_with_no_extension_is_ruby_when_it_holds_code() {
+        for code in [
+            "Vagrant.configure(\"2\") do |config|\nend\n",
+            "lane :beta do\n  build_app\nend\n",
+            "git_url \"https://example.com/certs\"\ntype \"development\"\n",
+            "require \"widget\"\nWidget.run\n",
+            "x = 1\n",
+        ] {
+            assert!(parses_as_code(code.as_bytes()), "{code}");
+        }
+        for prose in [
+            "remove Tomlrb\nbump Rails\n",
+            "Retriable\n",
+            "  \n",
+            "TODO: fix it.\n",
+        ] {
+            assert!(!parses_as_code(prose.as_bytes()), "{prose}");
         }
     }
 

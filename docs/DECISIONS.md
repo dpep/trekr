@@ -17968,3 +17968,23 @@ Its row is `test-only` now: a requirer that is not a row but has no use
 outside the tests credits what it requires as a use by the tests, and is
 weighed again should it be used outside them later in the fixpoint.
 Testbed 995.
+
+## DEC-819 — A file with no extension is Ruby when it holds code
+
+**Decided.** DEC-804 read as Ruby every extensionless file Prism parses.
+Prose parses too when it is words: a `TODO` reading "remove Tomlrb /
+bump Rails" is two bare calls on a constant, and credited tomlrb (hunt
+3's prose). Such a file is Ruby now only when it parses and holds
+something prose does not — any node but a bare call with no receiver,
+parentheses or block, a constant, or a local: a literal, a block,
+parentheses, a receiver, an assignment, a definition. Naming the DSL
+files instead (Fastfile, Vagrantfile, …) was the other option; it
+reopens the class DEC-804 closed.
+
+**Measured** on the 79 checkouts under `~/code/lib/ruby`: 220
+extensionless files parse; 209 still read as Ruby, and the 11 that no
+longer do are none of them Ruby — a shell hook (`exec make check`), five
+rspec repos' `maintenance-branch` (`main`), two Go `AUTHORS` lists, and
+three test fixtures (`abcd`, `Welcome!`, `this file has plusses!`).
+No row moved on the corpus from this change. Testbed 996; unit test
+`a_file_with_no_extension_is_ruby_when_it_holds_code`.

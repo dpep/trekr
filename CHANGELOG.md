@@ -9,8 +9,8 @@
   (`kind: gem`): `unreferenced` when nothing in the checkout names a
   constant the gem owns, requires one of its files or calls a method of a
   module of its own — Builder, Arbre, Jb and Slim views, Thor files,
-  Capistrano tasks and any extensionless file that parses as Ruby
-  (`Dangerfile`, `Vagrantfile`, `Fastfile`) included, untracked files
+  Capistrano tasks and any extensionless file that parses as Ruby code,
+  not bare words (`Dangerfile`, `Vagrantfile`, `Fastfile`) included, untracked files
   too, and a path gem inside the checkout
   graded as a gem; `test-only` when only tests use a default-group gem;
   `convention-only` when a config (an adapter in `database.yml`, a

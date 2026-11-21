@@ -631,7 +631,8 @@ The checkout here is what the index reads — tracked files and untracked
 ones git does not ignore (DEC-803) — plus the Ruby it does not
 (DEC-770): any file with no extension that Prism parses without an
 error (a script, `Dangerfile`, `Vagrantfile`, `fastlane/Fastfile`,
-`Steepfile`; DEC-804), Builder, Arbre, Jb, axlsx and Prawn views, Thor
+`Steepfile`; DEC-804) and that holds code, not only bare words (a
+`TODO` reading "remove Tomlrb" is prose; DEC-819), Builder, Arbre, Jb, axlsx and Prawn views, Thor
 files, Capistrano `.cap` tasks, `.irbrc` and `.pryrc`, parsed; and Slim
 views, whose Ruby — a `-` or `=` line, a tag's `=` output, an unquoted
 attribute or a splat, a `ruby:` block, a `#{}` — is read by its words: a constant

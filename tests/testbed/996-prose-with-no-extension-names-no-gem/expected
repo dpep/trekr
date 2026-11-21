@@ -1,0 +1,6 @@
+# A file with no extension was read as Ruby whenever it parsed, and a
+# `TODO` reading "remove ProseKit" parses: two bare calls on a constant,
+# which credited prose_kit. Such a file is Ruby only when it holds
+# something prose does not (a literal, a block, parentheses, a receiver,
+# an assignment): the Fastfile still credits script_kit.
+dead Gemfile prose_kit=unreferenced~ script_kit=none

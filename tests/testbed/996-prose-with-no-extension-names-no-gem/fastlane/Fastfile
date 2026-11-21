@@ -1,0 +1,3 @@
+lane :beta do
+  ScriptKit.upload
+end

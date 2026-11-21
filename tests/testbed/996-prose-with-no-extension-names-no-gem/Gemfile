@@ -1,0 +1,3 @@
+source "https://rubygems.org"
+gem "prose_kit"
+gem "script_kit"
