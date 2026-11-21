@@ -4518,9 +4518,15 @@ fn a_git_that_cannot_say_what_changed_is_disclosed() {
     .unwrap();
     let (bin, _) = support::scratch("git-fails-bin");
     let real = support::git_only().join("git");
-    for (mode, said) in [
-        ("exit 128", "git could not say"),
-        ("/bin/sleep 3", "took longer than"),
+    // A git that fails is waited for as long as it takes; one that never
+    // answers, only as long as the query waits.
+    for (mode, said, wait) in [
+        ("exit 128", "git could not say", support::PROBE_WAIT_MS),
+        (
+            "/bin/sleep 30",
+            "took longer than",
+            support::SHORT_PROBE_WAIT_MS,
+        ),
     ] {
         let script = format!(
             "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = status ] && {{ {mode}; }}; done\nexec {} \"$@\"\n",
@@ -4529,11 +4535,14 @@ fn a_git_that_cannot_say_what_changed_is_disclosed() {
         fs::write(bin.join("git"), script).unwrap();
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
-        let path = [("PATH", bin.to_str().unwrap())];
+        let vars = [
+            ("PATH", bin.to_str().unwrap()),
+            ("TREKR_TEST_PROBE_WAIT_MS", wait),
+        ];
         let started = std::time::Instant::now();
-        let out = trekr_env(&db, &dir, &["--def", "widget.rb:8:5", "--json"], &path);
+        let out = trekr_env(&db, &dir, &["--def", "widget.rb:8:5", "--json"], &vars);
         assert!(
-            started.elapsed() < std::time::Duration::from_secs(3),
+            started.elapsed() < std::time::Duration::from_secs(20),
             "{mode}: waited out git"
         );
         let value = json(&out);
@@ -4564,8 +4573,11 @@ fn a_git_given_up_on_does_not_outlive_the_query() {
     fs::write(bin.join("git"), script).unwrap();
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
-    let path = [("PATH", bin.to_str().unwrap())];
-    let out = trekr_env(&db, &dir, &["--refs", "Widget#helper", "--json"], &path);
+    let vars = [
+        ("PATH", bin.to_str().unwrap()),
+        ("TREKR_TEST_PROBE_WAIT_MS", support::SHORT_PROBE_WAIT_MS),
+    ];
+    let out = trekr_env(&db, &dir, &["--refs", "Widget#helper", "--json"], &vars);
     assert!(out.status.success(), "{out:?}");
     let cause = json(&out)["index"]["cause"].as_str().unwrap().to_string();
     assert!(cause.contains("took longer than"), "{cause}");

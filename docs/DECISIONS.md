@@ -18470,3 +18470,21 @@ method, as before. `""` stays the key, not a newtype: DEC-026's cost
 argument holds, and the one mapping is `ruby_owner`.
 
 Test: testbed 798.
+
+## DEC-838 — The suite waits a minute for git's view of the working tree
+
+**Decided.** `scan::PROBE_WAIT` (1 s, DEC-035) reads
+`TREKR_TEST_PROBE_WAIT_MS` once, as the other test waits do, and
+`support::neutral` sets it to 60 s for every trekr the suite runs. A test
+about the wait sets it short (300 ms) against a git wrapper that blocks
+`status` far longer, and asserts it was not waited out.
+
+**Why.** Every e2e test that runs a real git raced the 1 s budget, and under
+`cargo test`'s parallel load a cold git lost: the answer came from the index
+marked stale, and a test about something else failed. The two tests about
+the wait raced it too: a git wrapper that failed at once could still be
+slower than 1 s to fail (so the cause read "took longer"), and one that
+slept 3 s left only 2 s of headroom for the query.
+
+Tests: `a_git_that_cannot_say_what_changed_is_disclosed`,
+`a_git_given_up_on_does_not_outlive_the_query`.

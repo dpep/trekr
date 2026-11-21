@@ -518,6 +518,19 @@ pub(crate) const BULK: usize = 32;
 /// every file, which a query does not sit through.
 pub(crate) const PROBE_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// [`PROBE_WAIT`], or the e2e suite's (`TREKR_TEST_PROBE_WAIT_MS`): a test
+/// not about the wait must not race a cold git on a loaded machine, and one
+/// about it sets it short against a git that never answers.
+fn probe_wait() -> std::time::Duration {
+    static WAIT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+    *WAIT.get_or_init(|| {
+        std::env::var("TREKR_TEST_PROBE_WAIT_MS")
+            .ok()
+            .and_then(|ms| ms.parse().ok())
+            .map_or(PROBE_WAIT, std::time::Duration::from_millis)
+    })
+}
+
 /// The working tree's map as an index would write it ([`scan`]), read on a
 /// thread so the query's tree is built meanwhile, and so it can stop waiting
 /// at [`PROBE_WAIT`]: a query compares it with
@@ -557,7 +570,7 @@ impl<T: Send + 'static> Probe<T> {
     /// be had, in words.
     pub(crate) fn finish(self) -> std::result::Result<T, String> {
         use std::sync::mpsc::RecvTimeoutError;
-        let left = PROBE_WAIT.saturating_sub(self.started.elapsed());
+        let left = probe_wait().saturating_sub(self.started.elapsed());
         match self.found.recv_timeout(left) {
             Ok(Ok(files)) => Ok(files),
             Ok(Err(error)) => Err(format!(
@@ -569,7 +582,7 @@ impl<T: Send + 'static> Probe<T> {
             Err(RecvTimeoutError::Timeout) => Err(format!(
                 "git took longer than {} s to say what changed since the index \
                  (a `git status` refreshes its cache)",
-                PROBE_WAIT.as_secs()
+                probe_wait().as_secs()
             )),
         }
     }

@@ -188,4 +188,13 @@ pub fn neutral<'a>(command: &'a mut Command, home: &Path) -> &'a mut Command {
         .env("HOME", home)
         .env("TREKR_TEST_SYSTEM", home)
         .env("PATH", git_only())
+        .env("TREKR_TEST_PROBE_WAIT_MS", PROBE_WAIT_MS)
 }
+
+/// How long a query waits for git's view of the working tree, in the suite:
+/// past any cold git under a parallel load, so only a test about the wait
+/// (which sets its own) ever sees it run out.
+pub const PROBE_WAIT_MS: &str = "60000";
+
+/// The wait a test about it sets, against a git made never to answer.
+pub const SHORT_PROBE_WAIT_MS: &str = "300";
