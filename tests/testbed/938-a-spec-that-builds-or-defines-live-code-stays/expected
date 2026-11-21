@@ -1,0 +1,9 @@
+# The control: a spec of its own class's subject, implicit or
+# `described_class.new`, goes with the method.
+dead lib OwnSubject#own_value=test-only&spec/own_subject_spec.rb:1
+# `described_class` and the implicit `subject` built the described class
+# unweighed: `described_class.new("")` asserted Registry's validation, and
+# `subject` ran Counter's `initialize`, in the only test of each. Both
+# build the described class now, so keep the unit only when that is the
+# method's own class, whose building is weighed.
+dead lib Described#described_value=test-only& Implicit#implicit_value=test-only&

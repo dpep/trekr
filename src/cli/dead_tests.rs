@@ -823,6 +823,32 @@ impl Weigh<'_, '_> {
                 Named::Shared { site, line } => self.body_at(&site, line),
             };
         }
+        // An implicit `subject` is `described_class.new`: each builds the
+        // class the group describes, whose building `closed` weighs only
+        // for the target's own class. Read where the unit's examples run.
+        if read.recv == RecvShape::Implicit
+            && matches!(read.name.as_str(), "subject" | "described_class")
+        {
+            let (facts, nesting, path) = match &from.nesting {
+                Some(nesting) if !from.holds(path, call.pos) => {
+                    let Some(facts) = self.files.facts(&from.path) else {
+                        return Reach::Other(format!("unread {}", from.path));
+                    };
+                    (facts, nesting.clone(), from.path.as_str())
+                }
+                _ => (
+                    self.files.facts(path).unwrap_or_default(),
+                    read.nesting.clone(),
+                    path,
+                ),
+            };
+            return match self.described(&facts, &nesting, path) {
+                None => Reach::Nothing,
+                Some(Ok(fqn)) if fqn == self.target.owner => Reach::Nothing,
+                Some(Ok(fqn)) => Reach::Other(format!("builds the described {fqn}")),
+                Some(Err(name)) => Reach::Other(format!("describes {name}, unresolved")),
+            };
+        }
         let answer = crate::resolve::method_at(self.tree, facts, call, path);
         let mut more = Vec::new();
         let mut touched = false;
@@ -855,6 +881,31 @@ impl Weigh<'_, '_> {
             (true, true) => Reach::Target,
             (true, false) => Reach::Nothing,
         }
+    }
+
+    /// The class `described_class` is where `nesting` is written: the
+    /// innermost group around it that describes a constant, or why that
+    /// constant names none. Mirrors `resolve::described_by`.
+    fn described(
+        &self,
+        facts: &Facts,
+        nesting: &[String],
+        path: &str,
+    ) -> Option<Result<String, String>> {
+        let (level, class) = (0..nesting.len()).find_map(|at| {
+            let level = &nesting[at..];
+            facts
+                .described
+                .iter()
+                .find(|(group, _)| group == level)
+                .map(|(_, class)| (level, class))
+        })?;
+        Some(
+            self.tree
+                .resolve_at(class, level, path)
+                .fqn
+                .ok_or_else(|| class.clone()),
+        )
     }
 
     fn weigh_site(&self, site: &crate::tree::Site, owner: Option<&str>, name: &str) -> Reach {
@@ -1097,8 +1148,9 @@ const BE_MATCHERS: [&str; 12] = [
     "be_between",
 ];
 
-/// Calls that read the `subject` without naming it.
-const READS_SUBJECT: [&str; 4] = ["is_expected", "are_expected", "should", "should_not"];
+/// Calls that read the `subject` without naming it: `its` reads an
+/// attribute of it.
+const READS_SUBJECT: [&str; 5] = ["is_expected", "are_expected", "should", "should_not", "its"];
 
 /// Calls whose block is an example: RSpec's, and Active Support's `test`.
 const EXAMPLES: [&str; 15] = [
