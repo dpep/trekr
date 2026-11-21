@@ -22,7 +22,7 @@ belongs to:
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
-| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 680, 690, 770, 771, 772 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 680, 690, 730, 770, 771, 772 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
 | Scope and housekeeping | 030, 063, 640 |
 
@@ -17178,16 +17178,33 @@ other than development lower nothing; `eval_gemfile` is not followed.
 **Reverses if** a held-out app shows `clear` rows in use — the likeliest
 way in is a name loaded from a config trekr does not read.
 
-## DEC-730 — A `test-only` row names its tests, and the spec code that goes with it
+## DEC-730 — A `test-only` row names its tests; the spec code to delete with it was built and cut
 
-**Decided.** A `test-only` method row carries `test_sites` (each call,
-symbol and `super` a test writes, with its `example` and innermost `group`,
-as `name`, `line`, `end_line`), `delete_with` (units: `example`, `group`,
-or `file`), and `frees` (spec members every read of which is in those
-units). Read in the CLI layer from a parse of each test file the sites
-are in, as `method_blocks` already reads a file: nothing new is extracted
-or stored, so no store bump. Run for `test-only` method rows only; a
-`test-only` class's spec file is not weighed (below).
+**Decided.** A `test-only` method row carries `test_sites`: each call,
+symbol and `super` a test writes, with its `example` and innermost `group`
+(each `name`, `line`, `end_line`). Read in the CLI layer from a parse of
+each test file the sites are in, as `method_blocks` already reads a file:
+nothing new is extracted or stored, so no store bump. Run for `test-only`
+method rows only.
+
+**Cut: `delete_with` and `frees`.** The other half named the spec code to
+delete with the method — `delete_with`, units of `example`, `group` or
+`file` — and `frees`, the spec members only those units read. It was
+built, hunted three times, trialled twice on ~85 real suites, and removed
+before it was released. The first, looser version fired 34 units on
+discourse and mastodon, 6 of which held the only test of live code. The
+trials under `~/code/lib/ruby` each found 5 units, all on one row: on 83
+suites, then, after the hunt's fixes, on 84, where the row is
+`thing_or_things`, which `--dead`'s own grading misgrades `clear`. That
+is 0 legitimate units on a correctly graded row, and `frees` fired 0
+times in either. Real specs almost always exercise
+live code through setup, factories and constants, so the set of spec code
+safe to delete with a method is empty, and every hunt found another path
+by which a unit deleted the only test of live code. The rules and their
+testbed cases (930's unit assertions, 935 to 939) live in
+`git log a2b8bf2a^..06b187af -- src/cli/dead_tests.rs tests/testbed/`;
+930 stays as the `test_sites` pin. The rest of this entry is that half as
+it stood when cut, kept so it is not re-proposed without new evidence.
 
 **The promise.** A `delete_with` unit is spec code whose deletion loses no
 test of live code. Coverage is cheap to give up; that promise is not, so
@@ -17350,9 +17367,9 @@ vacuous again (0 of 0) and `frees` never fired. The feature fires where a
 method is self-contained, and these suites have almost none whose spec
 is.
 
-**Reverses if** a hand-read sample of units on another suite finds one
-that tests live code by a path these rules do not weigh — then that path
-joins rule 1, or the rows lose `delete_with`.
+**Revisit only if** a codebase turns up many `test-only` methods whose
+specs are self-contained (value objects, formatters): of 343 `clear` rows
+on 84 suites, 9 methods reached nothing live and were weighed at all.
 
 ## DEC-750 — A cascade wants the one call to be the only way in
 
