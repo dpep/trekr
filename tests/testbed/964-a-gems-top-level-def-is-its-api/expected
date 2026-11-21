@@ -1,0 +1,5 @@
+# Found by a trial: a top-level `def` in a gem's lib/, the whole public API
+# of a one-method gem, was `test-only`, clear: it is private to Object, so
+# not public, and has no owner, so it was never weighed as API. Private to
+# Object is callable anywhere. A `def self.x` there is main's own, no API.
+dead lib #thing_or_things=test-only~dependents #on_main=test-only~

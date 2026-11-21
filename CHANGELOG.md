@@ -80,6 +80,10 @@
   `convention-only` by `subclasses`, as `Base.subclasses` does; they were
   `unreferenced`. A module's class side lists nothing: a class that
   includes it is no subclass.
+- **`--dead` grades a top-level `def` in a library's `lib/` as its public
+  API**: `lower`, with an `api` entry point, as a public method there is.
+  Ruby makes it private to Object, callable anywhere, and a one-method gem
+  written that way had its whole API `test-only`, `clear`.
 - **`--dead` reads `T.unsafe(Base).subclasses` as `Base.subclasses`**:
   a constant wrapped in `T.unsafe` listed nothing, so Base's subclasses
   were `unreferenced`; they are `convention-only` by `subclasses`. So for

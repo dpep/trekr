@@ -88,7 +88,7 @@
 524-a-rabl-templates-symbols-name-its-objects-methods fd9e44d401fa8d26
 540-ruby-calls-more-hooks-by-name 2d794bbb6bcafab9
 541-new-runs-initialize 7ab50f67308a8cfa
-544-dead-initialize-nothing-constructs 93c653659bc74ae5
+544-dead-initialize-nothing-constructs c0873018fcfda8cd
 560-a-superclass-named-like-its-class-is-the-outer-one b7de33d5683aa69f
 561-a-private-section-in-class-self-is-private 0372ca61537eee97
 562-a-def-in-a-block-that-may-rebind-self-is-not-the-scopes b0e44ce0a391ef33
@@ -203,5 +203,6 @@
 961-a-module-named-concern-is-no-concern 2d73799d72d6bf4a
 962-self-class-descendants-and-a-split-t-unsafe 693d9d8e6f8e9a5c
 963-a-live-def-holds-the-call-a-candidate-would 4ab5628a927b0b40
+964-a-gems-top-level-def-is-its-api 70078b977bf6366d
 965-a-concern-through-a-constant-alias a486b78e76b79be4
 966-t-unsafe-of-a-constant-lists-its-subclasses a376a9dbd5c42a3c

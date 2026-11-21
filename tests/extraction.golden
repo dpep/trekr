@@ -1148,6 +1148,9 @@ ruby tests/testbed/962-self-class-descendants-and-a-split-t-unsafe/app/models/le
 ruby tests/testbed/962-self-class-descendants-and-a-split-t-unsafe/app/models/main.rb 7842a3fac702c3c1
 ruby tests/testbed/963-a-live-def-holds-the-call-a-candidate-would/app/main.rb 309fab0b7361743b
 ruby tests/testbed/963-a-live-def-holds-the-call-a-candidate-would/app/report.rb d530ead30e670d54
+ruby tests/testbed/964-a-gems-top-level-def-is-its-api/lib/thing.rb bbcb24098ff8a3d6
+ruby tests/testbed/964-a-gems-top-level-def-is-its-api/test/thing_test.rb f24b9b82c5d85697
+ruby tests/testbed/964-a-gems-top-level-def-is-its-api/thing.gemspec d4dc9ace3b2e9cbf
 ruby tests/testbed/965-a-concern-through-a-constant-alias/app/aliased.rb 93b7a7a4bd1c580b
 ruby tests/testbed/965-a-concern-through-a-constant-alias/app/audit_concern.rb 16e4f73cc8961fae
 ruby tests/testbed/965-a-concern-through-a-constant-alias/app/main.rb 99db035173f19c8a

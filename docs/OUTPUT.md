@@ -524,7 +524,7 @@ otherwise. Its `caveat` names the evidence that would settle it.
 | `job` | an Active Job or Sidekiq job class nothing outside the tests names | job metrics or logs |
 
 **`api`** is a public or protected method (RDoc documents protected ones), a
-class or module, or a constant bound to a constant path, resolved or not
+top-level `def` (private to Object, so callable anywhere), a class or module, or a constant bound to a constant path, resolved or not
 (`Worker = Job`, `Client = OtherGem::Client`), or to a
 `DeprecatedConstantProxy`, in a library's `lib/`. Any other value constant
 is not API.

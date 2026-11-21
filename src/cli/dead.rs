@@ -1274,10 +1274,12 @@ fn dead_in(
                 .any(|(name, singleton)| *singleton && *name == def.name);
         let protected = def.visibility.as_str() == "protected" && !constructor;
         let documented = !constructor && gems.doc_directive(file, def.pos.line);
+        // A top-level `def` is private to Object, and so callable anywhere.
+        let top_level = owner.is_empty() && !def.singleton && defined_on.is_none();
         let entry_point = if route.is_some() {
             Some(EntryPoint::Route)
-        } else if (public || protected || module_function || documented)
-            && !owner.is_empty()
+        } else if (public || protected || module_function || documented || top_level)
+            && (!owner.is_empty() || top_level)
             && (documented || !entry_points::underscored(&def.name))
             && gems.in_gem_lib(root, file)
             && !gems.internal_method(&tree, &root_str, &owner, file, def.pos.line)

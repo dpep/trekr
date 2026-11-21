@@ -17069,6 +17069,19 @@ line only, as the explicit-receiver reader always was; DEC-762's parse
 covers only `self`. Testbed 966. No discourse row moved: discourse writes
 no such call in scope.
 
+## DEC-792 — A top-level `def` in a library's `lib/` is its API
+
+**Decided.** DEC-657's `api` entry point takes a top-level `def` (no
+owner, not `def self.x`, not in a block that may run it elsewhere): Ruby
+makes it a private method of Object, which every object calls without a
+receiver, so private is no sign of internal here. It was skipped twice
+over, being private and having no owner, so thing_or_things' one method,
+the gem's whole API, was `test-only`, `clear`. A top-level `def self.x`
+is main's own singleton method, no API. The marks that make a method
+internal (`:nodoc:`, `@api private`, a leading underscore) still apply.
+Testbed 964. No discourse row moved: discourse is an app, so no `lib/` of
+its is a library's.
+
 ## DEC-762 — `self.class.descendants` lists, and `T.unsafe` is read by its receiver
 
 **Decided.** `descendants` or `subclasses` sent to `self.class` in an
