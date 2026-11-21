@@ -100,6 +100,10 @@ impl Reader {
     }
 }
 
+/// The longest body read: a `didOpen` of the largest file trekr reads, with
+/// room for JSON's escaping. A longer one is refused, not buffered toward.
+const MAX_MESSAGE: usize = 4 * crate::scan::MAX_SOURCE as usize;
+
 /// The frame at the start of `buffer`: its length, whitespace before it
 /// included, and where its body lies. `None` until it has all arrived, `Err`
 /// saying what is wrong when its headers are not LSP's.
@@ -146,8 +150,15 @@ fn frame(buffer: &[u8]) -> Result<Option<(usize, std::ops::Range<usize>)>, Strin
     let Some(length) = length else {
         return Err("a message with no Content-Length header".into());
     };
-    let body = at..at + length;
-    Ok((buffer.len() >= body.end).then_some((body.end, body)))
+    if length > MAX_MESSAGE {
+        return Err(format!(
+            "a Content-Length of {length} bytes, past the {MAX_MESSAGE} a message may be"
+        ));
+    }
+    let end = at
+        .checked_add(length)
+        .ok_or("a Content-Length past addressable memory")?;
+    Ok((buffer.len() >= end).then_some((end, at..end)))
 }
 
 /// Is there something to read (or the end of input) within `timeout`?
@@ -368,6 +379,22 @@ mod tests {
             assert!(refused.contains(why), "{headers:?}: {refused}");
             assert_eq!(methods_in(bytes.as_bytes()), (vec![], true), "{headers:?}");
         }
+    }
+
+    #[test]
+    fn a_content_length_past_what_a_message_may_be_is_refused_not_waited_for() {
+        for length in [u64::MAX, 1 << 40, MAX_MESSAGE as u64 + 1] {
+            let bytes = format!("Content-Length: {length}\r\n\r\n{{}}");
+            let refused = super::frame(bytes.as_bytes()).expect_err("refused");
+            assert!(refused.contains("past the"), "{length}: {refused}");
+            assert_eq!(methods_in(bytes.as_bytes()), (vec![], true), "{length}");
+        }
+        let at_most = format!("Content-Length: {MAX_MESSAGE}\r\n\r\n{{}}");
+        assert_eq!(
+            super::frame(at_most.as_bytes()),
+            Ok(None),
+            "waits for the rest"
+        );
     }
 
     #[test]

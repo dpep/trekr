@@ -187,6 +187,10 @@
   a line indented with a space beside one indented with U+3000 made every
   hover on that method an internal error. The comment is dedented by
   characters.
+- **`--lsp` no longer dies on a bad `Content-Length`**: one past
+  addressable memory panicked the server. It, and any longer than 256 MiB,
+  is refused as other bad framing is: the reason on stderr, and the
+  connection closes.
 
 ## 0.10.2 — 2026-11-20
 

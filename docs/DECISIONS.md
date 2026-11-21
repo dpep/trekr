@@ -18427,3 +18427,18 @@ trekr panic, and case 999 puts a multi-byte identifier before what each
 text reader looks for.
 
 Test: testbed 999; `core::text`'s unit tests.
+
+## DEC-836 — A `Content-Length` past what a message may be is refused
+
+**Decided.** The wire refuses a `Content-Length` longer than 256 MiB, or one
+that would run past addressable memory, as it refuses the other framing
+errors of DEC-810: the reason on stderr, then the connection closes.
+
+**Why.** `at + length` wrapped on `18446744073709551615`, and slicing the
+buffer with the wrapped range panicked on the serve loop's own thread,
+outside `unwinding`, so the server exited (101). A merely huge length was
+waited for, buffering whatever the client sent. 256 MiB is four times
+`scan::MAX_SOURCE`: a `didOpen` of the largest file trekr reads, with room
+for JSON's escaping.
+
+Test: `a_content_length_past_what_a_message_may_be_is_refused_not_waited_for`.
