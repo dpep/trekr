@@ -1,0 +1,35 @@
+PATH
+  remote: engines/gem_a
+  specs:
+    gem_a (0.1.0)
+
+PATH
+  remote: engines/gem_b
+  specs:
+    gem_b (0.1.0)
+
+PATH
+  remote: engines/gem_t
+  specs:
+    gem_t (0.1.0)
+
+PATH
+  remote: engines/gem_x
+  specs:
+    gem_x (0.1.0)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  gem_a!
+  gem_b!
+  gem_t!
+  gem_x!
+
+BUNDLED WITH
+   2.6.9

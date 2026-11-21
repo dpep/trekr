@@ -17957,3 +17957,14 @@ computed, else the only one; none, and `exe/` or `bin/` says what it
 installs. `gemspec_name` also reads `Gem::Specification.new("x", …)`.
 Testbed 994 (red on macOS's order, where b_kit's lists first); unit test
 `a_gemspec_names_its_gem_by_name_or_by_new`.
+
+## DEC-818 — A gem only the tests load is loaded only by the tests
+
+**Decided.** DEC-802 waits a path gem's `require` until its gem is known
+not to be a row. A test-group gem the specs use is not a row, so its
+require counted as a live use: gem_x, in the default group and loaded
+only by the test helper gem_t, was not a row at all (hunt 3's cycle).
+Its row is `test-only` now: a requirer that is not a row but has no use
+outside the tests credits what it requires as a use by the tests, and is
+weighed again should it be used outside them later in the fixpoint.
+Testbed 995.

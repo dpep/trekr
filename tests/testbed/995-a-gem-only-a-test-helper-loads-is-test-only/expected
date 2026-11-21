@@ -1,0 +1,7 @@
+# gem_t, in the test group, is used only by the specs, and requires
+# gem_x, in the default group. gem_t not being a row, its require was
+# counted as a live use, so gem_x was not a row. A requirer only the
+# tests use loads what it requires only in the tests: gem_x is
+# `test-only`. gem_a and gem_b require each other and nothing loads
+# either: both stay `unreferenced`.
+dead Gemfile gem_x=test-only gem_t=none gem_a=unreferenced gem_b=unreferenced

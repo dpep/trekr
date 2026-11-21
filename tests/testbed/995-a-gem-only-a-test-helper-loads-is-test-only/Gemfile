@@ -1,0 +1,7 @@
+source "https://rubygems.org"
+gem "gem_a", path: "engines/gem_a"   # unused; requires gem_b
+gem "gem_b", path: "engines/gem_b"   # unused; requires gem_a
+gem "gem_x", path: "engines/gem_x"   # default group; loaded only by gem_t, a test helper
+group :test do
+  gem "gem_t", path: "engines/gem_t" # used only in specs; requires gem_x
+end

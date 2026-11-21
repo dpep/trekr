@@ -650,7 +650,8 @@ A path gem inside the checkout (a lockfile `PATH` spec, `path:` or a
 `path "dir" do` block, not the checkout itself) is graded as a gem: its
 files are its, so a use of its constants counts, and its own files naming it do not. Its code is still
 the checkout's for every other gem: an engine's use of a gem counts,
-and its `require` does once the engine is not itself a row (DEC-802). Its
+and its `require` does once the engine is not itself a row (DEC-802) —
+as a use by the tests when only the tests use the engine (DEC-818). Its
 gemspec is the one in the source whose `name` is the gem's, as Bundler
 picks it (`billing_engine.gemspec` for billing-engine), else the file
 named for the gem when the name is computed (DEC-800). Two gems found in

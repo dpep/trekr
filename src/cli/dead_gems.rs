@@ -118,7 +118,12 @@ struct Uses {
 
 impl Uses {
     fn add(&mut self, evidence: Evidence) {
-        if in_tests(&evidence.path) {
+        let tests = in_tests(&evidence.path);
+        self.add_as(evidence, tests);
+    }
+
+    fn add_as(&mut self, evidence: Evidence, tests: bool) {
+        if tests {
             self.tests += 1;
             self.first_test.get_or_insert(evidence);
         } else {
@@ -344,10 +349,18 @@ fn subdirectory_refusal(root: &Path, path: &Path) -> String {
 /// Counts `evidence` for its gem, unless it is in the gem's own files: a
 /// path gem inside the checkout naming itself is no use of it.
 fn credit(uses: &mut HashMap<String, Uses>, layers: &Layers, evidence: Evidence) {
+    let tests = in_tests(&evidence.path);
+    credit_as(uses, layers, evidence, tests);
+}
+
+/// As `credit`, counted as a use by the tests or not whatever its path.
+fn credit_as(uses: &mut HashMap<String, Uses>, layers: &Layers, evidence: Evidence, tests: bool) {
     if layers.of(&evidence.path) == Layer::Gem(evidence.name.clone()) {
         return;
     }
-    uses.entry(evidence.name.clone()).or_default().add(evidence);
+    uses.entry(evidence.name.clone())
+        .or_default()
+        .add_as(evidence, tests);
 }
 
 const TIERS: [DeadTier; 3] = [
@@ -504,7 +517,8 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
     sources.extend(scripts.sources());
     // A path gem's require loads what it names only once that gem is
     // loaded: weighed below, when the rows are known (DEC-770).
-    let mut pending: Vec<(String, Evidence)> = Vec::new();
+    // Each with whether it is credited already as the tests' use.
+    let mut pending: Vec<(String, Evidence, bool)> = Vec::new();
     for (path, raw) in &sources {
         let requirer = match layers.of(&at(path)) {
             Layer::Gem(gem) => Some(gem),
@@ -531,7 +545,7 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
                     line,
                 };
                 match &requirer {
-                    Some(by) => pending.push((by.clone(), evidence)),
+                    Some(by) => pending.push((by.clone(), evidence, false)),
                     None => credit(&mut uses, &layers, evidence),
                 }
             }
@@ -714,16 +728,32 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
                 break;
             }
         }
-        // A requirer that is a gem of its own and not a row is loaded.
-        let before = pending.len();
-        let (loaded, waiting): (Vec<_>, Vec<_>) = pending
-            .into_iter()
-            .partition(|(by, _)| by_name.get(by.as_str()).is_none_or(|d| !is_row(&uses, d)));
-        pending = waiting;
-        for (_, evidence) in loaded {
-            credit(&mut uses, &layers, evidence);
+        // A requirer that is a gem of its own and not a row is loaded; one
+        // only the tests use, only by them, until it is used outside them.
+        let mut moved = false;
+        let mut waiting = Vec::new();
+        for (by, evidence, by_tests) in pending {
+            let live = match by_name.get(by.as_str()) {
+                None => true,
+                Some(d) if is_row(&uses, d) => {
+                    waiting.push((by, evidence, by_tests));
+                    continue;
+                }
+                Some(_) => uses.get(&by).is_some_and(|u| u.live.is_some()),
+            };
+            if live {
+                credit(&mut uses, &layers, evidence);
+                moved = true;
+                continue;
+            }
+            if !by_tests {
+                credit_as(&mut uses, &layers, evidence.clone(), true);
+                moved = true;
+            }
+            waiting.push((by, evidence, true));
         }
-        if pending.len() == before {
+        pending = waiting;
+        if !moved {
             break;
         }
     }
