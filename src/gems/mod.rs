@@ -15,6 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
+pub(crate) mod bundle;
 mod declared;
 pub(crate) mod gemfile;
 pub(crate) mod stdlib;
