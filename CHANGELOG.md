@@ -59,6 +59,11 @@
 
 ### Fixed
 
+- **`--dead` reads the untracked files the index reads**: a view, YAML
+  config, script or `config/routes.rb` git had never seen was not read
+  beside the index, so a method only it named stayed `unreferenced`,
+  `clear`, and an untracked routes file was "no routes file read".
+
 - **`--dead` reads an operator assignment to a call as a call of its
   reader and its writer**: `w.count ||= 0`, `w.total += 1` and
   `w.label &&= x` left all six methods `unreferenced`, `clear`; each is

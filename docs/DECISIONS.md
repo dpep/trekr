@@ -18497,3 +18497,19 @@ slept 3 s left only 2 s of headroom for the query.
 
 Tests: `a_git_that_cannot_say_what_changed_is_disclosed`,
 `a_git_given_up_on_does_not_outlive_the_query`.
+
+## DEC-845 — One lister for the files read beside the index
+
+**Decided.** Every reader of files the index does not read — `--dead`'s
+views, YAML config, routes and scripts, and `--dead Gemfile`'s — lists
+them through `scan::listed`, by the index's own rule: tracked, and
+untracked but not ignored. Four of the five ran their own `git ls-files`,
+tracked files only; DEC-803 fixed the fifth alone, so an untracked view or
+config naming a method left it `unreferenced`, `clear` in `--dead`, and an
+untracked `config/routes.rb` the index read was "no routes file read".
+Testbed 1010 stages them untracked (the testbed's `untracked/`).
+
+**Not done.** `listed` waits for git as long as it takes. A bound that
+gave up and listed nothing would turn a stalled git into rows graded with
+nothing read beside the index, silently; waiting is the honest failure
+until a reader can say what it did not read.

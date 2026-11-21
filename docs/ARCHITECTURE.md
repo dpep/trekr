@@ -55,6 +55,11 @@ simply absent from the map; there is no deletion case to handle downstream.
 Submodule (`160000`) and symlink (`120000`) entries are dropped: their OIDs name
 a commit and a path string, not Ruby.
 
+The readers beside the index — `--dead`'s views, config, routes and
+scripts, `--dead Gemfile`'s files — list what they read through
+`scan::listed`, by the same rule: tracked, and untracked but not ignored
+(DEC-845).
+
 **A git repository is required.** Content addressing is the product, and git is
 what makes it nearly free (DEC-001).
 

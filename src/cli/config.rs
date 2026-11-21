@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 
 #[derive(Default)]
 pub(super) struct Config {
@@ -25,20 +24,11 @@ pub(super) struct Config {
 }
 
 impl Config {
-    /// Every YAML file git knows in the checkout at `root`, less the ones
-    /// that are text or machine output rather than config.
+    /// Every YAML file in the checkout at `root`, less the ones that are
+    /// text or machine output rather than config.
     pub(super) fn read(root: &Path) -> Config {
-        let Ok(out) = Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args(["ls-files", "-z", "--", "*.yml", "*.yaml"])
-            .output()
-        else {
-            return Config::default();
-        };
         let mut config = Config::default();
-        for path in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
-            let path = String::from_utf8_lossy(path).into_owned();
+        for path in crate::scan::listed(root, &["*.yml", "*.yaml"]) {
             if not_config(&path) {
                 continue;
             }

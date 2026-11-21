@@ -21,7 +21,6 @@ use crate::core::{SentName, SentTo};
 use crate::tree::Tree;
 use rayon::prelude::*;
 use std::path::Path;
-use std::process::Command;
 
 /// A place the checkout writes it, relative to the checkout.
 pub(super) type At = (String, u32);
@@ -92,23 +91,12 @@ pub(super) const TEMPLATES: [&str; 6] =
 
 impl Texts {
     pub(super) fn read(root: &Path) -> Texts {
-        let Ok(out) = Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args(["ls-files", "-z"])
-            .output()
-        else {
-            return Texts { files: Vec::new() };
-        };
         let wanted = |path: &str| {
             let name = path.rsplit('/').next().unwrap_or(path);
             !name.contains('.') || RUBY.iter().chain(&TEMPLATES).any(|ext| name.ends_with(ext))
         };
-        let paths: Vec<String> = out
-            .stdout
-            .split(|b| *b == 0)
-            .filter(|p| !p.is_empty())
-            .map(|path| String::from_utf8_lossy(path).into_owned())
+        let paths: Vec<String> = crate::scan::listed(root, &[])
+            .into_iter()
             .filter(|path| {
                 wanted(path) && !in_tests(path) && !in_db(path) && !path.contains("/locales/")
             })

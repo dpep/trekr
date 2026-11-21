@@ -383,7 +383,8 @@ that overrides a method is `lower`, and so is a `single-caller` row whose
 caller is `possible`.
 
 A row is `lower` when one of these may reach it, and its caveat
-names which:
+names which (a file read here is one the index would list, untracked
+ones git does not ignore included; DEC-845):
 
 - a Slim, Jbuilder or Builder template that writes the name ("named in a
   view (…), which is not read"; ERB, Haml and RABL templates are read, and

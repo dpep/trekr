@@ -1,6 +1,6 @@
 # The index reads a file git has never seen, but `--dead`'s readers beside
 # it listed tracked files only: an untracked view, YAML config, script or
-# routes file naming a method left it `unreferenced`, clear. As it stands
-# (wrong): no caveat for the view, config or script, and "no routes file
-# read" beside an untracked `config/routes.rb` the index reads.
-dead app Widget#title_from_view=unreferenced~ Widget#build_from_config=unreferenced~ Widget#run_from_script=unreferenced~ Widget#lonely=unreferenced~ WidgetsController#archive=unreferenced~file WidgetsController#forgotten=unreferenced~file
+# routes file naming a method left it `unreferenced`, clear, and an
+# untracked `config/routes.rb` the index reads was "no routes file read".
+# They list files as the index does now, untracked ones included.
+dead app Widget#title_from_view=unreferenced~view Widget#build_from_config=unreferenced~config/widgets.yml:2 Widget#run_from_script=unreferenced~exe/tool Widget#lonely=unreferenced~ WidgetsController#archive=convention-only WidgetsController#forgotten=unreferenced!~file

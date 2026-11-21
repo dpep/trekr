@@ -18,7 +18,6 @@ use crate::inflect::plural;
 use ruby_prism::{Node, Visit};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Where a route is written: the file, relative to the checkout, and line.
 pub(super) type At = (String, u32);
@@ -55,26 +54,11 @@ const RESOURCES: [&str; 7] = [
 const RESOURCE: [&str; 6] = ["create", "new", "edit", "show", "update", "destroy"];
 
 impl Routes {
-    /// Every `config/routes.rb` git knows in the checkout at `root` — the
-    /// app's and each engine's — and what they draw.
+    /// Every `config/routes.rb` in the checkout at `root` — the app's and
+    /// each engine's — and what they draw.
     pub(super) fn read(root: &Path) -> Routes {
         let mut routes = Routes::default();
-        let Ok(out) = Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args([
-                "ls-files",
-                "-z",
-                "--",
-                "config/routes.rb",
-                "*/config/routes.rb",
-            ])
-            .output()
-        else {
-            return routes;
-        };
-        for path in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
-            let path = String::from_utf8_lossy(path).into_owned();
+        for path in crate::scan::listed(root, &["config/routes.rb", "*/config/routes.rb"]) {
             // A dummy app's routes are a test's (`spec/dummy`, `test/dummy`).
             if super::dead_consts::in_tests(&path) {
                 continue;

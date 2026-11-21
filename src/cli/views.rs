@@ -12,10 +12,9 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 
 /// Template extensions whose Ruby a view runs, and the index does not read.
-const TEMPLATES: [&str; 3] = ["slim", "jbuilder", "builder"];
+const TEMPLATES: [&str; 3] = ["*.slim", "*.jbuilder", "*.builder"];
 
 #[derive(Default)]
 pub(super) struct Views {
@@ -29,17 +28,12 @@ pub(super) struct Views {
 }
 
 impl Views {
-    /// Every template git knows in the checkout at `root`. None when git
-    /// cannot list them, which is also the answer for a checkout with none.
+    /// Every template in the checkout at `root`, as the index lists files.
+    /// None when git cannot list them, which is also the answer for a
+    /// checkout with none.
     pub(super) fn read(root: &Path) -> Views {
-        let mut args = vec!["ls-files".to_string(), "-z".to_string(), "--".to_string()];
-        args.extend(TEMPLATES.iter().map(|ext| format!("*.{ext}")));
-        let Ok(out) = Command::new("git").arg("-C").arg(root).args(&args).output() else {
-            return Views::default();
-        };
         let mut views = Views::default();
-        for path in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
-            let path = String::from_utf8_lossy(path).into_owned();
+        for path in crate::scan::listed(root, &TEMPLATES) {
             let Ok(bytes) = crate::scan::read_source(root.join(&path)) else {
                 continue;
             };
