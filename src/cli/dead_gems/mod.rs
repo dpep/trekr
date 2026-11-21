@@ -462,6 +462,31 @@ struct Graded {
     transitive: usize,
 }
 
+/// What each evidence channel reads: the checkout, its index, and which gem
+/// owns what.
+struct Ctx<'a> {
+    store: &'a Store,
+    root: &'a Path,
+    root_str: &'a str,
+    tree: &'a Tree,
+    layers: &'a Layers,
+    owned: &'a Owned,
+    lock: &'a Lock,
+    installed: &'a HashMap<String, String>,
+    declared: &'a [(Declaration, String)],
+    direct: &'a HashSet<&'a str>,
+    /// The bundle's own files, whose names are no use of a gem.
+    manifests: &'a HashSet<String>,
+    scripts: &'a Scripts,
+}
+
+impl Ctx<'_> {
+    /// A path relative to the checkout, as a row cites it.
+    fn at(&self, path: &str) -> String {
+        format!("{}/{path}", self.root_str)
+    }
+}
+
 /// The gems one manifest declares, each weighed against its checkout.
 fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> {
     let root_str = root.to_string_lossy().into_owned();
@@ -495,343 +520,34 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
         .collect();
     let layers = Layers::new(&root_str, &installed, default, in_checkout);
     let owned = Owned::new(&tree, &layers, &lock);
-    let mut uses: HashMap<String, Uses> = HashMap::new();
     let manifests: HashSet<String> = declared
         .iter()
         .map(|(_, file)| file.clone())
         .chain(["Gemfile", "gems.rb", "Gemfile.lock", "gems.locked"].map(String::from))
         .collect();
-    let at = |path: &str| format!("{root_str}/{path}");
-
     let scripts = Scripts::read(root);
-    // Constants: each reference resolved as Ruby looks it up, credited to
-    // the gem that owns what it names or a namespace holding it.
-    let mut resolved: HashMap<(String, Vec<String>), Option<String>> = HashMap::new();
-    let refs = store
-        .all_const_refs(&root_str)?
-        .into_iter()
-        .filter(|r| !manifests.contains(&r.path))
-        .chain(scripts.const_refs());
-    for row in refs {
-        let written = row.name.trim_start_matches("::");
-        if !written
-            .split("::")
-            .any(|segment| owned.leaves.contains(segment))
-        {
-            continue;
-        }
-        let fqn = resolved
-            .entry((row.name.clone(), row.nesting.clone()))
-            .or_insert_with(|| tree.resolve(&row.name, &row.nesting).fqn)
-            .clone()
-            .unwrap_or_else(|| written.to_string());
-        for gem in owned.of_name(&fqn) {
-            credit(
-                &mut uses,
-                &layers,
-                Evidence {
-                    name: gem.clone(),
-                    by: "constant",
-                    what: fqn.clone(),
-                    path: at(&row.path),
-                    line: row.line,
-                },
-            );
-        }
-    }
-    // A class the app reopens is used: `module Devise` in an initializer.
-    // A path gem inside the checkout reopening another gem's class counts.
-    for (fqn, gems) in &owned.by_fqn {
-        let sites: Vec<_> = tree
-            .sites(fqn)
-            .into_iter()
-            .filter(|site| {
-                layers.is_checkouts(&site.path)
-                    && site
-                        .path
-                        .strip_prefix(layers.app.as_str())
-                        .is_some_and(|relative| !manifests.contains(relative))
-            })
-            .collect();
-        for gem in gems {
-            let own = Layer::Gem(gem.clone());
-            let Some(site) = sites.iter().find(|site| layers.of(&site.path) != own) else {
-                continue;
-            };
-            credit(
-                &mut uses,
-                &layers,
-                Evidence {
-                    name: gem.clone(),
-                    by: "declaration",
-                    what: fqn.clone(),
-                    path: site.path.clone(),
-                    line: site.line,
-                },
-            );
-        }
-    }
+    let cx = Ctx {
+        store,
+        root,
+        root_str: &root_str,
+        tree: &tree,
+        layers: &layers,
+        owned: &owned,
+        lock: &lock,
+        installed: &installed,
+        declared: &declared,
+        direct: &direct,
+        manifests: &manifests,
+        scripts: &scripts,
+    };
+    let at = |path: &str| cx.at(path);
 
-    // Requires: a literal path one of the gems' files answers to.
-    let mut features = Features::new(store, &layers, &installed)?;
-    features.names.extend(
-        direct
-            .iter()
-            .map(|n| n.to_string())
-            .chain(lock.needs.keys().cloned()),
-    );
-    let requiring = store.files_calling_any(
-        &root_str,
-        &["require", "load", "autoload"].map(String::from),
-    )?;
-    let mut sources: Vec<(String, Vec<u8>)> = requiring
-        .into_iter()
-        .filter(|path| !manifests.contains(path))
-        .filter_map(|path| {
-            let raw = crate::scan::read_source(root.join(&path)).ok()?;
-            Some((path, raw))
-        })
-        .collect();
-    sources.extend(scripts.sources());
-    // A path gem's require loads what it names only once that gem is
-    // loaded: weighed below, when the rows are known (DEC-770).
-    // Each with whether it is credited already as the tests' use.
-    let mut pending: Vec<(String, Evidence, bool)> = Vec::new();
-    for (path, raw) in &sources {
-        let requirer = match layers.of(&at(path)) {
-            Layer::Gem(gem) => Some(gem),
-            _ => None,
-        };
-        let source = crate::extract::ruby_source(path, raw);
-        for required in crate::query::require::requires_in(&source) {
-            if required.anchor.is_some()
-                || required.verb == crate::query::require::Verb::RequireRelative
-            {
-                continue;
-            }
-            let line = raw[..required.span.start.min(raw.len())]
-                .iter()
-                .filter(|b| **b == b'\n')
-                .count() as u32
-                + 1;
-            for gem in features.of(&required.path) {
-                let evidence = Evidence {
-                    name: gem,
-                    by: "require",
-                    what: required.path.clone(),
-                    path: at(path),
-                    line,
-                };
-                match &requirer {
-                    Some(by) => pending.push((by.clone(), evidence, false)),
-                    None => credit(&mut uses, &layers, evidence),
-                }
-            }
-        }
-    }
-    for (path, required, line) in scripts.word_requires() {
-        for gem in features.of(&required) {
-            credit(
-                &mut uses,
-                &layers,
-                Evidence {
-                    name: gem,
-                    by: "require",
-                    what: required.clone(),
-                    path: at(&path),
-                    line,
-                },
-            );
-        }
-    }
-
-    // Methods: a name few gems define, in a module of their own or on a
-    // class they reopen, which the checkout calls. A gem's own class's
-    // methods are reached through its constant, which is counted above.
-    let defines = method_names(store, &root_str, &layers)?;
-    let never_loaded: HashSet<&str> = declared
-        .iter()
-        .filter(|(d, _)| d.require == Require::Off)
-        .map(|(d, _)| d.name.as_str())
-        .collect();
-    let names_called: Vec<(String, String, bool)> = store
-        .called_names(&root_str)?
-        .into_iter()
-        .filter(|(_, path, _)| !manifests.contains(path))
-        .collect();
-    // Each symbol the checkout writes, with the first file: a plugin's
-    // base may load it by one (`provider :saml`).
-    let mut symbols: HashMap<String, String> = HashMap::new();
-    for (name, path, symbol) in &names_called {
-        if *symbol && !in_tests(path) {
-            symbols.entry(name.clone()).or_insert_with(|| path.clone());
-        }
-    }
-    let mut called: Vec<(String, String)> = names_called
-        .into_iter()
-        .filter(|(name, _, _)| defines.contains_key(name))
-        .map(|(name, path, _)| (name, path))
-        .collect();
-    called.extend(
-        scripts
-            .calls()
-            .filter(|(name, _)| defines.contains_key(name)),
-    );
-    let mut asked: HashSet<(String, bool)> = HashSet::new();
-    let mut in_core: HashMap<String, bool> = HashMap::new();
-    let rbs_core = installed
-        .get("rbs")
-        .map(|dir| rbs_core_names(&Path::new(dir).join("core")))
-        .unwrap_or_default();
-    for (name, path) in called {
-        if !asked.insert((name.clone(), in_tests(&path))) {
-            continue;
-        }
-        let defined = &defines[&name];
-        // Core's methods are not in the store; the tree knows them.
-        let core = *in_core.entry(name.clone()).or_insert_with(|| {
-            rbs_core.contains(&name)
-                || tree
-                    .named(&name)
-                    .iter()
-                    .any(|def| layers.of(&def.site.path) == Layer::Other)
-        });
-        if core {
-            continue;
-        }
-        for (gem, row) in &defined.rows {
-            // Bundler never loads it, so nothing calls its methods unless
-            // a `require` of it is seen, which credits it already.
-            if never_loaded.contains(gem.as_str()) {
-                continue;
-            }
-            let owner = crate::tree::ruby_owner(&tree.owner(row)).to_string();
-            let mixin = tree.kind_of(&owner) == Some("module");
-            if !mixin && owned.owns(gem, &owner) {
-                continue;
-            }
-            credit(
-                &mut uses,
-                &layers,
-                Evidence {
-                    name: gem.clone(),
-                    by: "method",
-                    what: name.clone(),
-                    path: at(&path),
-                    line: 0,
-                },
-            );
-        }
-    }
-    for found in uses.values_mut() {
-        for evidence in [&mut found.live, &mut found.first_test]
-            .into_iter()
-            .flatten()
-        {
-            if evidence.by == "method" {
-                evidence.line = call_line(&evidence.path, &evidence.what).unwrap_or(1);
-            }
-        }
-    }
-
-    // A gem the app uses through another: credited to the one declared gem
-    // that brings it, when no gem already credited brings it too.
-    let direct_names: Vec<String> = declared.iter().map(|(d, _)| d.name.clone()).collect();
-    let closures: HashMap<&str, BTreeSet<String>> = direct_names
-        .iter()
-        .map(|name| (name.as_str(), lock.closure(name)))
-        .collect();
-    let by_name: HashMap<&str, &Declaration> =
-        declared.iter().map(|(d, _)| (d.name.as_str(), d)).collect();
-    let mut shared: HashMap<String, (String, Vec<String>)> = HashMap::new();
-    loop {
-        let used_through: Vec<String> = uses
-            .keys()
-            .filter(|gem| !direct.contains(gem.as_str()))
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        loop {
-            let credited = |name: &str, uses: &HashMap<String, Uses>| {
-                uses.get(name).is_some_and(|u| u.any().is_some())
-            };
-            let mut moved = false;
-            for name in &direct_names {
-                if credited(name, &uses) {
-                    continue;
-                }
-                for brought in closures[name.as_str()]
-                    .iter()
-                    .filter(|b| used_through.contains(b))
-                {
-                    let kept = direct_names.iter().any(|other| {
-                        other != name
-                            && credited(other, &uses)
-                            && closures[other.as_str()].contains(brought)
-                    });
-                    if kept {
-                        continue;
-                    }
-                    let holders: Vec<String> = direct_names
-                        .iter()
-                        .filter(|other| {
-                            *other != name && closures[other.as_str()].contains(brought)
-                        })
-                        .cloned()
-                        .collect();
-                    if holders.is_empty() {
-                        let first = uses[brought].any().cloned();
-                        if let Some(first) = first {
-                            uses.entry(name.clone()).or_default().add(Evidence {
-                                name: name.clone(),
-                                by: "dependency",
-                                what: format!("{brought} ({} `{}`)", first.by, first.what),
-                                ..first
-                            });
-                            moved = true;
-                            break;
-                        }
-                    } else {
-                        shared
-                            .entry(name.clone())
-                            .or_insert_with(|| (brought.clone(), holders));
-                    }
-                }
-            }
-            if !moved {
-                break;
-            }
-        }
-        // A requirer that is a gem of its own and not a row is loaded; one
-        // only the tests use, only by them, until it is used outside them.
-        let mut moved = false;
-        let mut waiting = Vec::new();
-        for (by, evidence, by_tests) in pending {
-            let live = match by_name.get(by.as_str()) {
-                None => true,
-                Some(d) if is_row(&uses, d) => {
-                    waiting.push((by, evidence, by_tests));
-                    continue;
-                }
-                Some(_) => uses.get(&by).is_some_and(|u| u.live.is_some()),
-            };
-            if live {
-                credit(&mut uses, &layers, evidence);
-                moved = true;
-                continue;
-            }
-            if !by_tests {
-                credit_as(&mut uses, &layers, evidence.clone(), true);
-                moved = true;
-            }
-            waiting.push((by, evidence, true));
-        }
-        pending = waiting;
-        if !moved {
-            break;
-        }
-    }
+    let mut uses: HashMap<String, Uses> = HashMap::new();
+    credit_constants(&cx, &mut uses)?;
+    credit_reopened(&cx, &mut uses);
+    let pending = credit_requires(&cx, &mut uses)?;
+    let symbols = credit_methods(&cx, &mut uses)?;
+    let shared = credit_brought(&cx, pending, &mut uses);
 
     let texts = Texts::read(root, &manifests);
     let is_row = |declaration: &Declaration| is_row(&uses, declaration);
@@ -1034,6 +750,373 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
         transitive,
         root: root_str,
     })
+}
+
+/// Constants: each reference resolved as Ruby looks it up, credited to the
+/// gem that owns what it names or a namespace holding it.
+fn credit_constants(cx: &Ctx, uses: &mut HashMap<String, Uses>) -> anyhow::Result<()> {
+    let mut resolved: HashMap<(String, Vec<String>), Option<String>> = HashMap::new();
+    let refs = cx
+        .store
+        .all_const_refs(cx.root_str)?
+        .into_iter()
+        .filter(|r| !cx.manifests.contains(&r.path))
+        .chain(cx.scripts.const_refs());
+    for row in refs {
+        let written = row.name.trim_start_matches("::");
+        if !written
+            .split("::")
+            .any(|segment| cx.owned.leaves.contains(segment))
+        {
+            continue;
+        }
+        let fqn = resolved
+            .entry((row.name.clone(), row.nesting.clone()))
+            .or_insert_with(|| cx.tree.resolve(&row.name, &row.nesting).fqn)
+            .clone()
+            .unwrap_or_else(|| written.to_string());
+        for gem in cx.owned.of_name(&fqn) {
+            credit(
+                uses,
+                cx.layers,
+                Evidence {
+                    name: gem.clone(),
+                    by: "constant",
+                    what: fqn.clone(),
+                    path: cx.at(&row.path),
+                    line: row.line,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A class the app reopens is used: `module Devise` in an initializer. A
+/// path gem inside the checkout reopening another gem's class counts.
+fn credit_reopened(cx: &Ctx, uses: &mut HashMap<String, Uses>) {
+    for (fqn, gems) in &cx.owned.by_fqn {
+        let sites: Vec<_> = cx
+            .tree
+            .sites(fqn)
+            .into_iter()
+            .filter(|site| {
+                cx.layers.is_checkouts(&site.path)
+                    && site
+                        .path
+                        .strip_prefix(cx.layers.app.as_str())
+                        .is_some_and(|relative| !cx.manifests.contains(relative))
+            })
+            .collect();
+        for gem in gems {
+            let own = Layer::Gem(gem.clone());
+            let Some(site) = sites.iter().find(|site| cx.layers.of(&site.path) != own) else {
+                continue;
+            };
+            credit(
+                uses,
+                cx.layers,
+                Evidence {
+                    name: gem.clone(),
+                    by: "declaration",
+                    what: fqn.clone(),
+                    path: site.path.clone(),
+                    line: site.line,
+                },
+            );
+        }
+    }
+}
+
+/// A require a path gem writes, held until whether that gem is loaded is
+/// known: the requiring gem, the evidence, and whether it is credited
+/// already as the tests' use.
+type Pending = Vec<(String, Evidence, bool)>;
+
+/// Requires: a literal path one of the gems' files answers to. A path gem's
+/// require loads what it names only once that gem is loaded, so those come
+/// back pending, weighed when the rows are known (DEC-770).
+fn credit_requires(cx: &Ctx, uses: &mut HashMap<String, Uses>) -> anyhow::Result<Pending> {
+    let mut features = Features::new(cx.store, cx.layers, cx.installed)?;
+    features.names.extend(
+        cx.direct
+            .iter()
+            .map(|n| n.to_string())
+            .chain(cx.lock.needs.keys().cloned()),
+    );
+    let requiring = cx.store.files_calling_any(
+        cx.root_str,
+        &["require", "load", "autoload"].map(String::from),
+    )?;
+    let mut sources: Vec<(String, Vec<u8>)> = requiring
+        .into_iter()
+        .filter(|path| !cx.manifests.contains(path))
+        .filter_map(|path| {
+            let raw = crate::scan::read_source(cx.root.join(&path)).ok()?;
+            Some((path, raw))
+        })
+        .collect();
+    sources.extend(cx.scripts.sources());
+    let mut pending: Pending = Vec::new();
+    for (path, raw) in &sources {
+        let requirer = match cx.layers.of(&cx.at(path)) {
+            Layer::Gem(gem) => Some(gem),
+            _ => None,
+        };
+        let source = crate::extract::ruby_source(path, raw);
+        for required in crate::query::require::requires_in(&source) {
+            if required.anchor.is_some()
+                || required.verb == crate::query::require::Verb::RequireRelative
+            {
+                continue;
+            }
+            let line = raw[..required.span.start.min(raw.len())]
+                .iter()
+                .filter(|b| **b == b'\n')
+                .count() as u32
+                + 1;
+            for gem in features.of(&required.path) {
+                let evidence = Evidence {
+                    name: gem,
+                    by: "require",
+                    what: required.path.clone(),
+                    path: cx.at(path),
+                    line,
+                };
+                match &requirer {
+                    Some(by) => pending.push((by.clone(), evidence, false)),
+                    None => credit(uses, cx.layers, evidence),
+                }
+            }
+        }
+    }
+    for (path, required, line) in cx.scripts.word_requires() {
+        for gem in features.of(&required) {
+            credit(
+                uses,
+                cx.layers,
+                Evidence {
+                    name: gem,
+                    by: "require",
+                    what: required.clone(),
+                    path: cx.at(&path),
+                    line,
+                },
+            );
+        }
+    }
+    Ok(pending)
+}
+
+/// Methods: a name few gems define, in a module of their own or on a class
+/// they reopen, which the checkout calls. A gem's own class's methods are
+/// reached through its constant, which is counted above. Returns each
+/// symbol the checkout writes outside its tests, with the first file: a
+/// plugin's base may load it by one (`provider :saml`).
+fn credit_methods(
+    cx: &Ctx,
+    uses: &mut HashMap<String, Uses>,
+) -> anyhow::Result<HashMap<String, String>> {
+    let defines = method_names(cx.store, cx.root_str, cx.layers)?;
+    let never_loaded: HashSet<&str> = cx
+        .declared
+        .iter()
+        .filter(|(d, _)| d.require == Require::Off)
+        .map(|(d, _)| d.name.as_str())
+        .collect();
+    let names_called: Vec<(String, String, bool)> = cx
+        .store
+        .called_names(cx.root_str)?
+        .into_iter()
+        .filter(|(_, path, _)| !cx.manifests.contains(path))
+        .collect();
+    let mut symbols: HashMap<String, String> = HashMap::new();
+    for (name, path, symbol) in &names_called {
+        if *symbol && !in_tests(path) {
+            symbols.entry(name.clone()).or_insert_with(|| path.clone());
+        }
+    }
+    let mut called: Vec<(String, String)> = names_called
+        .into_iter()
+        .filter(|(name, _, _)| defines.contains_key(name))
+        .map(|(name, path, _)| (name, path))
+        .collect();
+    called.extend(
+        cx.scripts
+            .calls()
+            .filter(|(name, _)| defines.contains_key(name)),
+    );
+    let mut asked: HashSet<(String, bool)> = HashSet::new();
+    let mut in_core: HashMap<String, bool> = HashMap::new();
+    let rbs_core = cx
+        .installed
+        .get("rbs")
+        .map(|dir| rbs_core_names(&Path::new(dir).join("core")))
+        .unwrap_or_default();
+    for (name, path) in called {
+        if !asked.insert((name.clone(), in_tests(&path))) {
+            continue;
+        }
+        let defined = &defines[&name];
+        // Core's methods are not in the store; the tree knows them.
+        let core = *in_core.entry(name.clone()).or_insert_with(|| {
+            rbs_core.contains(&name)
+                || cx
+                    .tree
+                    .named(&name)
+                    .iter()
+                    .any(|def| cx.layers.of(&def.site.path) == Layer::Other)
+        });
+        if core {
+            continue;
+        }
+        for (gem, row) in &defined.rows {
+            // Bundler never loads it, so nothing calls its methods unless
+            // a `require` of it is seen, which credits it already.
+            if never_loaded.contains(gem.as_str()) {
+                continue;
+            }
+            let owner = crate::tree::ruby_owner(&cx.tree.owner(row)).to_string();
+            let mixin = cx.tree.kind_of(&owner) == Some("module");
+            if !mixin && cx.owned.owns(gem, &owner) {
+                continue;
+            }
+            credit(
+                uses,
+                cx.layers,
+                Evidence {
+                    name: gem.clone(),
+                    by: "method",
+                    what: name.clone(),
+                    path: cx.at(&path),
+                    line: 0,
+                },
+            );
+        }
+    }
+    for found in uses.values_mut() {
+        for evidence in [&mut found.live, &mut found.first_test]
+            .into_iter()
+            .flatten()
+        {
+            if evidence.by == "method" {
+                evidence.line = call_line(&evidence.path, &evidence.what).unwrap_or(1);
+            }
+        }
+    }
+    Ok(symbols)
+}
+
+/// A gem the app uses through another: credited to the one declared gem
+/// that brings it, when no gem already credited brings it too; and each
+/// pending require, once whether its gem is loaded is known. Returns, for a
+/// declared gem whose used dependency others bring too, that dependency and
+/// those others.
+fn credit_brought(
+    cx: &Ctx,
+    mut pending: Pending,
+    uses: &mut HashMap<String, Uses>,
+) -> HashMap<String, (String, Vec<String>)> {
+    let direct_names: Vec<String> = cx.declared.iter().map(|(d, _)| d.name.clone()).collect();
+    let closures: HashMap<&str, BTreeSet<String>> = direct_names
+        .iter()
+        .map(|name| (name.as_str(), cx.lock.closure(name)))
+        .collect();
+    let by_name: HashMap<&str, &Declaration> = cx
+        .declared
+        .iter()
+        .map(|(d, _)| (d.name.as_str(), d))
+        .collect();
+    let mut shared: HashMap<String, (String, Vec<String>)> = HashMap::new();
+    loop {
+        let used_through: Vec<String> = uses
+            .keys()
+            .filter(|gem| !cx.direct.contains(gem.as_str()))
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        loop {
+            let credited = |name: &str, uses: &HashMap<String, Uses>| {
+                uses.get(name).is_some_and(|u| u.any().is_some())
+            };
+            let mut moved = false;
+            for name in &direct_names {
+                if credited(name, uses) {
+                    continue;
+                }
+                for brought in closures[name.as_str()]
+                    .iter()
+                    .filter(|b| used_through.contains(b))
+                {
+                    let kept = direct_names.iter().any(|other| {
+                        other != name
+                            && credited(other, uses)
+                            && closures[other.as_str()].contains(brought)
+                    });
+                    if kept {
+                        continue;
+                    }
+                    let holders: Vec<String> = direct_names
+                        .iter()
+                        .filter(|other| {
+                            *other != name && closures[other.as_str()].contains(brought)
+                        })
+                        .cloned()
+                        .collect();
+                    if holders.is_empty() {
+                        let first = uses[brought].any().cloned();
+                        if let Some(first) = first {
+                            uses.entry(name.clone()).or_default().add(Evidence {
+                                name: name.clone(),
+                                by: "dependency",
+                                what: format!("{brought} ({} `{}`)", first.by, first.what),
+                                ..first
+                            });
+                            moved = true;
+                            break;
+                        }
+                    } else {
+                        shared
+                            .entry(name.clone())
+                            .or_insert_with(|| (brought.clone(), holders));
+                    }
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
+        // A requirer that is a gem of its own and not a row is loaded; one
+        // only the tests use, only by them, until it is used outside them.
+        let mut moved = false;
+        let mut waiting = Vec::new();
+        for (by, evidence, by_tests) in pending {
+            let live = match by_name.get(by.as_str()) {
+                None => true,
+                Some(d) if is_row(uses, d) => {
+                    waiting.push((by, evidence, by_tests));
+                    continue;
+                }
+                Some(_) => uses.get(&by).is_some_and(|u| u.live.is_some()),
+            };
+            if live {
+                credit(uses, cx.layers, evidence);
+                moved = true;
+                continue;
+            }
+            if !by_tests {
+                credit_as(uses, cx.layers, evidence.clone(), true);
+                moved = true;
+            }
+            waiting.push((by, evidence, true));
+        }
+        pending = waiting;
+        if !moved {
+            break;
+        }
+    }
+    shared
 }
 
 /// A row: no use outside the tests, unless it is in a group for them.
