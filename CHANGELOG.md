@@ -49,6 +49,9 @@
   a bundle file counts as `dead gems`, `--status --all` as `status all`,
   and `--retention`, `--older-than` and `--jobs` are counted when given.
   The counts file is migrated in place on first use; nothing to do.
+- **A query that builds the tree no longer loads every `initialize` to
+  place class macros' mixins**: on discourse a tree-needing `--def` or
+  `--ancestors` sheds most of its time.
 
 ### Fixed
 

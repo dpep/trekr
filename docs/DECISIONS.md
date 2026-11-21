@@ -18282,3 +18282,44 @@ would save at most those 1.2 % of loads; building the `Target` once per
 candidate instead of per `gather_refs` saves only memo hits. Reverses if a
 profile shows `defined_on`'s own work (its def files' parses) rather than
 the first load of a name.
+
+## DEC-840 — Placing a macro's mixin asks the chain before it loads the name
+
+**Decided.** `place_macro_mixins` (DEC-313) looks the macro up on each
+class whose body calls it, and keeps the mixin when the lookup lands on the
+macro's owner. A lookup lands only on an owner in the caller's class-side
+chain, so the owner is checked against that chain first, and a caller whose
+chain does not hold it is passed over without the lookup. The lookup loads
+every definition of the name — on discourse that is `Scheduler::Defer`'s
+`initialize`, all 8,854 rows — and that load was most of every tree build.
+A macro owned on the singleton side needs only the superclass walk, since
+`class_side` puts exactly the superclass chain on that side; a split name
+asks each variant, as `look_along` does.
+
+**Measured**, release builds interleaved on their own stores, warm, best of
+3, `TREKR_PROFILE=1`, on a machine at load 82–98 (the absolute numbers are
+the load's; the base build's discourse phase was 58–62 ms on a quieter one):
+
+| | macro-mixins phase, base → new | wall |
+|---|---:|---:|
+| discourse `--def` (search_log.rb, tree needed) | 591 → 14 ms | |
+| discourse `--def` (topic_guardian.rb) | 724 → 13 ms | |
+| discourse `--ancestors Post` | 614 → 15 ms | 651 → 45 ms |
+| rails `--def` (disable_joins_association_relation.rb) | 471 → 367 ms | |
+| rails `--def` (reloader.rb) | 453 → 363 ms | |
+| rails `--ancestors ActiveRecord::Base` | 561 → 262 ms | |
+| rails LSP spawn → first definition | | 890 → 537 ms |
+
+Five tree-needing `--def`s retire 4.85 → 2.30 G instructions on discourse
+and 4.16 → 3.48 G on rails (git's freshness probe included in both).
+
+**Rails gains less than expected.** Its cost is not the lookup but the
+chains: 394 test classes call `setup`, whose macro owner is on the instance
+side, and building each caller's class-side chain to ask is what the lookup
+paid too. The probe that predicted a rails win timed the lookup after
+building the chain.
+
+**Output identical**: every testbed case (1,728 CLI calls across 395 cases,
+whole stdout, timestamps erased), and `--def` at 200 random positions,
+`--ancestors` on 73 and 126 names and `--refs` on 30 names, on discourse
+and rails, against the base build.

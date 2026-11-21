@@ -1036,11 +1036,14 @@ impl Tree {
                 let Some(caller) = self.scope_fqn(&call.nesting) else {
                     continue;
                 };
-                let lands = self
-                    .lookup(&caller, true, &mixin.method)
-                    .is_some_and(|found| {
-                        found.owner == owner && found.singleton == mixin.singleton
-                    });
+                // A lookup lands only on an owner in the chain, and loading
+                // the name for it (every `initialize`) is most of a tree build.
+                let lands = self.side_reaches(&caller, &owner, mixin.singleton)
+                    && self
+                        .lookup(&caller, true, &mixin.method)
+                        .is_some_and(|found| {
+                            found.owner == owner && found.singleton == mixin.singleton
+                        });
                 if !lands {
                     continue;
                 }
@@ -1067,6 +1070,28 @@ impl Tree {
         self.includers = OnceLock::new();
         self.mixers = OnceLock::new();
         self.agreed_returns = Memo::new();
+    }
+
+    /// Whether `fqn`'s class-side chain holds `owner` on side `singleton` —
+    /// for a split name, any variant's, since `look_along` asks each.
+    fn side_reaches(&self, fqn: &str, owner: &str, singleton: bool) -> bool {
+        let variants = self.variants_of(fqn);
+        if !variants.is_empty() {
+            return variants
+                .iter()
+                .any(|variant| self.side_reaches(variant, owner, singleton));
+        }
+        // `class_side` puts exactly the superclass chain on the singleton
+        // side, and that walk is far cheaper than the whole chain.
+        if singleton {
+            return self
+                .superclass_chain(fqn)
+                .iter()
+                .any(|class| public_name(class) == owner);
+        }
+        self.chain_for(fqn, true, false)
+            .iter()
+            .any(|(o, side)| side == singleton && public_name(o) == owner)
     }
 
     /// The mixins a class gains from the class macros its body calls
