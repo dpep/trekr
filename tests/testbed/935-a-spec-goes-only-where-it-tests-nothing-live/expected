@@ -23,3 +23,8 @@ dead lib Labeled#label=test-only&
 # another (`it {…}; it {…}`) took that one with it. A unit any other
 # statement shares a line with is no unit.
 dead lib Oneline#label=test-only&
+# A `let` read from a body outside the unit was resolved where the body
+# is written, but runs on the unit's examples: a nested group's
+# `let(:size)` replaces the outer one the outer `let(:sized)` reads. It
+# resolves from the unit now.
+dead lib Sized#total=test-only&

@@ -318,6 +318,24 @@ fn freed(
     out
 }
 
+/// Where a unit runs. A `let`, hook or helper outside it runs on the
+/// unit's examples, so a member it reads is the one the unit sees, not the
+/// one its own text sees: a nested group may redefine it.
+struct From {
+    path: String,
+    start: Pos,
+    end: Pos,
+    /// The nesting of the group the unit is written in; `None` for a
+    /// Minitest method, which reads no member.
+    nesting: Option<Vec<String>>,
+}
+
+impl From {
+    fn holds(&self, path: &str, at: Pos) -> bool {
+        self.path == path && self.start <= at && at <= self.end
+    }
+}
+
 /// The method a row is.
 struct Target {
     owner: String,
@@ -367,6 +385,26 @@ impl Weigh<'_, '_> {
         }) {
             return Err(format!("{} at line {}", call.name, call.pos.line));
         }
+        // The call that opens it carries the nesting of the group it is in.
+        let nesting = match span.kind {
+            SpanKind::Example if span.name.starts_with("test_") && span.call.is_empty() => None,
+            _ => Some(
+                facts
+                    .calls
+                    .iter()
+                    .find(|c| {
+                        c.name == span.call && c.pos.line == span.start.line && span.holds(c.pos)
+                    })
+                    .map(|c| c.nesting.clone())
+                    .ok_or_else(|| format!("no call opens line {}", span.start.line))?,
+            ),
+        };
+        let from = From {
+            path: path.to_string(),
+            start: span.start,
+            end: span.end,
+            nesting,
+        };
         // What an example asserts may be what a hook did before it.
         let mut spans = vec![(path.to_string(), span.start, span.end)];
         spans.extend(
@@ -374,11 +412,11 @@ impl Weigh<'_, '_> {
                 .hooks_before(span)
                 .map(|h| (path.to_string(), h.start, h.end)),
         );
-        self.weigh(spans)?;
+        self.weigh(spans, &from)?;
         if span.kind == SpanKind::Group {
             for example in shape.examples_in(span) {
                 let calls_it = here.iter().any(|at| example.holds(*at))
-                    || self.weigh(vec![(path.to_string(), example.start, example.end)])?;
+                    || self.weigh(vec![(path.to_string(), example.start, example.end)], &from)?;
                 if !calls_it {
                     return Err(format!(
                         "the example at line {} does not reach it",
@@ -394,7 +432,7 @@ impl Weigh<'_, '_> {
     /// code — a `let` read, a helper called — lands outside the checkout,
     /// on the target, or on the target's class being built. `Ok(true)` when
     /// one reaches the target.
-    fn weigh(&self, mut todo: Vec<(String, Pos, Pos)>) -> Result<bool, String> {
+    fn weigh(&self, mut todo: Vec<(String, Pos, Pos)>, from: &From) -> Result<bool, String> {
         let mut touched = false;
         let mut seen: Vec<(String, Pos)> = Vec::new();
         while let Some((path, start, end)) = todo.pop() {
@@ -424,7 +462,7 @@ impl Weigh<'_, '_> {
                 }
             }
             for call in facts.calls.iter().filter(|c| within(c.pos)) {
-                match self.reaches(&facts, &path, call) {
+                match self.reaches(&facts, &path, call, from) {
                     Reach::Nothing => {}
                     Reach::Target => touched = true,
                     Reach::Other(why) => {
@@ -570,7 +608,7 @@ impl Weigh<'_, '_> {
     }
 
     /// What one call reaches of the checkout.
-    fn reaches(&self, facts: &Facts, path: &str, call: &crate::core::Call) -> Reach {
+    fn reaches(&self, facts: &Facts, path: &str, call: &crate::core::Call, from: &From) -> Reach {
         // A symbol a send hands is weighed as the send; one a macro is
         // handed (`let(:x)`, `Fabricate(:user)`) runs nothing by itself.
         if call.recv == RecvShape::Symbol {
@@ -589,9 +627,26 @@ impl Weigh<'_, '_> {
                 },
                 false => call.clone(),
             };
-        if let Some(named) = members::named_by(self.tree, facts, &read) {
+        // Outside the unit, a member read is the one the unit's examples see.
+        let unit = from
+            .nesting
+            .as_ref()
+            .filter(|_| {
+                !from.holds(path, call.pos)
+                    && matches!(read.recv, RecvShape::Implicit | RecvShape::SelfRecv)
+            })
+            .and_then(|nesting| {
+                let facts = self.files.facts(&from.path)?;
+                let mut asked = read.clone();
+                asked.nesting = nesting.clone();
+                members::named_by(self.tree, &facts, &asked)
+                    .map(|named| (from.path.as_str(), named))
+            });
+        let named =
+            unit.or_else(|| members::named_by(self.tree, facts, &read).map(|named| (path, named)));
+        if let Some((written, named)) = named {
             return match named {
-                Named::Here(def) => Reach::Body(vec![body(path, &def)]),
+                Named::Here(def) => Reach::Body(vec![body(written, &def)]),
                 Named::Shared { site, line } => self.body_at(&site, line),
             };
         }
@@ -738,6 +793,8 @@ enum SpanKind {
 
 struct Span {
     kind: SpanKind,
+    /// The call that opens it (`it`, `describe`), empty for a `test_` method.
+    call: String,
     name: String,
     start: Pos,
     end: Pos,
@@ -848,7 +905,13 @@ impl Shape {
             spans: Vec<Span>,
         }
         impl Walk<'_> {
-            fn span(&mut self, kind: SpanKind, name: String, loc: &ruby_prism::Location<'_>) {
+            fn span(
+                &mut self,
+                kind: SpanKind,
+                call: &str,
+                name: String,
+                loc: &ruby_prism::Location<'_>,
+            ) {
                 let (from, to) = (loc.start_offset(), loc.end_offset());
                 let before = &self.source[..from];
                 let before = &before[before
@@ -865,6 +928,7 @@ impl Shape {
                     before.trim_ascii().is_empty() && (after.is_empty() || after[0] == b'#');
                 self.spans.push(Span {
                     kind,
+                    call: call.to_string(),
                     name,
                     start: self.lines.pos(from),
                     end: self.lines.pos(to.saturating_sub(1)),
@@ -886,7 +950,7 @@ impl Shape {
                     return;
                 };
                 let Some(statements) = body.as_statements_node() else {
-                    self.span(SpanKind::Hook, String::new(), &body.location());
+                    self.span(SpanKind::Hook, "", String::new(), &body.location());
                     return;
                 };
                 for statement in statements.body().iter() {
@@ -909,7 +973,7 @@ impl Shape {
                         }
                     }
                     let name = name.map(|(name, _)| name).unwrap_or_default();
-                    self.span(SpanKind::Hook, name, &statement.location());
+                    self.span(SpanKind::Hook, &name, name.clone(), &statement.location());
                 }
             }
         }
@@ -950,7 +1014,7 @@ impl Shape {
                             text.trim_matches(|c| c == '"' || c == '\'').to_string()
                         })
                         .unwrap_or_default();
-                    self.span(kind, described, &call.location());
+                    self.span(kind, &name, described, &call.location());
                 }
                 ruby_prism::visit_call_node(self, call);
             }
@@ -958,7 +1022,7 @@ impl Shape {
             fn visit_def_node(&mut self, def: &ruby_prism::DefNode<'pr>) {
                 let name = String::from_utf8_lossy(def.name().as_slice()).into_owned();
                 if def.receiver().is_none() && name.starts_with("test_") {
-                    self.span(SpanKind::Example, name, &def.location());
+                    self.span(SpanKind::Example, "", name, &def.location());
                 }
                 ruby_prism::visit_def_node(self, def);
             }
