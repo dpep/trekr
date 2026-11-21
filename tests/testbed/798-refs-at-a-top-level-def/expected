@@ -5,3 +5,12 @@ def lib/t.rb:3:1 status=resolved owner=Object via=main
 # call below it resolves to it: `main`'s lookup answers with the def as
 # Object's, and DEC-311's rule took that for a method of the receiver's own.
 dead lib/t.rb #helper_top=single-caller #unused_top=unreferenced
+# `--def` says the owner is `Object`, and `--refs Object#helper_top`
+# answered `no_such_method`, exit 1. A top-level def is Object's, so the
+# owner `--def` prints round-trips, and so does a position on the def
+# itself, which `--refs` refused.
+refs Object#helper_top status=resolved confirmed=1 resolves_to=Object#helper_top exit=0
+refs Object#unused_top status=resolved confirmed=0 resolves_to=Object#unused_top
+refs lib/t.rb:1:5 status=resolved confirmed=1 resolves_to=Object#helper_top
+refs lib/t.rb:3:1 status=resolved confirmed=1 resolves_to=Object#helper_top
+card Object#helper_top status=resolved owner=Object resolves_to=Object#helper_top

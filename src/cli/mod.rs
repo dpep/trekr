@@ -3897,12 +3897,15 @@ fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<E
         None,
         None,
     )?;
-    let kind = tree
-        .lookup(&owner, query.singleton, &query.name)
-        .map(|method| method.kind());
+    let kind = match owner.as_str() {
+        "" => refs::method_of(&tree, &owner, &query),
+        _ => tree.lookup(&owner, query.singleton, &query.name),
+    }
+    .map(|method| method.kind());
+    let written = crate::tree::ruby_owner(&owner);
     let shown = match query.singleton {
-        true => format!("{owner}.{}", query.name),
-        false => format!("{owner}#{}", query.name),
+        true => format!("{written}.{}", query.name),
+        false => format!("{written}#{}", query.name),
     };
     let resolved = refs::resolves_to(&tree, &owner, &query);
     let mut text_out = card_text(&shown, &definition, &[], Some(&counts));
@@ -3913,7 +3916,7 @@ fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<E
     let mut answer = serde_json::json!({
         "query": text,
         "status": status,
-        "owner": owner,
+        "owner": written,
         "method": query.name,
         "singleton": query.singleton,
         "kind": kind,
@@ -4271,7 +4274,7 @@ fn cmd_refs(
     let mut answer = serde_json::json!({
         "query": text,
         "status": status,
-        "owner": owner,
+        "owner": owner.as_deref().map(crate::tree::ruby_owner),
         "method": query.name,
         "singleton": query.singleton,
         "definition": definition,
@@ -4461,7 +4464,11 @@ fn cmd_refs_at(
         Some(crate::query::position::Under::Definition(def))
             if def.kind == crate::core::Kind::Method =>
         {
+            // A top-level def is Object's (DEC-837); one on an object
+            // (`def io.x`) is no class's.
+            let top_level = def.nesting.is_empty() && !def.singleton;
             tree.scope_fqn(&def.nesting)
+                .or_else(|| top_level.then(|| "Object".to_string()))
                 .map(|owner| (owner, def.singleton, def.name.clone()))
         }
         Some(crate::query::position::Under::Call(call)) => {

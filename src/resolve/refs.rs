@@ -18,7 +18,7 @@
 
 use super::DefinedOn;
 use crate::core::{Call, Facts};
-use crate::tree::{Site, Tree};
+use crate::tree::{MethodDef, Site, Tree};
 use serde::Serialize;
 
 /// `Widget#save`, `Widget.build`, or a bare `save`.
@@ -1792,13 +1792,22 @@ pub(crate) fn order(reference: &Reference) -> (u8, u8, String, u32) {
 /// The method a query about `owner` lands on, in Ruby's notation, and
 /// whether the owner inherits it rather than defining it (DEC-280).
 pub(crate) fn resolves_to(tree: &Tree, owner: &str, query: &Query) -> Option<(String, bool)> {
-    let method = tree.lookup_owned(owner, query.singleton, &query.name)?;
-    let defined_by = crate::tree::public_name(&method.owner);
+    let method = method_of(tree, owner, query)?;
+    let defined_by = crate::tree::ruby_owner(crate::tree::public_name(&method.owner));
     let mark = if method.singleton { '.' } else { '#' };
     Some((
         format!("{defined_by}{mark}{}", query.name),
-        defined_by != crate::tree::public_name(owner),
+        defined_by != crate::tree::ruby_owner(crate::tree::public_name(owner)),
     ))
+}
+
+/// The method a query about `owner` lands on: the top level's (`""`, as
+/// [`definition_of`] answers for `Object`) is its top-level def.
+pub(crate) fn method_of(tree: &Tree, owner: &str, query: &Query) -> Option<MethodDef> {
+    if owner.is_empty() {
+        return super::top_level_defs(tree, &query.name).into_iter().next();
+    }
+    tree.lookup_owned(owner, query.singleton, &query.name)
 }
 
 /// Where the queried method is defined, if the owner resolves.
@@ -1809,6 +1818,17 @@ pub(crate) fn definition_of(tree: &Tree, query: &Query) -> (Option<String>, Vec<
     let Some(owner) = tree.resolve(written, &[]).fqn else {
         return (None, Vec::new());
     };
+    // A top-level def is Object's private method, which the tree keys under
+    // the top level's `""` rather than placing on Object (DEC-311, DEC-837).
+    if owner == "Object" && !query.singleton && tree.lookup(&owner, false, &query.name).is_none() {
+        let top: Vec<Site> = super::top_level_defs(tree, &query.name)
+            .into_iter()
+            .map(|method| method.site)
+            .collect();
+        if !top.is_empty() {
+            return (Some(String::new()), top);
+        }
+    }
     // A name two programs declare differently has a definition in each
     // (DEC-072); asked about by name, it is every one of them.
     let variants = tree.variants_of(&owner);

@@ -30,7 +30,7 @@ pub(crate) use variants::public_name;
 
 /// The owner a person writes for one the tree keys methods by: the top
 /// level's `""` is `Object`, whose private methods top-level defs are
-/// (DEC-311).
+/// (DEC-311, DEC-837).
 pub(crate) fn ruby_owner(owner: &str) -> &str {
     if owner.is_empty() { "Object" } else { owner }
 }

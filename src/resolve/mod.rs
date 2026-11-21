@@ -3461,7 +3461,7 @@ fn evaluated_elsewhere(path: &str) -> bool {
 /// block: Object's. A gem's counts — fabrication's `Fabricator` is how every
 /// fabricator file starts — but not one in a block, which is whatever the
 /// block runs on, once it runs (thor's `instance_eval do def task`, DEC-445).
-fn top_level_defs(tree: &Tree, name: &str) -> Vec<crate::tree::MethodDef> {
+pub(crate) fn top_level_defs(tree: &Tree, name: &str) -> Vec<crate::tree::MethodDef> {
     tree.named(name)
         .iter()
         .filter(|method| method.owner.is_empty() && !method.singleton)

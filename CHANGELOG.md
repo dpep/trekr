@@ -191,6 +191,10 @@
   addressable memory panicked the server. It, and any longer than 256 MiB,
   is refused as other bad framing is: the reason on stderr, and the
   connection closes.
+- **`--refs Object#helper` finds a top-level `def helper`**: `--def` names
+  its owner `Object`, and asking `--refs` about that owner answered
+  `no_such_method`, exit 1. It lists the def's callers, and so does
+  `--refs` at the def itself, which exited 64; the card answers too.
 
 ## 0.10.2 — 2026-11-20
 

@@ -17633,6 +17633,10 @@ in a query and in `--json`'s `owner` (`""`, as `--dead` prints it, or
 `Object`, as `--def` does), and `cmd_refs` taking a query rather than its
 text.
 
+**Amended by DEC-837:** done. The owner is written `Object`, in a query and
+in `--refs`' and the card's `owner`, and a position on the def asks
+`Object#name`.
+
 ## DEC-800 — A path gem's gemspec is the one whose `name` is the gem's
 
 **Decided.** In a `path` or git source, a gem's gemspec is found as
@@ -18442,3 +18446,27 @@ waited for, buffering whatever the client sent. 256 MiB is four times
 for JSON's escaping.
 
 Test: `a_content_length_past_what_a_message_may_be_is_refused_not_waited_for`.
+
+## DEC-837 — `Object#name` asks about a top-level def
+
+**Decided.** A method query whose owner resolves to `Object`, an instance
+method `Object` has none of, asks about the top-level defs of that name:
+`refs::definition_of` answers with them and the tree's own owner for them,
+`""`, so `--refs` tiers call sites as `--dead` does (DEC-311, DEC-798).
+What a person reads says `Object` (`tree::ruby_owner`): `--refs`' and the
+card's `owner`, and `resolves_to` (`Object#helper`). `--refs` at the def
+itself asks the same.
+
+**Why.** `--def` and `--refs helper` printed `"owner": "Object"`, and
+`--refs Object#helper` answered `no_such_method`, exit 1: a definitive
+"nothing" about a method the tool had just named. The tree keys top-level
+defs under `""` and never places them on `Object` (DEC-311's reasons
+stand), so the lookup on `Object` found nothing.
+
+**Kept narrow.** Only at the query's boundary, not in the tree's lookup:
+an implicit call elsewhere is still tiered by DEC-311. A method `Object`'s
+chain does have by the name (a core one, with corelib indexed) is that
+method, as before. `""` stays the key, not a newtype: DEC-026's cost
+argument holds, and the one mapping is `ruby_owner`.
+
+Test: testbed 798.
