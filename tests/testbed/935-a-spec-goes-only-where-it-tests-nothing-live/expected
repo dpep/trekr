@@ -1,0 +1,6 @@
+# DEC-730's `delete_with` said a test-only method's spec code tests nothing
+# live, but the hunt found it on rows whose own grading says the method may
+# be called (a helper Rails mixes into a view, a name config holds, a module
+# listed at runtime): deleting those specs loses a test of live code. Only a
+# `clear` row plans units.
+dead lib Lowered#shine=test-only&~public_send

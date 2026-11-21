@@ -3,7 +3,7 @@
 //! does — only where that code exercises nothing else of the checkout, by
 //! what trekr resolves each of its calls to, and what it leaves unread.
 
-use super::dead::{DeadKind, DeadRow, Detail, MethodDetail};
+use super::dead::{DeadKind, DeadRow, Detail, Grade, MethodDetail};
 use super::dead_consts::in_tests;
 use super::members as cli_members;
 use crate::core::{Def, Facts, Pos, RecvShape, SentName};
@@ -104,6 +104,8 @@ pub(super) fn plan(
         let said = &mut row.reason;
         let row_path = relative(&row.path);
         let row_line = row.line;
+        // A row its own grading says may be called has no spec code to spare.
+        let clear = row.confidence == Grade::Clear;
         let Detail::Method(MethodDetail {
             tests: Some(tests), ..
         }) = &mut row.detail
@@ -160,7 +162,7 @@ pub(super) fn plan(
                 .find(|s| matches!(s.kind, SpanKind::Group | SpanKind::Shared))
                 .map(|s| s.block());
             // A shared group's body runs in whichever group includes it.
-            if around.iter().any(|s| s.kind == SpanKind::Shared) {
+            if !clear || around.iter().any(|s| s.kind == SpanKind::Shared) {
                 continue;
             }
             // The outermost that holds nothing else: a group before the
