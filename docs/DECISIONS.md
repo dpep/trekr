@@ -22,7 +22,7 @@ belongs to:
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
-| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 680, 690 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
 | Scope and housekeeping | 030, 063, 640 |
 
@@ -16873,3 +16873,46 @@ error, copied to every row it frees: that is the cost of the rule.
 **Reverses if** a hand-read sample of cascaded rows on another app falls
 well below the `clear` `unreferenced` rate (DEC-372), or a corpus shows
 strict chains deeper than one step often enough to measure.
+
+## DEC-690 — `--dead` does not carry when a definition was added
+
+**Decided (not built).** No `added` field on a `--dead` row, and no caveat
+that lowers a young one. Measured first (BASELINE, "A candidate's age does
+not predict its fate"): on discourse at a 12- and a 6-month horizon, a
+candidate whose `def` line `git blame` dates under 90 days gained a use
+later 2.8 % of the time (5 of 178) against 4.4 % (95 of 2,159) for one over
+a year — the in-flight hypothesis (sorbet-deadcode's `Git::Recency`)
+predicts the reverse. Young candidates were deleted more, but no more than
+young code of the same age, and those deletions were three features
+reworked. A field that predicts nothing is noise in `--json`, where a
+consumer will read it as a signal; a caveat fitted to three commits would
+grade by accident.
+
+**And it would cost more than the command.** Blaming each candidate's
+`def` line on discourse took 74 s at 8 jobs (126 s with `-M`) against
+~10 s for `--dead` itself, cold. Old lines dominate a candidate set, and
+blame walks each to its origin.
+
+**Where it would live, if it comes back.** Not the blob layer: a line's
+blame is a function of history and HEAD, not of the blob's content, so a
+blob-keyed fact would be wrong on the next commit. Per query, in the
+resolve layer, beside `generated.rs`'s `git check-attr`: a batched `git`
+call per checkout that degrades to no answer. Cached, if at all, by
+(HEAD, path) per checkout — never shared across worktrees as blobs are.
+Degradation it must handle, none of which this measured: a shallow clone
+(CI's default) dates every line to its boundary commit, marked `boundary`
+in `--porcelain`, so such a line has no age; a checkout with one squashed
+commit (the mastodon bench corpus is one) gives every line the same date;
+an uncommitted line has none (blame's all-zero commit). trekr refuses a
+directory that is not a git checkout (DEC-001), and `--dead` is not served
+over LSP, so neither path needed one.
+
+**Rejected: file-level recency** (`git log --diff-filter=A`, as
+sorbet-deadcode does) — a method added to an old file reads as old — and
+a name's introduction found by substring (`line.include?(name)`), which
+matches `save` inside `save_draft`.
+
+**Reverses if** a corpus with long-lived branches, or a monorepo whose
+features land in pieces behind flags, shows young candidates gaining
+callers at a rate whose interval clears the old ones'; `script/recency.py`
+is the measurement, and it takes any repo with history.

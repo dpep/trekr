@@ -2973,6 +2973,68 @@ DEC-350's app residue-hits fall because 31 of them became correct.
 Kept gains: `minutes`/`seconds` reach `Numeric` in ActiveSupport (4),
 `initialize` answered (2).
 
+## A candidate's age does not predict its fate (2026-11-20)
+
+DEC-690. The idea, from sorbet-deadcode's `Git::Recency`: a method added
+recently may be in-flight work whose caller is still in review, so it is
+riskier to call dead. If so, a young `--dead` candidate should more often
+*gain* a caller later than an old one.
+
+**Method** (`script/recency.py`). `--dead app/models app/services` at two
+discourse commits, 2025-08-28 (17d6cb2) and 2026-02-25 (28080d4), and at
+HEAD (2026-08-25, d55f1dc); methods only. A candidate's age is its `def`
+line's, `git blame -w` at the old commit (committer time). Its fate at HEAD:
+**deleted** (no `def` of its name left in its file, renames followed),
+**gained** (still defined, no longer a candidate: something uses it now), or
+**still** a candidate. Every `def` in scope is the base rate for deleted.
+
+| age of the `def` line | candidates | gained a use | deleted | every def: deleted |
+| --- | ---: | ---: | ---: | ---: |
+| 12-month horizon, under 30 days | 35 | 2 (6 %) | 13 (37 %) | 17 / 52 (33 %) |
+| 30–90 days | 46 | 2 (4 %) | 2 (4 %) | 2 / 86 (2 %) |
+| 90–365 days | 84 | 8 (10 %) | 6 (7 %) | 15 / 192 (8 %) |
+| over a year | 1,060 | 51 (4.8 %) | 27 (2.5 %) | 52 / 3,200 (1.6 %) |
+| 6-month horizon, under 30 days | 52 | 1 (2 %) | 4 (8 %) | 4 / 87 (5 %) |
+| 30–90 days | 45 | 0 | 4 (9 %) | 6 / 73 (8 %) |
+| 90–365 days | 144 | 6 (4 %) | 0 | 3 / 271 (1 %) |
+| over a year | 1,099 | 44 (4.0 %) | 16 (1.5 %) | 18 / 3,270 (0.6 %) |
+
+**Young candidates do not gain callers more often.** Pooled, under 90 days:
+5 of 178 (2.8 %, 95 % CI 1–6 %); over a year, 95 of 2,159 (4.4 %, CI
+4–5 %). If anything fewer, and no tier reverses that (`unreferenced` under
+90 days: 0 of 24). The in-flight hypothesis has no support here.
+
+**Young code is deleted more, but as code, not as candidates.** Under 30
+days at the 12-month horizon, 37 % of candidates against 33 % of every
+def: no lift over the base rate of the same age. And it is three events,
+not a trend: the 13 deletions are two features reworked
+(`reviewable_*` and `discourse_id/register.rb`), the 6-month horizon's 4
+are one (`upcoming_changes/`). With so few young rows and deletions that
+cluster by feature, a threshold fitted here would be fitted to three
+commits.
+
+**Cost**, discourse HEAD, `--dead` itself ~10 s cold on an empty store:
+`git blame -w` of each candidate's `def` line (`-L` per line, one process
+per file, 434 files, 1,853 rows) took 358 s serially, 74 s at 8 jobs, 126 s
+with `-M`; blaming whole files at 8 jobs took 42 s over 496 files. Old lines
+are the expensive ones — blame walks to their origin — and they are nearly
+all of a candidate set.
+
+**The base rate disagrees with session 36's.** Its "still defined today"
+gave 19.0 % deleted for a random method of the same scope and horizon;
+here the file-scoped truth gives 2.4 % (86 of 3,530 at 17d6cb2), and "a
+`def` of that name anywhere at HEAD" 1.0 %. Reproduced three ways for
+the same window: the cascade lane measured 3.2 % and 8.0 %, and the
+comparison lane 2.5 % by owner and 1.0 % by name; none comes near 19 %.
+Neither its section nor DEC-038 records the truth query, so the
+difference cannot be traced; its lifts are ratios within one run and may
+still hold, but its absolute rates should not be quoted against these.
+
+**Not checked**: `-C` (moves across files, costlier still); author time
+in place of committer time; a corpus with long-lived feature branches,
+where the in-flight case is likeliest — discourse merges small PRs to
+`main`.
+
 ## Engine measurements, as ARCHITECTURE recorded them (2026-08-23 to 2026-09-28)
 
 These sat in ARCHITECTURE's Measurements while the layers were being built,
