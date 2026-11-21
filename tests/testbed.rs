@@ -77,7 +77,12 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
     // Everything but the expectations file is source.
     for entry in fs::read_dir(case).unwrap().flatten() {
         let name = entry.file_name();
-        if name == "expected" || name == "README.md" || name == "ruby" || name == "rbs" {
+        if name == "expected"
+            || name == "README.md"
+            || name == "ruby"
+            || name == "rbs"
+            || name == "untracked"
+        {
             continue;
         }
         // A case's `gitignore` is the checkout's `.gitignore`: as a dotfile
@@ -96,6 +101,11 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
 
     git(&dir, &["init", "-q"]);
     commit_all(&dir);
+    // A case's `untracked/` lands in the checkout after the commit: files
+    // git has never seen, which the index reads all the same.
+    if case.join("untracked").is_dir() {
+        copy_tree(&case.join("untracked"), &dir);
+    }
     let indexed = trekr_in(&dir)
         .args(["--index", "--json"])
         .env("TREKR_DB", &db)

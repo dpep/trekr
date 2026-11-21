@@ -31,6 +31,10 @@ beside it for a gemspec), and a `gitignore` reading `/vendor/bundle/`,
 staged as the checkout's `.gitignore` so the app does not index the gems
 as its own (cases 870, 871).
 
+A case's `untracked/` directory is copied into the checkout after the
+commit, at the checkout's root: files git has never seen, which the index
+reads all the same (case 1010).
+
 ## The `expected` format
 
 ```text

@@ -241,6 +241,10 @@ ruby tests/testbed/099-a-shared-group-name-is-the-shared-group/spec/support/raw_
 ruby tests/testbed/099-a-shared-group-name-is-the-shared-group/spec/widget_spec.rb dfa52797a1ab0301
 ruby tests/testbed/100-a-name-defined-nowhere-says-so/app.rb 2eb5d929d0fac6e3
 ruby tests/testbed/101-a-call-in-an-included-block-asks-the-class-side/app.rb 3fc2f3b1bb0f2fbe
+ruby tests/testbed/1010-an-untracked-file-is-read-as-a-tracked-one/app/controllers/widgets_controller.rb 43fc8f1db20614d2
+ruby tests/testbed/1010-an-untracked-file-is-read-as-a-tracked-one/app/models/widget.rb 7c6869f9a01933c9
+ruby tests/testbed/1010-an-untracked-file-is-read-as-a-tracked-one/untracked/config/routes.rb ff347232cc92ebae
+ruby tests/testbed/1011-a-slim-views-ruby-keeps-a-method-as-slim-5-reads-it/app/models/widget.rb 1ef1a29f0db04792
 ruby tests/testbed/120-a-method-made-from-an-unnamed-name-is-not-absent/app.rb b1e220695c537f1f
 ruby tests/testbed/121-define-method-over-a-constant-list-defines-each-name/app.rb e7e8d445dc4ad5f0
 ruby tests/testbed/122-a-class-eval-string-is-read-as-code/app.rb fad3b1c5e17ce63b

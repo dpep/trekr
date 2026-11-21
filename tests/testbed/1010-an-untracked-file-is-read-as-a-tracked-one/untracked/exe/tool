@@ -1,0 +1,2 @@
+#!/usr/bin/env ruby
+Widget.new.run_from_script

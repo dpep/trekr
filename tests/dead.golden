@@ -11,6 +11,8 @@
 093-a-self-call-in-a-module-reaches-its-includers-other-modules 9a61e72c41957df0
 096-an-override-is-reached-through-its-ancestor 458064ac1484eaae
 097-a-module-self-call-skips-a-shadowed-includer-module 3e6a4b2d7d0233f1
+1010-an-untracked-file-is-read-as-a-tracked-one 90c3cb79eb17873e
+1011-a-slim-views-ruby-keeps-a-method-as-slim-5-reads-it c26180cf3317e6e9
 122-a-class-eval-string-is-read-as-code 3977f0a5676a712e
 126-a-call-typed-as-an-ancestor-reaches-an-override 90aee89b5713b83c
 130-a-string-of-code-is-read-with-the-names-it-is-handed 1fba2bb7631967d1
