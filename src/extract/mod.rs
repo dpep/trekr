@@ -126,6 +126,9 @@ struct Frame {
     mixed: Option<Mixed>,
     /// The locals a method assigned an interpolated name (`sends`).
     held: Vec<sends::Held>,
+    /// A `class << io` body: the object its `def`s are defined on, as
+    /// `def io.x` writes it (DEC-740).
+    object: Option<crate::core::Unsettled>,
 }
 
 /// Code that runs on whatever mixes its module in (DEC-102).
@@ -169,6 +172,7 @@ impl Frame {
             block_param: None,
             mixed: None,
             held: Vec::new(),
+            object: None,
         }
     }
 }
@@ -633,6 +637,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             block_param: None,
             mixed: None,
             held: Vec::new(),
+            object: None,
         }],
         pending_sigs: Vec::new(),
         pending_sig_params: Vec::new(),
@@ -822,6 +827,14 @@ impl<'a> Extractor<'a> {
 
     /// Does `def` or `alias` here make a singleton method? `instance_eval`
     /// flips only these, not what `self` is (DEC-653).
+    /// `io` in `def io.x` or `class << io`: the one object the local holds.
+    fn object_held(&self, expr: &Node<'_>) -> Option<crate::core::Unsettled> {
+        let read = expr.as_local_variable_read_node()?;
+        let local = String::from_utf8(read.name().as_slice().to_vec()).ok()?;
+        let at = self.pos(expr.location().start_offset());
+        Some(crate::core::Unsettled::Object { local, at })
+    }
+
     fn defines_singleton(&self) -> bool {
         self.in_singleton() || self.frames.last().is_some_and(|f| f.defs_singleton)
     }
@@ -1782,7 +1795,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         if attached.is_some() {
             self.visit(&expr);
         }
+        let object = self.object_held(&expr);
         self.enter(attached, Opens::Singleton);
+        self.frame().object = object;
         if let Some(body) = node.body() {
             self.visit(&body);
         }
@@ -1797,6 +1812,11 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         // Singleton either by writing it (`def self.x`, `def Foo.x`) or by
         // sitting inside `class << self` or a constant's `instance_eval`.
         let singleton = receiver.is_some() || self.defines_singleton();
+        // Inside `class << io`, as if written `def io.x`.
+        let object = receiver
+            .is_none()
+            .then(|| self.frames.last().and_then(|f| f.object.clone()))
+            .flatten();
         let loc = node.location();
         let name_start = node.name_loc().start_offset();
 
@@ -1846,7 +1866,8 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
 
         // `def self.x` inside `included do` is the includer's class method,
         // where Concern puts `ClassMethods`' (and the macros above do).
-        let on_self = receiver.as_ref().is_none_or(|r| r.as_self_node().is_some());
+        let on_self =
+            object.is_none() && receiver.as_ref().is_none_or(|r| r.as_self_node().is_some());
         if singleton && on_self && self.in_includer_body() {
             def.nesting.insert(0, "ClassMethods".to_string());
             def.singleton = false;
@@ -1862,17 +1883,14 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             // Not the scope's own when a block may run as another object, or
             // when it is written on one (DEC-562).
             def.unsettled = match receiver.as_ref() {
-                Some(r) => r.as_local_variable_read_node().and_then(|read| {
-                    let local = String::from_utf8(read.name().as_slice().to_vec()).ok()?;
-                    let at = self.pos(r.location().start_offset());
-                    Some(crate::core::Unsettled::Object { local, at })
+                Some(r) => self.object_held(r),
+                None => object.clone().or_else(|| {
+                    self.open_blocks
+                        .last()
+                        .copied()
+                        .flatten()
+                        .map(crate::core::Unsettled::Block)
                 }),
-                None => self
-                    .open_blocks
-                    .last()
-                    .copied()
-                    .flatten()
-                    .map(crate::core::Unsettled::Block),
             };
         }
 
@@ -1893,8 +1911,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         // `super` looks up this name after the method's owner, so it is only
         // recorded where the owner is the scope: not `def obj.x`, and not a
         // `def` inside a block, whose owner is decided when the block runs.
-        let owner_is_scope = receiver.as_ref().is_none_or(|r| r.as_self_node().is_some())
-            && self.frames.last().is_some_and(|f| f.blocks == 0);
+        let owner_is_scope = on_self && self.frames.last().is_some_and(|f| f.blocks == 0);
 
         // Descend for calls and constants in the body — but not through a
         // receiver we already recorded.

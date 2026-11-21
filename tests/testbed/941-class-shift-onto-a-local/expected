@@ -3,3 +3,4 @@
 # `Printer.write`, `unreferenced`, `clear`, and freed `stamp` as a cascade
 # root (DEC-680).
 dead app/printer.rb Printer#decorate=single-caller
+dead app/printer.rb Printer#write=unreferenced~cannot Printer#stamp=single-caller^

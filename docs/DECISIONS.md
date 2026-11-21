@@ -17270,3 +17270,15 @@ cascaded, claims the wrong deletion. `header`, before `run` starts, is
 still `build`'s. Testbed 816. A def's end column, an extraction change,
 would settle the tie.
 
+## DEC-740 — `class << io` defines on the object `io` holds
+
+**Decided.** A `def` inside `class << local` is read as `def local.x` is
+(DEC-562): a singleton method whose owner is the object the local holds,
+which `--dead` types from the local's writes or grades `lower`, "defined on
+the object `io` holds, which trekr cannot type". It was taken for `class <<
+self`: `Printer.write`, `unreferenced`, `clear`, and so a cascade root
+(DEC-680) for the methods it calls. `super` and the `included` rewrite stay
+off for it, as for `def io.x`. Only a local, as `def io.x` reads only a
+local: `class << @io` or `class << build` still opens the scope's own
+singleton class, and so do `def @io.x` and its kin (testbed 941; 654's
+`class << item` moves the same way).

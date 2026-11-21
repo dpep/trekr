@@ -73,6 +73,11 @@
   second `def` on one line**: in `def build; header; end; def run; footer;
   end`, `footer`'s reason said its caller was `build`. A call after another
   `def` on its line now names no caller, since either may hold it.
+- **`--dead` reads `class << io` as `def io.x`**: a method defined in the
+  singleton class of a local's object was filed as the class's own
+  (`Printer.write`), `unreferenced`, `clear`, and named as what frees the
+  methods it calls. It is `lower`, "defined on the object `io` holds, which
+  trekr cannot type", and frees nothing.
 
 ## 0.10.2 — 2026-11-20
 
