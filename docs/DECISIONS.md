@@ -17201,8 +17201,11 @@ Nor does a method that reaches live code: its body, its owner's
 checkout) are each weighed, and every call there must land outside the
 checkout, on the target, or on building its class; every name sent must
 be a literal no other checkout method has; no checkout constant but the
-owner may be read. A method a macro made (other than `attr_*`) is
-refused, its body unread; so is one whose owner's chain defines a Ruby
+owner (and the namespaces around it) may be read. A method a macro made
+(other than `attr_*`) is refused, its body unread; so is one whose owner
+has an ancestor in a gem the index holds (not core, not the stdlib),
+which may call back into it by names it is never handed (an Active Record
+model's callbacks run on `new`); so is one whose owner's chain defines a Ruby
 protocol method in the checkout (`==`, `eql?`, `hash`, `<=>`, `===`,
 `to_s`, `to_str`, `each`, `inspect`, `coerce`, `method_missing`,
 `respond_to?` and kin), which Ruby and RSpec call with no call written:
@@ -17218,12 +17221,30 @@ example, around a site, when:
    block (`let!`, `subject!`, `fab!`: `members::eager`'s notion), and any
    other statement of the group's body that is no RSpec DSL read
    elsewhere — a helper's macro (`with_registry`), an assignment, an `if`
-   around hooks. "Lands" is `resolve::method_at`'s answer — its
+   around hooks. A Minitest test (a `test_` method, Active Support's
+   `test`) has hooks too: its class body's `setup`, `before_setup` and
+   `after_setup` methods, its `setup` callbacks (the block, a lambda, or
+   the method a symbol names in the same body; one named there and not
+   defined is unseen, so no unit), and the other statements of the body;
+   `teardown` and kin are not weighed, as `after` is not. The same hooks
+   of each checkout body of the class's ancestors are weighed with them,
+   and of every checkout reopening of a framework test base
+   (`ActiveSupport::TestCase`, `Minitest::Test` and kin), whether or not
+   the chain reaches it: an unindexed Rails hides that
+   `ActionDispatch::IntegrationTest` inherits `ActiveSupport::TestCase`.
+   An unindexed ancestor that is no framework base hides its hooks: no
+   unit. "Lands" is `resolve::method_at`'s answer — its
    definition sites and its residue candidates, all of them. A body
    reached is a group member a call reads (`members::named_by`;
-   `is_expected`, `are_expected` and a bare `should` read the `subject`),
-   or a method defined in a test file a call resolves to; at most 64
-   bodies, past which it is no unit. A member read outside the unit (in a
+   `is_expected`, `are_expected`, a bare `should` and `its` read the
+   `subject`), or a method defined in a test file a call resolves to; at
+   most 64 bodies, past which it is no unit. A member a module the group
+   includes answers from outside the tests is live code, not a body to
+   weigh. An implicit `subject` and `described_class` build the class the
+   group describes: they keep the unit unless that is the method's owner,
+   whose building is weighed above. No checkout constant but the owner
+   and its namespaces is read there either: `Formats::MONEY.call(…)` runs
+   a live lambda. A member read outside the unit (in a
    `let`, a hook, a helper) resolves from the group the unit is written
    in, as RSpec runs it: a nested `let(:size)` replaces the outer one an
    outer `let(:widget)` reads.
@@ -17237,7 +17258,7 @@ example, around a site, when:
    keeps the unit as a call would. So does a name called with no call
    written: `&:name`, `have_attributes`' keys, a predicate matcher's
    question (`be_visible` asks `visible?` or `visibles?`, `have_key`
-   asks `has_key?`), `its`' attribute.
+   asks `has_key?`), `its`' attribute, `change(obj, :attr)`'s attribute.
 4. No `include_context` or `include_examples` is written in a group around
    it (or in it): what the shared group's hooks do is unweighed. No site
    in a shared group's body or an `it_behaves_like` block yields a unit.
@@ -17248,7 +17269,9 @@ example, around a site, when:
 A group that is the file's one top-level statement besides `require`s is
 `file`. Units inside another are dropped. A unit is deleted by its lines,
 so one sharing a line with any statement outside it (`it {…}; it {…}`)
-is none.
+is none, and so is one that holds what another file may name: a class or
+module body, a constant written, a shared group defined
+(`shared_examples` and kin, with any receiver).
 
 **Why hooks count and `after` does not.** The first cut weighed only the
 example's span. Read by hand, mastodon's `follow_service_spec` "disables
@@ -17296,13 +17319,36 @@ either way.
 **Not built.** A gem call that builds a checkout object of another class
 (`Fabricate(:post)` saves a model, running its callbacks) lands outside
 the checkout and is not weighed; nor is an indexed library ancestor
-calling back into the owner by a name it is not handed (an Active Record
-callback on the owner's own class: building one runs it). An unindexed
-ancestor already lowers the row, so has no unit. A `test-only` class's spec file (the constant rows are
-`dead_consts`', another lane's); a Minitest class as a group; following
+calling back into another class it builds. An unindexed ancestor
+already lowers the row, so has no unit. A `test-only` class's spec file (the constant rows are
+`dead_consts`', another lane's); a Minitest class as a unit of its own;
+an untyped `.new` other than `described_class.new`, whose `initialize`
+is not looked for; following
 an `include_context` into its body rather than refusing; a metadata-
 included shared context and `RSpec.configure`'s hooks and helpers, which
 apply to every group and are not weighed; saying why a site has no unit.
+
+**Re-trial** (`--dead app lib` or `lib` on every checkout under
+`~/code/lib/ruby` with a `spec/` or `test/`, plus seven Rails frameworks
+one at a time: 85 targets, 84 answered, sidekiq-ent no git checkout). The
+previous round's trial, on the same 83 suites it read, carried 3,219
+`test-only` method rows (215 `clear`) and 5 units, all on one row; a hunt
+on it found 10 shapes that deleted the only test of live code or broke
+another spec's loading, and a hunch added one more (a gem superclass
+calling back); all are testbed cases now (936 to 939). After those
+fixes: 3,527 rows (343 `clear`; the 84th suite is a second discourse
+checkout), the same 37,969 `test_sites` on the 83 shared suites, and **5
+units, all on `thing_or_things`**, a gem whose whole public API is one
+top-level method graded `clear` by `--dead`'s own grading (another
+lane's fix): read by hand, each example tests only that method, so the
+unit is right for the row and the row is wrong. Of the 343 `clear` rows
+only 9 methods reach nothing live and are weighed at all; of their 48
+spans, 5 are those units and 43 are refused for a live constant read (25), a live call (9), the
+described class (4), a shared include (2), a live implicit name (2) or a
+class defined in the group (1). So precision on correctly graded rows is
+vacuous again (0 of 0) and `frees` never fired. The feature fires where a
+method is self-contained, and these suites have almost none whose spec
+is.
 
 **Reverses if** a hand-read sample of units on another suite finds one
 that tests live code by a path these rules do not weigh — then that path

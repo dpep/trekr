@@ -39,10 +39,15 @@
   row lists each test site (`test_sites`) with the example and group around
   it, and `delete_with` names the groups, examples or whole spec files to
   delete with the method — only on a `clear` row whose method, and its
-  class's `initialize`, reach nothing else of the checkout, and only where
-  every call in that spec code, in the hooks and setup that run before it,
-  and in the names it calls unwritten (`&:name`, `be_visible`), lands on
-  the method, on its class being built, or outside the checkout. Strict
+  class's `initialize`, reach nothing else of the checkout, whose class
+  has no gem ancestor, and only where every call in that spec code, in the
+  hooks and setup that run before it (a Minitest class's `setup`, its
+  ancestors' too), and in the names it calls unwritten (`&:name`,
+  `be_visible`, `change(c, :count)`), lands on the method, on its class
+  being built, or outside the checkout; an implicit `subject` or
+  `described_class` builds the described class, a live constant read or
+  a helper from an included live module keeps the spec, and a unit never
+  holds a class, constant or shared group another file may name. Strict
   by design: on discourse and mastodon no row qualifies. `frees` names the
   `let`s and `subject`s left unread once they go; one step, so run
   `--dead` again after deleting.
