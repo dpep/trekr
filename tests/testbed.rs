@@ -585,12 +585,24 @@ impl Drop for Lsp {
     }
 }
 
+/// A panic is never an answer: fail on it, saying where, rather than read
+/// its empty stdout as one that found nothing.
+fn no_panic(args: &[&str], out: &std::process::Output) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.code() != Some(101) && !stderr.contains("panicked at"),
+        "trekr {} panicked:\n{stderr}",
+        args.join(" ")
+    );
+}
+
 fn trekr(db: &Path, dir: &Path, args: &[&str]) -> (serde_json::Value, i32) {
     let out = trekr_in(dir)
         .args(args)
         .env("TREKR_DB", db)
         .output()
         .expect("run trekr");
+    no_panic(args, &out);
     let code = out.status.code().unwrap_or(-1);
     let parsed = serde_json::from_slice(&out.stdout).unwrap_or(serde_json::Value::Null);
     shapes::record(args, &parsed);
@@ -764,6 +776,7 @@ fn dead_snapshot(db: &Path, dir: &Path) -> String {
         .env("TREKR_DB", db)
         .output()
         .expect("run trekr");
+    no_panic(&["--dead", ".", "--json"], &out);
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
     let store = db.parent().expect("a store in its own directory");
     for (path, name) in [
@@ -1245,6 +1258,16 @@ fn check_case(
         let snapshot = dead_snapshot(&db, &dir);
         dead_rows_are_queryable(&db, &dir, label, &snapshot, failures);
         *dead = Some(snapshot);
+    } else {
+        // Every case reads as `--dead` input, so a text reader that panics
+        // on one is caught whatever the case is about.
+        let args = ["--dead", ".", "--json"];
+        let out = trekr_in(&dir)
+            .args(args)
+            .env("TREKR_DB", &db)
+            .output()
+            .expect("run trekr");
+        no_panic(&args, &out);
     }
 
     for line in expectations.lines() {

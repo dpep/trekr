@@ -14,6 +14,9 @@ tests/testbed/011-your-case/
 
 Each case is staged as a real git checkout with its own database and indexed,
 so it exercises the whole path: extract → store → tree → resolve → CLI.
+Every case is also read by `--dead .`, and a trekr run that panics fails
+the testbed, whatever the case asserts: a text reader that slices inside a
+multi-byte character is caught by any case that holds one.
 
 A case that holds a `ruby/` directory runs on a Ruby whose standard library
 is that directory: it is installed as rvm installs Ruby 9.8.7, under a home
