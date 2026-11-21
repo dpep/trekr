@@ -619,7 +619,11 @@ bundle the index did not locate) is a usage error, exit 64 (DEC-771) —
 except a gemspec in the directory of a path gem the root's lockfile
 names (rails' `activesupport/activesupport.gemspec`), which is graded
 against the root bundle and the whole checkout (DEC-807). A root
-`Gemfile` that links elsewhere is the root's.
+`Gemfile` that links elsewhere is the root's. A file the root's Gemfile
+reads with `eval_gemfile` (`Gemfile.tools`), directly or through
+another, is the root bundle's: `--dead Gemfile` grades its gems too, each
+`path` the file declaring it, and naming the file grades its own
+(DEC-820).
 
 A gem is used — not listed, and in `referenced` with the first evidence
 (`by`: `constant`, `require`, `method`, `declaration`, `dependency`;

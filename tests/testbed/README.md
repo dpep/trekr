@@ -77,7 +77,7 @@ asserts the chain starts with those names, and `unresolved=X,Y` (empty for
 none) asserts the ancestors it could not resolve. `dead Gemfile name=tier`
 asserts a gem's row of `--dead Gemfile` (DEC-670), by the gem's name, and
 pins no snapshot; the target may be any bundle file (`gems.rb`,
-`sub/Gemfile`, `Gemfile.lock`), `referenced=a,b` asserts the gems it found in
+`sub/Gemfile`, `Gemfile.lock`, an eval'd `Gemfile.tools`), `referenced=a,b` asserts the gems it found in
 use, sorted, and `exit=N` its exit code. A case with any other `dead` line also has its whole `--dead . --json` pinned,
 byte for byte, in `tests/dead.golden`: an output change names the cases it
 moved, and `UPDATE_GOLDEN=1` accepts it. `symbols FILE` asserts the outline,

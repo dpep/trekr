@@ -21,7 +21,9 @@
   group grade it `lower`. A gem only the lockfile names is never a row. A
   lockfile, a second bundle (`Gemfile.next`, `gemfiles/*.gemfile`), or a
   Gemfile in a subdirectory is refused with exit 64; an engine's gemspec
-  that is a path gem of the root bundle is graded.
+  that is a path gem of the root bundle is graded, and so is a file the
+  root Gemfile reads with `eval_gemfile`, whose gems `--dead Gemfile`
+  grades too.
   `--explain` lists each gem found in use and the first evidence;
   `--json` carries it as `referenced`.
 

@@ -1234,9 +1234,11 @@ fn check_case(
     let code = |line: &str| {
         line.strip_prefix("dead ").is_some_and(|rest| {
             let target = rest.split_whitespace().next().unwrap_or_default();
+            let file = target.rsplit('/').next().unwrap_or_default();
             !["Gemfile", "gems.rb", ".gemspec", ".lock", ".locked"]
                 .iter()
                 .any(|name| target.ends_with(name))
+                && !file.starts_with("Gemfile.")
         })
     };
     if expectations.lines().any(code) {

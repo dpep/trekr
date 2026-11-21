@@ -1,0 +1,17 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    tool_kit (1.0)
+    used_kit (1.0)
+    used_tool_kit (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  tool_kit
+  used_kit
+  used_tool_kit
+
+BUNDLED WITH
+   2.6.9

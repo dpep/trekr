@@ -1,0 +1,6 @@
+# `eval_gemfile "Gemfile.tools"` was not followed, so the tools' gems were
+# never graded with the root's, and `--dead Gemfile.tools` was refused as
+# another bundle's manifest. The file a root Gemfile evals is part of its
+# bundle: `--dead Gemfile` grades its gems, and so does naming it.
+dead Gemfile used_kit=none tool_kit=unreferenced~ used_tool_kit=none
+dead Gemfile.tools tool_kit=unreferenced~ used_tool_kit=none exit=0

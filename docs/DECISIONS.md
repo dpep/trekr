@@ -17988,3 +17988,18 @@ rspec repos' `maintenance-branch` (`main`), two Go `AUTHORS` lists, and
 three test fixtures (`abcd`, `Welcome!`, `this file has plusses!`).
 No row moved on the corpus from this change. Testbed 996; unit test
 `a_file_with_no_extension_is_ruby_when_it_holds_code`.
+
+## DEC-820 — A file the root Gemfile evals is the root bundle's
+
+**Decided.** `eval_gemfile "Gemfile.tools"` is followed, reversing
+DEC-670's "not followed": the gems of each file the manifest evals,
+directly or through another (once each, relative to the file that evals
+it), are declared with the manifest's, each row's `path` the file that
+declares it. `--dead Gemfile.tools` named alone was refused as another
+bundle's manifest (DEC-806), though Bundler resolves its gems into the
+root's lock, which the index located (hunt 3's evalgf): a file the
+root's Gemfile evals is now accepted wherever it sits, and graded as the
+root's manifest is, against the root's lock and the whole checkout. A
+group around the `eval_gemfile` line does not reach the eval'd gems'
+`groups`: nothing in the corpus writes one. Testbed 997 (the harness
+now reads a `dead Gemfile.*` line as a bundle's).

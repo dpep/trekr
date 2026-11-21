@@ -41,11 +41,13 @@ pub(crate) struct Declaration {
 
 /// What a Gemfile or gemspec declares, in source order. Each `gemspec` (a
 /// Gemfile pulling in a gemspec's dependencies) is the directory it reads,
-/// `.` unless `path:` names another.
+/// `.` unless `path:` names another. Each `eval_gemfile` is the file it
+/// reads, as written.
 #[derive(Debug, Default)]
 pub(crate) struct Declared {
     pub(crate) gems: Vec<Declaration>,
     pub(crate) gemspecs: Vec<String>,
+    pub(crate) evals: Vec<String>,
 }
 
 pub(crate) fn declarations(source: &[u8]) -> Declared {
@@ -222,6 +224,16 @@ impl<'pr> Visit<'pr> for Reader<'_> {
                 self.found
                     .gemspecs
                     .push(path.unwrap_or_else(|| ".".to_string()));
+                None
+            }
+            b"eval_gemfile" if node.receiver().is_none() => {
+                if let Some(file) = node
+                    .arguments()
+                    .and_then(|args| args.arguments().iter().next())
+                    .and_then(|arg| string(&arg))
+                {
+                    self.found.evals.push(file);
+                }
                 None
             }
             _ => None,

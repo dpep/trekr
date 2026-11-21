@@ -28,7 +28,46 @@ pub(super) fn is_manifest(path: &Path) -> bool {
 /// Whether `--dead` was handed a bundle's file: a manifest, or a lockfile
 /// or a second bundle's file, which are refused.
 pub(super) fn is_bundle_file(path: &Path) -> bool {
-    is_manifest(path) || lockfile_manifest(path).is_some() || is_other_bundle(path)
+    is_manifest(path)
+        || lockfile_manifest(path).is_some()
+        || is_other_bundle(path)
+        || is_evaled(path)
+}
+
+/// A file the root's Gemfile reads with `eval_gemfile` (`Gemfile.tools`),
+/// directly or through another: its gems are the root bundle's.
+fn is_evaled(path: &Path) -> bool {
+    let Ok(root) = named_checkout(path) else {
+        return false;
+    };
+    let canonical = |p: &Path| std::fs::canonicalize(p).ok();
+    let Some(wanted) = canonical(path) else {
+        return false;
+    };
+    let gemfile = crate::gems::bundle_files(&root).0;
+    let mut todo = vec![gemfile];
+    let mut seen = HashSet::new();
+    while let Some(file) = todo.pop() {
+        let Some(at) = canonical(&file) else {
+            continue;
+        };
+        if !seen.insert(at.clone()) {
+            continue;
+        }
+        if at == wanted && seen.len() > 1 {
+            return true;
+        }
+        let dir = file.parent().unwrap_or(&root).to_path_buf();
+        if let Ok(raw) = crate::scan::read_source(&file) {
+            todo.extend(
+                gemfile::declarations(&raw)
+                    .evals
+                    .iter()
+                    .map(|e| dir.join(e)),
+            );
+        }
+    }
+    false
 }
 
 /// A second bundle's manifest or lock, beside the root's: `Gemfile.next`
@@ -148,14 +187,14 @@ pub(super) fn cmd_dead_gems(
             lockfile.display()
         )));
     }
-    if let Some(other) = paths.iter().find(|p| is_other_bundle(p)) {
+    if let Some(other) = paths.iter().find(|p| is_other_bundle(p) && !is_evaled(p)) {
         return Err(Failure::Usage.error(format!(
             "--dead grades the bundle at a checkout's root, whose gems the index located; \
              {} is another bundle's, whose gems it did not locate: pass the root's Gemfile",
             other.display()
         )));
     }
-    if let Some(other) = paths.iter().find(|p| !is_manifest(p)) {
+    if let Some(other) = paths.iter().find(|p| !is_manifest(p) && !is_evaled(p)) {
         return Err(Failure::Usage.error(format!(
             "--dead grades a Gemfile's gems apart from code: `--dead Gemfile`, then `--dead {}`",
             other.display()
@@ -177,7 +216,7 @@ pub(super) fn cmd_dead_gems(
             _ => Path::new("."),
         });
         let manifest = dir.join(path.file_name().unwrap_or_default());
-        if dir != canonical(&root) && !is_engine_gemspec(&root, &manifest) {
+        if dir != canonical(&root) && !is_engine_gemspec(&root, &manifest) && !is_evaled(path) {
             return Err(Failure::Usage.error(subdirectory_refusal(&root, path)));
         }
         // One manifest named twice is graded once.
@@ -1176,10 +1215,22 @@ fn declared_in(root: &Path, manifest: &Path) -> Vec<(Declaration, String)> {
             .map(|raw| gemfile::declarations(&raw))
             .unwrap_or_default()
     };
-    let top = read(manifest);
-    let mut files = vec![(manifest.to_path_buf(), top.gems)];
-    for dir in &top.gemspecs {
-        let dir = manifest.parent().unwrap_or(root).join(dir);
+    let mut files = Vec::new();
+    let mut gemspecs = Vec::new();
+    // The manifest, then each file it evals (`eval_gemfile`), in turn.
+    let mut todo = vec![manifest.to_path_buf()];
+    let mut read_once = HashSet::new();
+    while let Some(file) = todo.pop() {
+        if !read_once.insert(std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone())) {
+            continue;
+        }
+        let found = read(&file);
+        let dir = file.parent().unwrap_or(root).to_path_buf();
+        todo.extend(found.evals.iter().rev().map(|e| dir.join(e)));
+        gemspecs.extend(found.gemspecs.iter().map(|g| dir.join(g)));
+        files.push((file, found.gems));
+    }
+    for dir in gemspecs {
         let mut specs: Vec<PathBuf> = std::fs::read_dir(dir)
             .into_iter()
             .flatten()
