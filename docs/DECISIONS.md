@@ -17059,6 +17059,16 @@ concern. It was none either way, so `--def Widget.aliased_fields` was
 `residue` and the module's `ClassMethods` a candidate. Testbed 965. No
 discourse row moved: discourse has no such alias.
 
+## DEC-791 — `T.unsafe(Base).subclasses` lists Base's subclasses
+
+**Decided.** The text reader of `Const.subclasses`, `.descendants` and
+`.constants` reads through `T.unsafe(Const)`, which hands back its
+argument unchecked, so the line lists `Const`'s as `Const.subclasses`
+does. A value wrapped (`T.unsafe(registry)`) is still no constant. One
+line only, as the explicit-receiver reader always was; DEC-762's parse
+covers only `self`. Testbed 966. No discourse row moved: discourse writes
+no such call in scope.
+
 ## DEC-762 — `self.class.descendants` lists, and `T.unsafe` is read by its receiver
 
 **Decided.** `descendants` or `subclasses` sent to `self.class` in an

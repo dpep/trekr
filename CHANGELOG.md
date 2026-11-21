@@ -80,6 +80,10 @@
   `convention-only` by `subclasses`, as `Base.subclasses` does; they were
   `unreferenced`. A module's class side lists nothing: a class that
   includes it is no subclass.
+- **`--dead` reads `T.unsafe(Base).subclasses` as `Base.subclasses`**:
+  a constant wrapped in `T.unsafe` listed nothing, so Base's subclasses
+  were `unreferenced`; they are `convention-only` by `subclasses`. So for
+  `.descendants` and `.constants`.
 - **`--dead` no longer names the wrong caller of a call written after a
   second `def` on one line**: in `def build; header; end; def run; footer;
   end`, `footer`'s reason said its caller was `build`. A call after another

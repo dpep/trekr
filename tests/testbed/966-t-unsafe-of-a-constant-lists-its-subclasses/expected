@@ -1,0 +1,5 @@
+# Found by a hunt: `T.unsafe(Base).subclasses` hands back Base, unchecked,
+# so it lists Base's subclasses as `Base.subclasses` does; it listed
+# nothing. A value wrapped (`T.unsafe(registry)`) is still no constant
+# (DEC-762).
+dead app/models Leaf=convention-only~ OLeaf=unreferenced~

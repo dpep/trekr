@@ -204,3 +204,4 @@
 962-self-class-descendants-and-a-split-t-unsafe 693d9d8e6f8e9a5c
 963-a-live-def-holds-the-call-a-candidate-would 4ab5628a927b0b40
 965-a-concern-through-a-constant-alias a486b78e76b79be4
+966-t-unsafe-of-a-constant-lists-its-subclasses a376a9dbd5c42a3c

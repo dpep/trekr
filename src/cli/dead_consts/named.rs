@@ -916,12 +916,17 @@ fn object_space_listing(line: &str) -> Option<Option<String>> {
 
 /// `Widget.descendants`, `Widget.constants`: the constants a line sends one
 /// of `calls` to, which list what they hold or what inherits them.
+/// `T.unsafe(Widget)` hands back `Widget`, unchecked.
 fn listings(line: &str, calls: &[&str]) -> Vec<String> {
     let mut found = Vec::new();
     for call in calls {
         let mut rest = line;
         while let Some(at) = rest.find(call) {
             let before = &rest[..at];
+            let before = before
+                .strip_suffix(')')
+                .and_then(|b| b.rsplit_once("T.unsafe("))
+                .map_or(before, |(_, inner)| inner.trim());
             let start = before
                 .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
                 .map_or(0, |i| i + 1);
@@ -964,6 +969,15 @@ mod tests {
             .collect();
         let a = ["A".to_string()];
         assert_eq!(lines, [(&a[..], 2), (&a[..], 3), (&a[..], 7), (&a[..], 8)]);
+    }
+
+    #[test]
+    fn t_unsafe_of_a_constant_is_that_constant() {
+        let found = listings(
+            "T.unsafe(Base).subclasses + T.unsafe(base).subclasses + T.unsafe(::A::B).descendants",
+            &[".subclasses", ".descendants"],
+        );
+        assert_eq!(found, ["Base", "A::B"]);
     }
 
     #[test]
