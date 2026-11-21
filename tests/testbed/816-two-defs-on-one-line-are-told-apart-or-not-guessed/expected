@@ -1,0 +1,5 @@
+# Two defs on one line: a call before the second `def` is the first's
+# (Report#header, freed by build), but one after it may be either's, since
+# a def's end is known only by line, so footer is pinned to neither — it was
+# freed by build, which never calls it.
+dead app Report#header=single-caller^Report#build Report#footer=single-caller^ Report#build=unreferenced^ Report#run=single-caller^

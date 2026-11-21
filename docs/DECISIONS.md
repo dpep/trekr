@@ -17251,3 +17251,17 @@ changed here: the right tier (no candidate, `super-only`'s, or `lower`
 with the overrides as the caveat) is a design call, and the same mapping
 holds for one call plus symbols (218 `clear` discourse rows), unread.
 
+## DEC-751 — A call two one-line defs may each hold names no caller
+
+**Decided.** The candidate a `single-caller` row's call is written in is
+the innermost def around it whose start (line, column) is at or before the
+call. When two tie for innermost, the row names no caller and carries no
+`cascaded_from`. A def's end is stored by line only, so in `def build;
+header; end; def run; footer; end` the call `footer` is inside `run`, and
+`def outer; def inner; end; footer; end` puts the same call inside
+`outer`: no rule over lines and starts tells those apart, and picking the
+later start (or, as before, the first listed) is a guess that, once
+cascaded, claims the wrong deletion. `header`, before `run` starts, is
+still `build`'s. Testbed 816. A def's end column, an extraction change,
+would settle the tie.
+

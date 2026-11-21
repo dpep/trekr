@@ -1570,7 +1570,7 @@ fn dead_in(
 fn note_candidate_callers(rows: &mut [DeadRow]) {
     struct Span {
         path: String,
-        start: u32,
+        start: (u32, u32),
         end: u32,
         name: String,
         root: Option<Cascade>,
@@ -1579,7 +1579,7 @@ fn note_candidate_callers(rows: &mut [DeadRow]) {
         .iter()
         .map(|row| Span {
             path: row.path.clone(),
-            start: row.line,
+            start: (row.line, row.col),
             end: row.end_line().unwrap_or(0),
             name: row.name.clone(),
             root: (matches!(row.detail, Detail::Method(_))
@@ -1609,10 +1609,22 @@ fn note_candidate_callers(rows: &mut [DeadRow]) {
         // is gone: the one call must be the only way in.
         let only_way_in = *super_refs == 0 && *symbol_refs == 0;
         // The innermost: a call in a `def` nested in another is the inner's.
-        let Some(within) = spans
+        // A def's end has no column, so two that tie may each hold the call.
+        let around: Vec<&Span> = spans
             .iter()
-            .filter(|s| s.path == caller.path && (s.start..=s.end).contains(&caller.line))
-            .min_by_key(|s| s.end - s.start)
+            .filter(|s| {
+                s.path == caller.path
+                    && s.start <= (caller.line, caller.col)
+                    && caller.line <= s.end
+            })
+            .collect();
+        let Some(narrowest) = around.iter().map(|s| s.end - s.start.0).min() else {
+            continue;
+        };
+        let [within] = around[..]
+            .iter()
+            .filter(|s| s.end - s.start.0 == narrowest)
+            .collect::<Vec<_>>()[..]
         else {
             continue;
         };

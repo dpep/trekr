@@ -69,6 +69,10 @@
   `convention-only` by `subclasses`, as `Base.subclasses` does; they were
   `unreferenced`. A module's class side lists nothing: a class that
   includes it is no subclass.
+- **`--dead` no longer names the wrong caller of a call written after a
+  second `def` on one line**: in `def build; header; end; def run; footer;
+  end`, `footer`'s reason said its caller was `build`. A call after another
+  `def` on its line now names no caller, since either may hold it.
 
 ## 0.10.2 — 2026-11-20
 

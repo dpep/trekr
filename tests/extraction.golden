@@ -973,6 +973,8 @@ ruby tests/testbed/814-a-candidate-freed-by-its-caller/app/steps.rb 228e3f39b2bd
 ruby tests/testbed/814-a-candidate-freed-by-its-caller/spec/report_spec.rb 8adb0918c808c754
 ruby tests/testbed/815-a-cascade-wants-no-other-way-in/app/main.rb fb49cefb87bfd61a
 ruby tests/testbed/815-a-cascade-wants-no-other-way-in/app/report.rb 537825b37083d8b2
+ruby tests/testbed/816-two-defs-on-one-line-are-told-apart-or-not-guessed/app/main.rb 1314bf9dda5db6fa
+ruby tests/testbed/816-two-defs-on-one-line-are-told-apart-or-not-guessed/app/report.rb aaaf2ed554177667
 ruby tests/testbed/870-a-gem-is-used-through-its-constants-requires-and-mixins/Gemfile eb9ece9254db72df
 ruby tests/testbed/870-a-gem-is-used-through-its-constants-requires-and-mixins/app/models/report.rb ad8cfdd419271fe3
 ruby tests/testbed/870-a-gem-is-used-through-its-constants-requires-and-mixins/spec/report_spec.rb 95f5e19a1851d68b
