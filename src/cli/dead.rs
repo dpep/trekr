@@ -1563,7 +1563,8 @@ fn dead_in(
 /// A method whose only caller is itself a candidate is `single-caller`, and
 /// says so on the row, where the next question is asked. When that caller
 /// is `clear` and nothing calls it, or only tests do, and this row is
-/// `clear` too, deleting the caller leaves this one unreferenced:
+/// `clear` too, with no `super` or symbol besides, deleting the caller
+/// leaves this one unreferenced:
 /// the row names it in `cascaded_from` (DEC-680). One step only, so a
 /// cycle, or a chain whose top is no such root, frees nothing.
 fn note_candidate_callers(rows: &mut [DeadRow]) {
@@ -1597,11 +1598,16 @@ fn note_candidate_callers(rows: &mut [DeadRow]) {
         let Detail::Method(MethodDetail {
             caller: Some(caller),
             cascaded_from,
+            super_refs,
+            symbol_refs,
             ..
         }) = &mut row.detail
         else {
             continue;
         };
+        // An override's `super` or a symbol still reaches it once the root
+        // is gone: the one call must be the only way in.
+        let only_way_in = *super_refs == 0 && *symbol_refs == 0;
         // The innermost: a call in a `def` nested in another is the inner's.
         let Some(within) = spans
             .iter()
@@ -1611,7 +1617,7 @@ fn note_candidate_callers(rows: &mut [DeadRow]) {
             continue;
         };
         // A `clear` row's one call certainly reaches it: a possible one is lower.
-        let root = within.root.as_ref().filter(|_| clear);
+        let root = within.root.as_ref().filter(|_| clear && only_way_in);
         let what = match root {
             Some(root) => root.tier.as_str(),
             None => "a candidate",

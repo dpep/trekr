@@ -357,7 +357,8 @@ From least evidence of use to most:
 
 A method whose only caller is itself a candidate stays `single-caller`, and
 its `reason` says the caller is a candidate. When that caller is a `clear`
-`unreferenced` or `test-only` method and the row is `clear` too, deleting
+`unreferenced` or `test-only` method and the row is `clear` too, with no
+`super_refs` or `symbol_refs` besides, deleting
 the caller leaves this one unreferenced (or reached only by tests): the
 row carries `cascaded_from` (`name`, `path`, `line`, `tier`), naming it,
 and its reason says "its caller, build, is itself unreferenced". Delete the

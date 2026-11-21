@@ -19,8 +19,9 @@
 
 - **`--dead` names the candidate whose deletion frees a method**: a
   `single-caller` row whose one call is written in a `clear`
-  `unreferenced` or `test-only` method, and which is `clear` itself,
-  carries `cascaded_from` (`name`, `path`, `line`, `tier`), and its
+  `unreferenced` or `test-only` method, and which is `clear` itself
+  with no `super` from an override or symbol besides, carries
+  `cascaded_from` (`name`, `path`, `line`, `tier`), and its
   reason says "its caller, build, is itself unreferenced". Delete the
   root first. One step only: a method freed through another candidate, or
   two that call only each other, carry none; run `--dead` again after

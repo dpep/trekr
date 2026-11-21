@@ -16838,7 +16838,8 @@ another's `class << obj` is the inner one's (one discourse row moved).
 **Which roots free.** Only `clear` `unreferenced` and `test-only` methods. A
 `lower` root's caveat names a way in, which reaches the row through it; a
 `convention-only`, `override` or `super-only` root is reached by something;
-an entry point is `lower` by rule. A `test-only` root frees a row only
+an entry point is `lower` by rule. Nor a row an override's `super` or a
+symbol also reaches (DEC-750). A `test-only` root frees a row only
 tests reach, and `cascaded_from.tier` says so. The row must be `clear`,
 which already rules out a `possible` call (an untyped caller is `lower`).
 
@@ -17222,3 +17223,31 @@ apply to every group and are not weighed; saying why a site has no unit.
 **Reverses if** a hand-read sample of units on another suite finds one
 that tests live code by a path these rules do not weigh — then that path
 joins rule 1, or the rows lose `delete_with`.
+
+## DEC-750 — A cascade wants the one call to be the only way in
+
+**Decided.** A `single-caller` row with `super_refs` or `symbol_refs` above
+zero carries no `cascaded_from`, whatever its caller is. DEC-680's claim is
+"deleting the root leaves this unreferenced", and an override's `super`
+(`FancyReport#header` supering into `Report#header`, which only the
+candidate `Report#build` calls) or a symbol still reaches the row once the
+root is gone: deleting `build` leaves `header` `super-only`, not unused.
+The row keeps its tier and grade, and its reason says the caller "is
+itself a candidate", which stays true. Testbed 815.
+
+**Moved nothing measured.** No discourse cascaded row (`app lib plugins`)
+had either count above zero: the 26 the run frees are unchanged. The hole
+was found by a hunt's repro, not a corpus.
+
+**Open: whether such a row is `single-caller` `clear` at all.** `liveness`
+maps one written call plus any `super`s to `SingleCaller`, an inlining
+candidate. On discourse all 9 `clear` rows of that shape are a template
+method: the one call is the base class's own (`RateLimiter#initialize`
+calling `build_key`), and the overrides that `super` into it are reached
+through that same call by dispatch (`EditRateLimiter#build_key`) or a
+sibling's (`Notifications::ConsolidationPlan#user_notifications`).
+Inlining any of them into its caller breaks the overrides' `super`. Not
+changed here: the right tier (no candidate, `super-only`'s, or `lower`
+with the overrides as the caveat) is a design call, and the same mapping
+holds for one call plus symbols (218 `clear` discourse rows), unread.
+

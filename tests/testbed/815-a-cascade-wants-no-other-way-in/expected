@@ -1,0 +1,4 @@
+# A cascade claims deleting the root leaves the row unreferenced, so every
+# other way in must be absent: an override's `super` (Report#header) or a
+# symbol (Report#footer) still reaches the row once its caller is gone.
+dead app Report#header=single-caller^ Report#footer=single-caller^ Report#build=unreferenced^ Report#assemble=unreferenced^
