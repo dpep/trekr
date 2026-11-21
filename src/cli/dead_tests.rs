@@ -728,7 +728,8 @@ enum SpanKind {
     Shared,
     Example,
     /// What runs before each example of its group and those nested in it:
-    /// a `before` or `around` hook, a `let!` or `subject!`. Not an `after`,
+    /// a `before`, `before_all` or `around` hook, a `let_it_be`, a `let!` or
+    /// any call named with a `!`. Not an `after`,
     /// which runs once the example has asserted what it asserts.
     Hook,
 }
@@ -781,14 +782,16 @@ const SHARED: [&str; 5] = [
     "it_should_behave_like",
 ];
 
-/// Calls whose block runs before each example in reach.
+/// Calls whose block runs before each example in reach; so does any call
+/// named with a `!` (`let!`, `subject!`, `fab!`), as `members::eager` reads
+/// a member.
 const HOOKS: [&str; 6] = [
     "before",
     "prepend_before",
     "append_before",
     "around",
-    "let!",
-    "subject!",
+    "before_all",
+    "let_it_be",
 ];
 
 /// Calls that include a shared group's hooks and `let`s into the group
@@ -851,7 +854,9 @@ impl Shape {
                     Some(SpanKind::Shared)
                 } else if call.receiver().is_none() && EXAMPLES.contains(&name.as_str()) {
                     Some(SpanKind::Example)
-                } else if call.receiver().is_none() && HOOKS.contains(&name.as_str()) {
+                } else if call.receiver().is_none()
+                    && (HOOKS.contains(&name.as_str()) || name.ends_with('!'))
+                {
                     Some(SpanKind::Hook)
                 } else {
                     None

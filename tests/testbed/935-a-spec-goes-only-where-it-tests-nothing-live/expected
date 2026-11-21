@@ -9,3 +9,8 @@ dead lib Lowered#shine=test-only&~public_send
 # read a live constant, so its spec was the only test of that code. Each
 # body is weighed now, and one that reaches live code yields no unit.
 dead lib Tally#total=test-only& Mention#rewrite=test-only& Mention#slug=test-only&
+# Setup that runs before the examples was weighed only as `before`,
+# `around`, `let!` and `subject!`: `before_all`, test-prof's `let_it_be`
+# and discourse's `fab!` ran live code unweighed. Each is a hook now, as is
+# any call named with a `!` that takes a block.
+dead lib Booter#first=test-only& Booter#second=test-only& Booter#third=test-only&
