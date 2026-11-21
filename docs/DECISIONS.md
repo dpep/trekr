@@ -18513,3 +18513,16 @@ Testbed 1010 stages them untracked (the testbed's `untracked/`).
 gave up and listed nothing would turn a stalled git into rows graded with
 nothing read beside the index, silently; waiting is the honest failure
 until a reader can say what it did not read.
+
+## DEC-846 — One Slim reader
+
+**Decided.** `extract::slim::slim_ruby`, `--dead Gemfile`'s Slim 5
+reader (DEC-808, DEC-815), is the one: `--dead`'s methods read a Slim
+view by it too, and their own rule (`views::indented_ruby`, written for
+Haml as much as Slim) is gone. That rule missed an attribute written
+`href = x` and read a `/` comment's `#{}` as Ruby the view runs. Testbed
+1011.
+
+It sits in `extract/` beside `erb_ruby` and `haml_ruby` but keeps its own
+shape — text in, each line's Ruby on that line out — because its readers
+take words, and nothing parses it at offsets.

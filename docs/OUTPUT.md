@@ -387,7 +387,8 @@ names which (a file read here is one the index would list, untracked
 ones git does not ignore included; DEC-845):
 
 - a Slim, Jbuilder or Builder template that writes the name ("named in a
-  view (…), which is not read"; ERB, Haml and RABL templates are read, and
+  view (…), which is not read"; a Slim view's Ruby is taken as `--dead
+  Gemfile` takes it, DEC-846; ERB, Haml and RABL templates are read, and
   their calls counted);
 - a Ruby script with no extension (`exe/tool`, `bin/x`: "named in a script
   (…), which is not read");

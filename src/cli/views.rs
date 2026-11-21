@@ -41,7 +41,7 @@ impl Views {
                 continue;
             };
             let ruby = if path.ends_with(".slim") {
-                indented_ruby(text)
+                crate::extract::slim::slim_ruby(text)
             } else {
                 text.to_string()
             };
@@ -254,55 +254,6 @@ fn template_text(bytes: &[u8]) -> Option<&str> {
         .filter(|text| !text.contains('\0'))
 }
 
-/// The Ruby a Slim template runs: a line that starts with `-` or `=`, what
-/// follows a tag's `=`, `{` or `(`, every `#{…}`, and the lines a Ruby line
-/// ending in a comma continues onto. Not a `-#` comment (Haml's, from when
-/// this read Haml too).
-#[expect(
-    clippy::string_slice,
-    reason = "offsets are where an ASCII token was found, or just past it"
-)]
-fn indented_ruby(text: &str) -> String {
-    let mut ruby = String::new();
-    let mut continued = false;
-    for line in text.lines() {
-        let line = line.trim_start();
-        if std::mem::take(&mut continued) {
-            ruby.push_str(line);
-            ruby.push('\n');
-            continued = line.trim_end().ends_with(',');
-            continue;
-        }
-        if line.starts_with("-#") {
-            continue;
-        }
-        let mut rest = line;
-        while let Some(open) = rest.find("#{") {
-            let inner = &rest[open + 2..];
-            let close = inner.find('}').unwrap_or(inner.len());
-            ruby.push_str(&inner[..close]);
-            ruby.push('\n');
-            rest = &inner[close..];
-        }
-        if line.starts_with(['-', '=', '~', '!', '&']) {
-            ruby.push_str(line);
-            ruby.push('\n');
-            continued = line.trim_end().ends_with(',');
-            continue;
-        }
-        let tag = line
-            .find(|c: char| !(c.is_ascii_alphanumeric() || "%.#_-:".contains(c)))
-            .unwrap_or(line.len());
-        let after = line[tag..].trim_start();
-        if tag > 0 && after.starts_with(['=', '{', '(', '[']) {
-            ruby.push_str(after);
-            ruby.push('\n');
-            continued = after.trim_end().ends_with(',');
-        }
-    }
-    ruby
-}
-
 /// The identifiers in some Ruby, with a trailing `?` or `!`. A string's
 /// text is no name — `t(".edit")` is an i18n key — but a double-quoted
 /// string's `#{…}` is Ruby.
@@ -403,15 +354,5 @@ mod tests {
         assert!(template_text(b"<%= w.title %>").is_some());
         assert!(template_text(b"<%= w.\xff\xfe %>").is_none());
         assert!(template_text(b"<%= w.title %>\0").is_none());
-    }
-
-    #[test]
-    fn a_slim_template_names_what_its_ruby_lines_run() {
-        let ruby = indented_ruby("h1= w.title\np lonely words\n- if w.shown?\na{ href: w.link }\n");
-        let names = words(&ruby);
-        for name in ["title", "shown?", "link"] {
-            assert!(names.iter().any(|n| n == name), "{name}");
-        }
-        assert!(!names.iter().any(|n| n == "lonely"));
     }
 }

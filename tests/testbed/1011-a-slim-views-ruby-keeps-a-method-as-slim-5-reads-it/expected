@@ -1,6 +1,5 @@
 # `--dead`'s methods read a Slim view by a rule of their own, cruder than
 # the Slim 5 split `--dead Gemfile` reads it by (DEC-815): an attribute
 # written `href = x` went unread, and a `/` comment's `#{}` was read as if
-# it ran. As it stands (wrong): `slim_href` has no caveat, `in_comment` is
-# named in the view.
-dead app Widget#slim_href=unreferenced~ Widget#in_comment=unreferenced~view Widget#shown=unreferenced~view Widget#lonely=unreferenced~
+# it ran. Both read it by the one reader now (DEC-846).
+dead app Widget#slim_href=unreferenced~view Widget#in_comment=unreferenced~ Widget#shown=unreferenced~view Widget#lonely=unreferenced~
