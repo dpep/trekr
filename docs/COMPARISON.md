@@ -162,6 +162,130 @@ declaration it resolves to. The only `REFERENCES` edge in `rdx query` runs from
 a document to a constant. The ruby-lsp add-on needs ruby-lsp ≥ 0.27.0.beta4,
 so Rubydex is measured through that beta.
 
+## `--dead` against Spoom and sorbet-deadcode — discourse, by git history
+
+Latest run: **2026-11-20**, trekr 0.10.2 (`323d7cc`), Spoom 1.8.13,
+sorbet-deadcode at `~/code/lib/ruby/sorbet-deadcode`'s HEAD, all on Ruby
+3.4.10. `script/dead_compare.py` produces every row. The method is
+[BASELINE's session 36](BASELINE.md#dead-code-candidates-validated-against-git-history-session-36):
+each tool runs on discourse at `5f3ffdc4a` (2025-08-27), scope `app/models
+app/services`; a candidate counts as deleted when today's checkout
+(`d55f1dcce56`, 2026-08-25, 6,802 commits later) no longer defines it. The
+control is every method in the scope. Candidates are joined to an
+inventory of `def`s by `path:line`, so no tool's naming matters. Only
+methods are scored.
+
+Two ground truths: **by owner**, the same owner, name and side are still
+defined (a method moved to another class counts as deleted); **by name**,
+session 36's, a method of that name is defined anywhere. The interval is
+Wilson's 95 %.
+
+| set | methods | deleted, by owner (rate, 95 % CI) | lift | deleted, by name | lift |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **base rate: every method in scope** | 3,530 | 90 (2.5 %, 2.1–3.1) | 1× | 37 (1.0 %, 0.76–1.4) | 1× |
+| trekr: every tier | 1,225 | 49 (4.0 %, 3.0–5.2) | 1.6× | 24 (2.0 %, 1.3–2.9) | 1.9× |
+| trekr: `unreferenced` | 156 | 3 (1.9 %, 0.66–5.5) | 0.75× | 3 (1.9 %, 0.66–5.5) | 1.8× |
+| trekr: `unreferenced`, `clear` | 32 | 1 (3.1 %, 0.55–16) | 1.2× | 1 (3.1 %, 0.55–16) | 3× |
+| trekr: `convention-only` | 285 | 22 (7.7 %, 5.2–11) | 3× | 6 (2.1 %, 0.97–4.5) | 2× |
+| trekr: `single-caller` | 704 | 22 (3.1 %, 2.1–4.7) | 1.2× | 13 (1.8 %, 1.1–3.1) | 1.8× |
+| trekr: `test-only` | 74 | 2 (2.7 %, 0.74–9.3) | 1.1× | 2 (2.7 %, 0.74–9.3) | 2.6× |
+| Spoom | 212 | 8 (3.8 %, 1.9–7.3) | 1.5× | 4 (1.9 %, 0.74–4.8) | 1.8× |
+| sorbet-deadcode | 44 | 3 (6.8 %, 2.3–18) | 2.7× | 1 (2.3 %, 0.40–12) | 2.2× |
+| sorbet-deadcode: `safe_delete` | 39 | 2 (5.1 %, 1.4–17) | 2× | 1 (2.6 %, 0.45–13) | 2.4× |
+| Spoom and sorbet-deadcode | 42 | 3 (7.1 %, 2.5–19) | 2.8× | 1 (2.4 %, 0.42–12) | 2.3× |
+| all three (trekr `unreferenced`) | 21 | 1 (4.8 %, 0.85–23) | 1.9× | 1 (4.8 %, 0.85–23) | 4.5× |
+
+**No tool's candidates are told apart from the base rate by this proxy.**
+Every interval but two overlaps the base rate's. Discourse deleted 2.5 % of
+these methods in a year, so a set of 44 holds about one deletion by chance,
+and one more moves its rate by two points. The two that clear the base
+rate are both trekr's and neither is a precision claim: `convention-only`
+is *more* often deleted by owner (7.7 %), mostly service-object steps
+moved between classes (by name, 2.1 %, inside the base interval), and
+every tier together, 4.0 %, rides on it.
+
+**Session 36's 19.0 % base rate does not reproduce.** The same commits and
+scope give 2.5 % by owner and 1.0 % by name; spot-checked deletions
+(`Group#imap_mailboxes`, `ApiKey#at_least_one_granular_scope`) are real.
+Its 19.8 % `unreferenced` and 3.3 % `convention-only` came from the build
+of `577c996` (2026-08-26) and an instrument that is not in the repo, so which side
+differs is not known; BASELINE is left as it stands, and this table is the
+one `script/dead_compare.py` reproduces.
+
+### Where the three disagree
+
+Rows matched by `path:line`, every kind; trekr's set is its `unreferenced`
+tier (the only one that says nothing names it).
+
+| | trekr | Spoom | sorbet-deadcode |
+| --- | ---: | ---: | ---: |
+| candidates in scope | 245 (156 methods, 59 modules, 25 constants, 5 classes) | 238 (212 methods, 20 constants, 4 `attr_writer`s, 2 classes) | 60 (44 methods, 16 constants) |
+| that tool alone | 89 | 59 | 2 |
+
+All three agree on 35; trekr and Spoom on 121 more; Spoom and
+sorbet-deadcode on 23 more; trekr and sorbet-deadcode on none apart.
+
+* **Where Spoom and sorbet-deadcode are wrong and trekr is not.** 57 of
+  Spoom's methods and 18 of sorbet-deadcode's 44 (16 of them
+  `safe_delete`) are what trekr grades `convention-only`: discourse's
+  service DSL (`step :request_challenge`, `policy :invalid_access`) and
+  Forwardable's `def_delegator :featured_users, …` name them, and both
+  tools miss it. `UserActionManager.topic_rows` and its siblings (4 for
+  Spoom, 3 for sorbet-deadcode) are called from a `class_eval` string,
+  which trekr reads (testbed 122) and neither other does. `Category::DEFAULT_TEXT_COLORS` is interpolated into a
+  rake task's heredoc: trekr does not report it, Spoom calls it dead and
+  sorbet-deadcode says `review`.
+* **Where trekr is wrong.** Its 59 modules are every concern's
+  `ClassMethods`, which ActiveSupport::Concern extends onto its includer
+  by name (testbed 913). `PostAnalyzer#has_oneboxes?` is `unreferenced`,
+  `clear`, but `Post` sends it from `%i[… has_oneboxes?].each { |attr|
+  define_method(attr) { post_analyzer.public_send(attr) } }` (testbed 912);
+  sorbet-deadcode reads the literal list. Spoom's 4 `attr_writer`s are a
+  kind trekr never reports (testbed 909).
+* **Where name-matching hides a candidate.** 8 of trekr's 32 `clear`
+  `unreferenced` methods Spoom calls alive only because a method of the
+  same name is called somewhere (`UserStat#update_distinct_badge_count`
+  beside the class method of that name; `SpamRule::AutoSilence
+  #flagged_post_ids` beside `TrustLevel3Requirements`'). sorbet-deadcode,
+  verifying by `rg` for the name, keeps 19 of the 32 for the same reason.
+
+### Mapping `--dead --json` onto sorbet-deadcode's `--intersect`
+
+sorbet-deadcode intersects on `[full_name, kind]`, with `Owner#method` for
+every method (`spoom/converter.rb` rewrites Spoom's `Owner::method`).
+trekr's `owner` and `name` map onto it as `"#{owner}##{name}"`, and `class`,
+`module` and `constant` as `"#{owner}::#{name}"`. Matched by location on
+this run, the converted name and kind agree with sorbet-deadcode's on 54
+of 55 shared rows and with Spoom's on 179 of 226. Almost every miss is one
+case: a method in `class_methods do`, which trekr names
+`Reports::Bookmarks::ClassMethods#report_bookmarks` (the module Rails
+makes) and both others `Reports::Bookmarks#report_bookmarks`. A converter
+would lose:
+
+* the side: neither tool tells `def self.x` from `def x` (312 of trekr's
+  1,225 method rows are singleton; 4 owners have both);
+* `let`, `subject` and `shared_group`, which have no kind there, and
+  `attr_reader`/`attr_writer`, which trekr has no rows for;
+* the grading: an intersection keeps membership only, so a converter must
+  pick the tiers that mean "dead" (only `unreferenced` does) and drops
+  `confidence`, `caveat`, `reason` and the entry-point marks with them.
+
+Spoom's own `--spoom` path in sorbet-deadcode does not run against Spoom
+1.8.13 (`Definition::Kind#serialize` is gone; it is `to_s` now), so
+`script/spoom_dead.rb` calls Spoom's API itself.
+
+```sh
+GEM_HOME=/tmp/compare-gems gem install spoom -v 1.8.13      # on Ruby >= 3.4
+git -C ~/code/lib/ruby/discourse worktree add --detach /tmp/discourse-old 5f3ffdc4a
+COMPARE_RUBY=~/.rbenv/versions/3.4.10/bin/ruby COMPARE_GEM_HOME=/tmp/compare-gems \
+  $TREKR/script/dead_compare.py --old /tmp/discourse-old --new ~/code/lib/ruby/discourse \
+  --out /tmp/dead-compare
+git -C ~/code/lib/ruby/discourse worktree remove /tmp/discourse-old
+```
+
+mastodon could not be scored this way: the bench corpus is a one-commit
+copy with no history.
+
 ## Reproduce
 
 ```sh
