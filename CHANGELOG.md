@@ -28,6 +28,12 @@
 - **`--dead` reads graphql-ruby's `method:` and `prepare:`**: `field :color,
   String, method: :paint` and `argument :name, String, prepare: :clean_name`
   left `paint` and `clean_name` `unreferenced`; they are `convention-only`.
+- **`--dead` no longer lists a concern's `ClassMethods`**: the module
+  ActiveSupport::Concern extends each includer with, written out or made
+  by `class_methods do`, is reached as its concern is, so it is no
+  candidate (it was `convention-only`, or `unreferenced` without
+  ActiveSupport indexed). Its methods still are, and a `ClassMethods` in a
+  module that extends no Concern still is.
 
 ## 0.10.2 — 2026-11-20
 

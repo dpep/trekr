@@ -22,7 +22,7 @@
 315-dead-says-what-it-cannot-see b33e15b4d6454ae1
 316-an-aliases-calls-reach-its-target 23a4138469eb4187
 340-a-symbol-an-option-names-is-a-reference fb4c8d88f3427957
-342-a-block-rails-runs-on-the-instance-calls-the-instance 59739619671cb49f
+342-a-block-rails-runs-on-the-instance-calls-the-instance 089b4378c52a1cb3
 343-a-symbol-read-as-no-name-is-said e4ed82a1f4f996aa
 344-a-route-reaches-a-controller-action 537859ccceaa554a
 345-routes-not-all-read-are-said a3d92d55d8d5a4e4
@@ -45,7 +45,7 @@
 384-a-routes-concern-reaches-a-drawn-file 6406a7a1284beebd
 385-thor-runs-no-helper-as-a-command 17afe683010af1e5
 386-a-lambda-in-a-modules-method-has-no-known-self 9bb126798048fdc7
-390-a-callback-block-in-a-class-methods-method-runs-on-the-includer b9a4467343d37a13
+390-a-callback-block-in-a-class-methods-method-runs-on-the-includer 98eaa6c4dbbe92b3
 391-a-block-whose-self-is-not-known-rules-nothing-out 3cfe55f8a5caedda
 400-a-lambda-callback-calls-an-included-method 44758c994cc421c7
 401-a-method-named-in-config-says-so feaf1625a30a0cb1
@@ -54,7 +54,7 @@
 421-a-class-only-tests-reference-is-test-only a022382ca98395d5
 422-a-routed-controller-is-reached-by-convention 3d9e2c4c268cb634
 423-a-gems-routes-may-reach-a-controller 466104bcce45227c
-424-concern-class-methods-and-helpers-by-convention a3db597ac54413f4
+424-concern-class-methods-and-helpers-by-convention 00527074d1814ebd
 425-a-string-or-yaml-value-names-a-class 4ad1a2f4bd9bdd19
 426-a-name-built-from-a-symbol-reaches-a-class 2b5ec26345527ba0
 427-an-association-names-a-model 1a09db99e50ec29c
@@ -187,4 +187,4 @@
 910-a-cops-msg-is-read-by-the-cop 5e8fc441a97ca450
 911-const-get-with-a-literal-names-the-constant 18b636381636a63a
 912-a-name-sent-from-a-literal-list-reaches-another-class 81e37bccf2f325d9
-913-a-concerns-class-methods-module-is-no-candidate e3fcfc60d487dab1
+913-a-concerns-class-methods-module-is-no-candidate 55fc35c42ab304ad

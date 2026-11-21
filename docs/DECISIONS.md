@@ -11394,7 +11394,6 @@ it, with `convention: {by, path?, line?}` in JSON as for a method:
 | --- | --- |
 | `routes` | a controller a route names, found as DEC-344 finds the action, or by the name its file spells (`admin/users/roles_controller.rb` is `admin/users/roles`); a routes file's string spelling a controller's path (`devise_for … controllers: { sessions: 'users/sessions' }`) |
 | `Rails helpers` | a module under `app/helpers`, mixed into every view |
-| `ActiveSupport::Concern` | a concern's `ClassMethods`, when the concern's class side answers `append_features` from ActiveSupport::Concern |
 | `Active Record` | a model's `ActiveRecord_Relation` (and the two other relation classes), which Active Record makes and reopens by name |
 | `Rails`, `Rails generators`, `Rails migrations`, `Action Cable`, `Action Mailer` | what inherits a Railtie, a generator, a migration, a channel, a mailer preview |
 | `MiniScheduler` | a class whose class side answers `every` from MiniScheduler::Schedule |
@@ -16959,3 +16958,27 @@ a method of anything known. **Not yet**: `loads:` (which calls
 `load_<argument>`) and a `.graphql` schema file's field names; testbed 902
 stages both. Ported from Spoom's GraphQL plugin and sorbet-deadcode issues
 #53, #92 and #27.
+
+## DEC-720 — A concern's `ClassMethods` is no `--dead` candidate
+
+**Decided.** `--dead` does not weigh the `ClassMethods` of a module that
+extends `ActiveSupport::Concern` — as written (`extend
+ActiveSupport::Concern`, `extend Concern`, as the tree's own rule reads it),
+or by a class side that answers `append_features` from it — whether written
+as a module or made by `class_methods do`. Its methods are still weighed.
+Testbeds 913 and 424.
+
+**Why not a candidate rather than `convention-only`.** Concern extends each
+includer with the module by its name, so it is reached exactly as surely as
+the concern is: a live concern's `ClassMethods` is live, and a dead
+concern's dies with it, which the concern's own row already says. A
+`convention-only` row claims a second thing to confirm where there is none,
+and it was the largest source of noise against Spoom and sorbet-deadcode on
+discourse. It replaces DEC-421's `ActiveSupport::Concern` convention, which
+needed ActiveSupport indexed: without it, the module was `unreferenced`.
+
+**Not a plain module's `ClassMethods`.** One in a module that extends no
+Concern is reached only if something extends it (`base.extend(ClassMethods)`
+in an `included` hook is a reference), so it stays a candidate (424's
+`Plain::ClassMethods`).
+

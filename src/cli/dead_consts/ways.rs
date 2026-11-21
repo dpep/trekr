@@ -236,21 +236,6 @@ impl Ways<'_> {
                 None,
             );
         }
-        // ActiveSupport::Concern extends its includers with `ClassMethods`,
-        // which it finds by name.
-        if let Some(concern) = fqn.strip_suffix("::ClassMethods")
-            && tree
-                .lookup(concern, true, "append_features")
-                .is_some_and(|m| m.owner == "ActiveSupport::Concern")
-        {
-            return convention(
-                "ActiveSupport::Concern",
-                format!(
-                    "the class methods ActiveSupport::Concern extends {concern}'s includers with"
-                ),
-                None,
-            );
-        }
         // Active Record makes a model's relation classes by these names and
         // reopens one a model already defines.
         if let Some((model, relation)) = fqn.rsplit_once("::")

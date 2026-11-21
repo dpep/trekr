@@ -132,6 +132,18 @@ fn within(scope: &str, fqn: &str) -> bool {
             .is_some_and(|rest| rest.starts_with("::"))
 }
 
+/// A concern's `ClassMethods`, which ActiveSupport::Concern extends each
+/// includer with by its name: reached as surely as the concern is, so no
+/// candidate apart from it (DEC-720). Not a plain module's `ClassMethods`.
+fn concern_class_methods(tree: &Tree, fqn: &str) -> bool {
+    fqn.strip_suffix("::ClassMethods").is_some_and(|concern| {
+        tree.is_concern(concern)
+            || tree
+                .lookup(concern, true, "append_features")
+                .is_some_and(|m| m.owner == "ActiveSupport::Concern")
+    })
+}
+
 /// One declaration `--dead` weighs: its name, kind and first site in scope.
 struct Declared {
     fqn: String,
@@ -161,7 +173,10 @@ fn declared_in(
             "constant" => DeadKind::Constant,
             _ => continue,
         };
-        if crate::tree::public_name(fqn) != fqn || crate::core::synthetic(fqn) {
+        if crate::tree::public_name(fqn) != fqn
+            || crate::core::synthetic(fqn)
+            || concern_class_methods(tree, fqn)
+        {
             continue;
         }
         let sites = tree.sites(fqn);

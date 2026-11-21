@@ -3635,7 +3635,7 @@ impl Tree {
     }
 
     /// Does this module extend `ActiveSupport::Concern`, as written?
-    fn is_concern(&self, module_name: &str) -> bool {
+    pub(crate) fn is_concern(&self, module_name: &str) -> bool {
         self.names.get(module_name).is_some_and(|entry| {
             entry.kind() == "module"
                 && entry
