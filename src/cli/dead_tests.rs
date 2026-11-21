@@ -12,6 +12,7 @@ use crate::query::members::CheckoutFiles;
 use crate::resolve::members::{self, Asked, Context, Files, Named};
 use crate::tree::Tree;
 use serde::Serialize;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -89,17 +90,7 @@ pub(super) fn plan(
             .map(|rest| rest.trim_start_matches('/').to_string())
             .unwrap_or_else(|| path.to_string())
     };
-    let mut shapes: HashMap<String, Option<Arc<Shape>>> = HashMap::new();
-    let mut shape_of = |path: &str| -> Option<Arc<Shape>> {
-        shapes
-            .entry(path.to_string())
-            .or_insert_with(|| {
-                let facts = files.facts(path)?;
-                let source = facts.source.clone()?;
-                Some(Arc::new(Shape::read(&source)))
-            })
-            .clone()
-    };
+    let shapes: RefCell<HashMap<String, Option<Arc<Shape>>>> = RefCell::new(HashMap::new());
     for row in rows.iter_mut() {
         let said = &mut row.reason;
         let row_path = relative(&row.path);
@@ -128,6 +119,7 @@ pub(super) fn plan(
             files,
             root,
             target: &target,
+            shapes: &shapes,
             verdicts: HashMap::new(),
         };
         // A test of a method that reaches live code tests that code too.
@@ -145,7 +137,7 @@ pub(super) fn plan(
             .collect();
         for site in sites.iter_mut() {
             let path = relative(&site.path);
-            let Some(shape) = shape_of(&path) else {
+            let Some(shape) = weigh.shape(&path) else {
                 continue;
             };
             let at = Pos {
@@ -350,8 +342,38 @@ struct Weigh<'a, 'f> {
     files: &'a CheckoutFiles<'f>,
     root: &'a str,
     target: &'a Target,
+    shapes: &'a RefCell<HashMap<String, Option<Arc<Shape>>>>,
     verdicts: HashMap<(String, Pos), bool>,
 }
+
+/// What Ruby and RSpec call on an object without the code naming the
+/// call: `eq` compares with `==`, a Hash key hashes, interpolation and
+/// failure messages render, `sort` compares, a splat converts. A class
+/// defining one in the checkout runs live code a spec never writes.
+const PROTOCOL: [&str; 22] = [
+    "==",
+    "eql?",
+    "equal?",
+    "===",
+    "hash",
+    "<=>",
+    "=~",
+    "each",
+    "to_s",
+    "to_str",
+    "to_a",
+    "to_ary",
+    "to_h",
+    "to_hash",
+    "to_proc",
+    "to_i",
+    "to_int",
+    "coerce",
+    "inspect",
+    "method_missing",
+    "respond_to_missing?",
+    "respond_to?",
+];
 
 /// How many bodies one unit's weighing may follow before it gives up and
 /// says no: a helper chain that long is no unit to delete on trust.
@@ -455,11 +477,18 @@ impl Weigh<'_, '_> {
                         return Err(format!("computed send at {path}:{}", send.call.line));
                     }
                 };
-                if *name == self.target.name {
-                    touched = true;
-                } else if self.live_named(name) {
+                // Any method of the name may answer it, not only the target.
+                if self.live_named(name) {
                     return Err(format!("sends {name} at {path}:{}", send.call.line));
                 }
+                touched |= *name == self.target.name;
+            }
+            // A name RSpec or a block-pass calls without the code writing it.
+            for (at, name) in self.implied(&path).iter().filter(|(at, _)| within(*at)) {
+                if self.live_named(name) {
+                    return Err(format!("calls {name} implicitly at {path}:{}", at.line));
+                }
+                touched |= *name == self.target.name;
             }
             for call in facts.calls.iter().filter(|c| within(c.pos)) {
                 match self.reaches(&facts, &path, call, from) {
@@ -487,6 +516,17 @@ impl Weigh<'_, '_> {
             return Err(format!("made by {via}"));
         }
         self.live_body(&target.path, &def, &mut seen)?;
+        for name in PROTOCOL.iter().filter(|name| **name != target.name) {
+            for singleton in [false, true] {
+                let Some(found) = self.tree.lookup(&target.owner, singleton, name) else {
+                    continue;
+                };
+                let relative = self.relative(&found.site.path);
+                if self.tree.in_checkout(&found.site.path) && !in_tests(&relative) {
+                    return Err(format!("its class defines {name} ({relative})"));
+                }
+            }
+        }
         for (singleton, name) in [(false, "initialize"), (true, "new")] {
             let Some(found) = self.tree.lookup(&target.owner, singleton, name) else {
                 continue;
@@ -499,6 +539,27 @@ impl Weigh<'_, '_> {
             self.live_body(&relative, &def, &mut seen)?;
         }
         Ok(())
+    }
+
+    /// The names a file calls without writing the call: `&:name`, an
+    /// RSpec predicate matcher's, `have_attributes`' keys, `its`' attribute.
+    fn implied(&self, path: &str) -> Vec<(Pos, String)> {
+        self.shape(path)
+            .map(|s| s.implied.clone())
+            .unwrap_or_default()
+    }
+
+    /// A file's examples and groups, read once.
+    fn shape(&self, path: &str) -> Option<Arc<Shape>> {
+        self.shapes
+            .borrow_mut()
+            .entry(path.to_string())
+            .or_insert_with(|| {
+                let facts = self.files.facts(path)?;
+                let source = facts.source.clone()?;
+                Some(Arc::new(Shape::read(&source)))
+            })
+            .clone()
     }
 
     /// The method `name` defined at `line` of a file.
@@ -537,13 +598,18 @@ impl Weigh<'_, '_> {
         for send in facts.sends.iter().filter(|s| within(s.call)) {
             match &send.name {
                 SentName::Symbol(name) | SentName::String(name) => {
-                    if *name != self.target.name && self.live_named(name) {
+                    if self.live_named(name) {
                         return Err(format!("sends {name} at {path}:{}", send.call.line));
                     }
                 }
                 SentName::Shape(_) | SentName::Computed => {
                     return Err(format!("computed send at {path}:{}", send.call.line));
                 }
+            }
+        }
+        for (at, name) in self.implied(path).iter().filter(|(at, _)| within(*at)) {
+            if self.live_named(name) {
+                return Err(format!("calls {name} implicitly at {path}:{}", at.line));
             }
         }
         for call in facts
@@ -586,7 +652,7 @@ impl Weigh<'_, '_> {
             }
             let settled = answer.status == crate::tree::Status::Resolved
                 || matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv);
-            if !settled && call.name != self.target.name && self.live_named(&call.name) {
+            if !settled && self.live_named(&call.name) {
                 return Err(format!("`{}` on a receiver no type settles", call.name));
             }
         }
@@ -674,7 +740,7 @@ impl Weigh<'_, '_> {
         // An answer a type does not settle may be any method of the name.
         let settled = answer.status == crate::tree::Status::Resolved
             || matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv);
-        if !settled && call.name != self.target.name && self.live_named(&call.name) {
+        if !settled && self.live_named(&call.name) {
             return Reach::Other(format!("`{}` on a receiver no type settles", call.name));
         }
         match (more.is_empty(), touched) {
@@ -771,6 +837,8 @@ fn body(path: &str, def: &Def) -> (String, Pos, Pos) {
 /// A test file's examples and groups, where each starts and ends.
 struct Shape {
     spans: Vec<Span>,
+    /// Names called without a call written, where.
+    implied: Vec<(Pos, String)>,
     /// Each span's innermost group, by index into `spans`.
     group_of: Vec<Option<usize>>,
     /// The one group the file holds at its top level, when it holds nothing
@@ -874,6 +942,22 @@ const READ_ELSEWHERE: [&str; 9] = [
 /// they are written in (`it_behaves_like` opens a group of its own).
 const INCLUDES_INTO: [&str; 2] = ["include_context", "include_examples"];
 
+/// RSpec's own matchers named `be_…`, which ask no predicate.
+const BE_MATCHERS: [&str; 12] = [
+    "be_a",
+    "be_an",
+    "be_a_kind_of",
+    "be_an_instance_of",
+    "be_kind_of",
+    "be_instance_of",
+    "be_truthy",
+    "be_falsey",
+    "be_falsy",
+    "be_nil",
+    "be_within",
+    "be_between",
+];
+
 /// Calls that read the `subject` without naming it.
 const READS_SUBJECT: [&str; 4] = ["is_expected", "are_expected", "should", "should_not"];
 
@@ -903,8 +987,73 @@ impl Shape {
             source: &'a [u8],
             lines: &'a LineIndex,
             spans: Vec<Span>,
+            implied: Vec<(Pos, String)>,
         }
         impl Walk<'_> {
+            fn imply(&mut self, at: usize, name: &[u8]) {
+                let at = self.lines.pos(at);
+                self.implied
+                    .push((at, String::from_utf8_lossy(name).into_owned()));
+            }
+
+            /// The names an RSpec matcher or `its` calls on its object.
+            fn implied_by(&mut self, call: &ruby_prism::CallNode<'_>, name: &str) {
+                let at = call.location().start_offset();
+                let args: Vec<ruby_prism::Node<'_>> = call
+                    .arguments()
+                    .map(|a| a.arguments().iter().collect())
+                    .unwrap_or_default();
+                match name {
+                    "have_attributes" => {
+                        for arg in &args {
+                            let elements = match (arg.as_keyword_hash_node(), arg.as_hash_node()) {
+                                (Some(hash), _) => hash.elements(),
+                                (_, Some(hash)) => hash.elements(),
+                                _ => continue,
+                            };
+                            for element in elements.iter() {
+                                if let Some(key) = element
+                                    .as_assoc_node()
+                                    .and_then(|assoc| assoc.key().as_symbol_node())
+                                {
+                                    self.imply(at, key.unescaped());
+                                }
+                            }
+                        }
+                    }
+                    "its" => match args.first() {
+                        Some(first) if first.as_symbol_node().is_some() => {
+                            let symbol = first.as_symbol_node().expect("a symbol");
+                            self.imply(at, symbol.unescaped());
+                        }
+                        Some(first) if first.as_string_node().is_some() => {
+                            let text = first.as_string_node().expect("a string");
+                            let text = text.unescaped().to_vec();
+                            for part in text.split(|b| *b == b'.') {
+                                self.imply(at, part);
+                            }
+                        }
+                        Some(first) if first.as_array_node().is_some() => self.imply(at, b"[]"),
+                        _ => {}
+                    },
+                    _ => {
+                        // RSpec's `be_visible` asks `visible?` (or `visibles?`),
+                        // `have_key` asks `has_key?`.
+                        if let Some(rest) = name.strip_prefix("be_") {
+                            if !BE_MATCHERS.contains(&name) {
+                                let rest = rest
+                                    .strip_prefix("an_")
+                                    .or_else(|| rest.strip_prefix("a_"))
+                                    .unwrap_or(rest);
+                                self.imply(at, format!("{rest}?").as_bytes());
+                                self.imply(at, format!("{rest}s?").as_bytes());
+                            }
+                        } else if let Some(rest) = name.strip_prefix("have_") {
+                            self.imply(at, format!("has_{rest}?").as_bytes());
+                        }
+                    }
+                }
+            }
             fn span(
                 &mut self,
                 kind: SpanKind,
@@ -980,6 +1129,9 @@ impl Shape {
         impl<'pr> Visit<'pr> for Walk<'_> {
             fn visit_call_node(&mut self, call: &ruby_prism::CallNode<'pr>) {
                 let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+                if call.receiver().is_none() {
+                    self.implied_by(call, &name);
+                }
                 let on_rspec = call.receiver().is_none_or(|r| {
                     let loc = r.location();
                     let text = &self.source[loc.start_offset()..loc.end_offset()];
@@ -1019,6 +1171,13 @@ impl Shape {
                 ruby_prism::visit_call_node(self, call);
             }
 
+            fn visit_block_argument_node(&mut self, node: &ruby_prism::BlockArgumentNode<'pr>) {
+                if let Some(symbol) = node.expression().and_then(|e| e.as_symbol_node()) {
+                    self.imply(node.location().start_offset(), symbol.unescaped());
+                }
+                ruby_prism::visit_block_argument_node(self, node);
+            }
+
             fn visit_def_node(&mut self, def: &ruby_prism::DefNode<'pr>) {
                 let name = String::from_utf8_lossy(def.name().as_slice()).into_owned();
                 if def.receiver().is_none() && name.starts_with("test_") {
@@ -1033,10 +1192,12 @@ impl Shape {
             source,
             lines: &lines,
             spans: Vec::new(),
+            implied: Vec::new(),
         };
         walk.visit(&parsed.node());
         let sole = sole_group(&parsed.node(), source, &lines);
         let spans = walk.spans;
+        let implied = walk.implied;
         let group_of = (0..spans.len())
             .map(|at| {
                 (0..spans.len())
@@ -1055,6 +1216,7 @@ impl Shape {
             .collect();
         Shape {
             spans,
+            implied,
             group_of,
             sole,
         }

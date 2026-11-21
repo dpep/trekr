@@ -28,3 +28,15 @@ dead lib Oneline#label=test-only&
 # `let(:size)` replaces the outer one the outer `let(:sized)` reads. It
 # resolves from the unit now.
 dead lib Sized#total=test-only&
+# Calls no code writes were never weighed: `&:kind`, `have_attributes`'
+# keys, a predicate matcher's `visible?` or `has_gloss?`, `its`'
+# attribute. Each is weighed as a name sent now. And `eq` compares with
+# `==`: a class defining a Ruby protocol method in the checkout runs live
+# code no spec writes, so its methods have no unit.
+dead lib Shiny#label=test-only&spec/shiny_spec.rb:6 Equal#label=test-only&
+# A name sent, implied (`&:label`) or called on a receiver no type settles
+# was taken as the target whenever it was the target's name, though
+# another class's method of that name may answer it: mapped_spec's
+# `&:label` was a unit of every `label`. It keeps a unit only when no
+# other checkout method has the name.
+dead lib Labeled#label=test-only& Oneline#label=test-only&
