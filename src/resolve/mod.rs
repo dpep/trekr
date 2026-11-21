@@ -1529,7 +1529,26 @@ pub(super) fn super_landings(
 /// reach, from each class that can run it. Whoever calls one of those can
 /// reach this one instead, framework code the checkout never names included
 /// (DEC-121). Each is `Owner#name`, or `Owner.name` on the singleton side.
-pub(crate) fn overridden(tree: &Tree, def: &crate::core::Def, path: &str) -> Vec<String> {
+/// One object's own method replaces its class's for that object (DEC-562):
+/// `defined_on` is the def's ([`defined_on`]).
+pub(crate) fn overridden(
+    tree: &Tree,
+    def: &crate::core::Def,
+    path: &str,
+    defined_on: Option<&DefinedOn>,
+) -> Vec<String> {
+    if let Some(DefinedOn::Object(of)) = defined_on {
+        return tree
+            .lookup(of, false, &def.name)
+            .map(|found| {
+                vec![format!(
+                    "{}#{}",
+                    crate::tree::public_name(&found.owner),
+                    def.name
+                )]
+            })
+            .unwrap_or_default();
+    }
     let probe = Call {
         written: None,
         name: def.name.clone(),

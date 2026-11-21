@@ -958,15 +958,8 @@ fn dead_in(
         // Whoever calls the method this overrides may run it instead, and
         // that is often a framework the checkout never names (DEC-121) —
         // but `Class#new` runs a class's own `initialize`, never one it
-        // overrides, so for one that is a fact and not a way in. One object's
-        // own method replaces its class's for that object (DEC-562).
-        let overrides = match &defined_on {
-            Some(DefinedOn::Object(of)) => tree
-                .lookup(of, false, &def.name)
-                .map(|found| vec![format!("{}#{}", public_name(&found.owner), def.name)])
-                .unwrap_or_default(),
-            _ => crate::resolve::overridden(&tree, def, file),
-        };
+        // overrides, so for one that is a fact and not a way in.
+        let overrides = crate::resolve::overridden(&tree, def, file, defined_on.as_ref());
         let seen = match seen {
             Some(DeadTier::Unreferenced) if !overrides.is_empty() && !constructor => {
                 Some(DeadTier::Override)

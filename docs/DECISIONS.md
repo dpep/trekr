@@ -18235,3 +18235,27 @@ check. It is a copy of the few open documents' text.
 render JSON disclosure on one side and `Location`s on the other): grown a
 branch at a time, when a fix needs it in both.
 
+## DEC-857 — What a method on one object overrides is `resolve::overridden`'s
+
+**Decided.** `resolve::overridden(tree, def, path, defined_on)` takes the
+def's `DefinedOn` and answers for one defined on an object itself: the
+object's class's own method of the name, which the object's replaces
+(DEC-562). `--dead` special-cased `DefinedOn::Object` before calling it,
+and is its only caller; it now only renders the answer.
+
+**Not folded.** Two other readers named with it are not one rule:
+
+- `--dead` labels a row for a method on one object with that object's
+  class, on the instance side. It is the row's label, read once; a
+  `DefinedOn` method for it would be built for a caller that does not
+  exist.
+- `resolve::refs::tier`'s two checks on the call's receiver ask different
+  things. The top-level rule (DEC-311, DEC-795) asks whether the call is
+  *written* on `self`: no receiver, `self`, or `self` in a method defined
+  on an object (`RecvValue::Held`, whose shape extract rewrites to
+  `Other`). The block rule (DEC-825) asks whether the receiver was *typed*
+  as `self` — `via == "self"`, which `self.class.x` also is and which a
+  bare call typed as `main`, an example group or a scope is not — or as
+  the held object. One predicate over both would change one of them;
+  neither asks "may this receiver be the object", which is
+  `DefinedOn::may_be`'s, already one function.
