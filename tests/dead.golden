@@ -143,8 +143,8 @@
 722-a-module-functions-public-copy-is-api c863eda96e2d1882
 723-a-name-a-script-writes-lowers-a-test-only-row d685d8c487b46e31
 724-a-sig-or-a-wrapped-private-constant-keeps-the-mark 78f9e4164edaca71
-725-a-library-monorepos-nested-gem-is-api 40f28477e4ba9816
-740-a-library-with-no-gemspec-is-api 308f7e74fddd1d60
+725-a-library-monorepos-nested-gem-is-api d2b3619d641f9fe4
+740-a-library-with-no-gemspec-is-api 04c159a55fcc1455
 741-a-private-method-marked-doc-is-api 5944f38864a53e09
 742-a-transitive-mark-reaches-its-own-opening 62f3dde2bb07d37f
 743-a-doc-tag-counts-only-where-its-tool-reads-one 09a1d84d7621600a
@@ -163,7 +163,7 @@
 787-a-haml-scripts-comment-while-do-and-rescue 6e3aebb1592700b8
 790-a-crlf-haml-blank-line-is-blank 8e50a76a9496379b
 800-a-predicate-matcher-references-its-predicate 402b329dc578cb3f
-801-a-test-cases-test-method-is-run-by-its-runner 53387f64f01532b6
+801-a-test-cases-test-method-is-run-by-its-runner 108ccef07d52b101
 802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it b7fae01938694bf2
 805-a-test-method-runs-only-in-a-test-case c291c6afa6b672b1
 807-every-dispatch-by-name-lowers-its-file 5d667cf3286be304
@@ -173,7 +173,7 @@
 811-what-a-send-names-reaches-its-receiver 0ea5b48c77eefc66
 812-a-send-reaches-past-its-file d8e2eb6edb40b44b
 813-a-macro-beside-one-call-is-said 8de2c6b0ecf02c1c
-814-a-candidate-freed-by-its-caller 392927dd6d5cadb4
+814-a-candidate-freed-by-its-caller bc9a8d40d90df69c
 815-a-cascade-wants-no-other-way-in 1fe91da3fe238386
 816-two-defs-on-one-line-are-told-apart-or-not-guessed efcb97a063cc075e
 900-a-callback-symbol-of-a-commit-job-or-test-hook-is-a-reference d53fa59822a634f5
@@ -190,7 +190,8 @@
 911-const-get-with-a-literal-names-the-constant 18b636381636a63a
 912-a-name-sent-from-a-literal-list-reaches-another-class 81e37bccf2f325d9
 913-a-concerns-class-methods-module-is-no-candidate 55fc35c42ab304ad
-930-a-test-only-methods-spec-goes-with-it 9d16faca52c733db
+930-a-test-only-methods-spec-goes-with-it 88269e2a6ae5b0a0
+935-a-spec-goes-only-where-it-tests-nothing-live 3e95e31caba9cfcf
 940-a-nested-guard-only-under-validates d0077d05ca0ae951
 941-class-shift-onto-a-local da8f39fc75fc934d
 942-a-call-written-as-an-assignment-target d9e9a03582dd67b9
