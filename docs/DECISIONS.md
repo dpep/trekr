@@ -18259,3 +18259,26 @@ and is its only caller; it now only renders the answer.
   the held object. One predicate over both would change one of them;
   neither asks "may this receiver be the object", which is
   `DefinedOn::may_be`'s, already one function.
+
+## DEC-858 — `defined_on` in `--dead` moves name loads, it does not add them
+
+**Measured** (instrumented build, not shipped: each name `Tree::named`
+loads, who loaded it first, and whether anything else asked for it after):
+
+| `--dead` scope | names loaded | first by `defined_on` | only by `defined_on` |
+| --- | --- | --- | --- |
+| discourse `app` | 5702 | 4558 | 68 (1.2 %) |
+| discourse `lib` | 4270 | 3347 | 9 (0.2 %) |
+| rails `activerecord` | 11571 | 11115 | 23 (0.2 %) |
+
+`defined_on` runs first in `gather_refs`, so the profile charges it with
+the name's load; tiering, `overridden` and the conventions ask for the
+same names right after, and find them memoized. The names only it loads
+are those of candidates no file calls. Calls per name: 5691 for 4926 names
+on discourse `app`, the repeats memo hits.
+
+**Decided.** No change. Skipping `defined_on` for a name no file calls
+would save at most those 1.2 % of loads; building the `Target` once per
+candidate instead of per `gather_refs` saves only memo hits. Reverses if a
+profile shows `defined_on`'s own work (its def files' parses) rather than
+the first load of a name.
