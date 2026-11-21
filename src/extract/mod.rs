@@ -5366,40 +5366,17 @@ impl<'pr> Extractor<'_> {
             return;
         };
         self.note_shared_name(call);
-        let (recv, recv_text) = match call.receiver() {
-            None => (RecvShape::Implicit, None),
-            Some(r) => receiver_shape(&r),
-        };
-        let recv_pos = (recv == RecvShape::Local)
-            .then(|| {
-                call.receiver()
-                    .map(|r| self.pos(r.location().start_offset()))
-            })
-            .flatten();
-        let recv_value = match (recv, call.receiver()) {
-            (RecvShape::Other, Some(r)) => self.recv_value(&r),
-            // The group methods RSpec exposes on `main` (DEC-115).
-            (RecvShape::Implicit, None)
-                if self.nesting.is_empty()
-                    && matches!(
-                        self.spec_block(call),
-                        Some(SpecBlock::Group(_) | SpecBlock::Shared(_))
-                    ) =>
-            {
-                Some(RecvValue::Main)
-            }
-            _ => None,
-        };
+        // The group methods RSpec exposes on `main` (DEC-115).
+        let main = call.receiver().is_none()
+            && self.nesting.is_empty()
+            && matches!(
+                self.spec_block(call),
+                Some(SpecBlock::Group(_) | SpecBlock::Shared(_))
+            );
         let argc = argc_of(&arg_nodes(call));
         let pos = self.pos(message.start_offset());
-        let written = self.written(message.start_offset(), message.end_offset());
-        let site = self.self_site();
-        let (nesting, singleton) = match recv {
-            RecvShape::Implicit | RecvShape::SelfRecv => (site.nesting, site.singleton),
-            _ => (self.nesting.clone(), self.self_is_class()),
-        };
         let block = call.block().is_some();
-        let stands_for = (recv == RecvShape::Implicit && rspec::in_group(&self.nesting))
+        let stands_for = (call.receiver().is_none() && rspec::in_group(&self.nesting))
             .then(|| rspec::predicate(&name))
             .flatten()
             .map(|predicate| {
@@ -5409,7 +5386,54 @@ impl<'pr> Extractor<'_> {
                     .unwrap_or(Sent::UNTYPED);
                 self.sent(predicate, subject, pos, argc, block)
             });
-        self.facts.calls.push(Call {
+        let fact = self.call_fact(
+            name,
+            call.receiver(),
+            main,
+            &message,
+            argc,
+            block,
+            stands_for,
+        );
+        self.facts.calls.push(fact);
+        self.record_symbol_arguments(call);
+        self.record_send(call);
+        self.record_template(call);
+        self.record_block_pass(call);
+        self.record_body_call(call);
+    }
+
+    /// The fact for a call of `name` on `receiver`, written at `message`.
+    #[allow(clippy::too_many_arguments)]
+    fn call_fact(
+        &self,
+        name: String,
+        receiver: Option<Node<'pr>>,
+        main: bool,
+        message: &ruby_prism::Location<'pr>,
+        argc: Option<u32>,
+        block: bool,
+        stands_for: Option<Box<Call>>,
+    ) -> Call {
+        let (recv, recv_text) = match &receiver {
+            None => (RecvShape::Implicit, None),
+            Some(r) => receiver_shape(r),
+        };
+        let recv_pos = match (&receiver, recv) {
+            (Some(r), RecvShape::Local) => Some(self.pos(r.location().start_offset())),
+            _ => None,
+        };
+        let recv_value = match (recv, &receiver) {
+            (RecvShape::Other, Some(r)) => self.recv_value(r),
+            (RecvShape::Implicit, None) if main => Some(RecvValue::Main),
+            _ => None,
+        };
+        let site = self.self_site();
+        let (nesting, singleton) = match recv {
+            RecvShape::Implicit | RecvShape::SelfRecv => (site.nesting, site.singleton),
+            _ => (self.nesting.clone(), self.self_is_class()),
+        };
+        Call {
             name,
             recv,
             recv_text,
@@ -5423,15 +5447,10 @@ impl<'pr> Extractor<'_> {
             in_scope: site.in_scope,
             argc,
             block,
-            pos,
+            pos: self.pos(message.start_offset()),
             stands_for,
-            written,
-        });
-        self.record_symbol_arguments(call);
-        self.record_send(call);
-        self.record_template(call);
-        self.record_block_pass(call);
-        self.record_body_call(call);
+            written: self.written(message.start_offset(), message.end_offset()),
+        }
     }
 
     /// A class or module body's call on itself, outside any method, with
