@@ -497,6 +497,14 @@ impl<'pr> Visit<'pr> for Collector {
     }
 
     fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        // A `path "dir" do` block's gems are path gems, as `path:` is: none
+        // is installed from a gem server.
+        if node.name().as_slice() == b"path"
+            && node.receiver().is_none()
+            && node.block().is_some_and(|b| b.as_block_node().is_some())
+        {
+            return;
+        }
         // `%w[a b].each { |g| s.add_dependency g }`: the body once per name.
         if let Some((param, items, body)) = self.each_over_literals(node) {
             for item in items {

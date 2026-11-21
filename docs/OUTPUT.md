@@ -682,9 +682,9 @@ gem's methods count only once a require of it is seen. Ruby's methods
 include those the bundle's own rbs describes under `core/`, though core
 was read from an older one.
 
-A path gem inside the checkout (a lockfile `PATH` spec or `path:`, not the
-checkout itself) is graded as a gem: its files are its, so a use of its
-constants counts, and its own files naming it do not. Its code is still
+A path gem inside the checkout (a lockfile `PATH` spec, `path:` or a
+`path "dir" do` block, not the checkout itself) is graded as a gem: its
+files are its, so a use of its constants counts, and its own files naming it do not. Its code is still
 the checkout's for every other gem: an engine's use of a gem counts. Its
 gemspec is the one in the source whose `name` is the gem's, as Bundler
 picks it (`billing_engine.gemspec` for billing-engine), else the file

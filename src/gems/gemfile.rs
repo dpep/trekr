@@ -34,7 +34,8 @@ pub(crate) struct Declaration {
     pub(crate) platforms: Vec<String>,
     /// `path:`, `git:` or `github:`: not a release from a gem server.
     pub(crate) local: bool,
-    /// `path:`'s directory, as written.
+    /// `path:`'s directory, or a `path` block's, as written: where its
+    /// gemspec is looked for.
     pub(crate) path: Option<String>,
 }
 
@@ -53,6 +54,7 @@ pub(crate) fn declarations(source: &[u8]) -> Declared {
         source,
         groups: Vec::new(),
         platforms: Vec::new(),
+        paths: Vec::new(),
         found: Declared::default(),
     };
     reader.visit(&parsed.node());
@@ -64,6 +66,8 @@ struct Reader<'s> {
     /// The `group` blocks the reader is inside, outermost first.
     groups: Vec<Vec<String>>,
     platforms: Vec<Vec<String>>,
+    /// The `path "dir" do` blocks the reader is inside, innermost last.
+    paths: Vec<String>,
     found: Declared,
 }
 
@@ -89,8 +93,8 @@ impl Reader<'_> {
             groups.push("development".to_string());
         }
         let mut require = Require::Auto;
-        let mut local = false;
-        let mut path = None;
+        let mut path = self.paths.last().cloned().filter(|_| gemfile);
+        let mut local = path.is_some();
         for arg in &args[1..] {
             let Some(options) = arg.as_keyword_hash_node() else {
                 continue;
@@ -138,6 +142,21 @@ impl Reader<'_> {
 impl<'pr> Visit<'pr> for Reader<'_> {
     fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
         let name = node.name();
+        if name.as_slice() == b"path"
+            && node.receiver().is_none()
+            && let Some(block) = node.block().and_then(|b| b.as_block_node())
+            && let Some(dir) = node
+                .arguments()
+                .and_then(|args| args.arguments().iter().next())
+                .and_then(|arg| string(&arg))
+        {
+            self.paths.push(dir);
+            if let Some(body) = block.body() {
+                self.visit(&body);
+            }
+            self.paths.pop();
+            return;
+        }
         let scoped = match name.as_slice() {
             b"group" => Some(true),
             b"platforms" | b"platform" => Some(false),
@@ -404,6 +423,9 @@ group :development, :test do
 end
 gem "lograge", group: [:production]
 gem "local", path: "vendor/local"
+path "components" do
+  gem "billing"
+end
 gemspec
 gemspec path: "engines/widget"
 "#,
@@ -425,6 +447,8 @@ gemspec path: "engines/widget"
         assert!(by("local").local);
         assert_eq!(by("local").path.as_deref(), Some("vendor/local"));
         assert!(!by("rails").local);
+        assert!(by("billing").local);
+        assert_eq!(by("billing").path.as_deref(), Some("components"));
     }
 
     #[test]

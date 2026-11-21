@@ -1,0 +1,5 @@
+# A Gemfile's `path "components" do` block, with no lockfile, was not read
+# as a path: its gems were "not installed", rows whose files went unread,
+# and billing, which the app uses, was one. Each is a path gem found in
+# the block's directory by its gemspec's name, graded as a gem.
+dead Gemfile billing=none spare=unreferenced~

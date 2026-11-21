@@ -17563,3 +17563,17 @@ neither owns its files: both are rows, lowered by "it is found in DIR
 with …", rather than one picked. `Owned`'s map is sorted and `Layers`
 breaks a tie by name, so no output order follows a HashMap's. The index
 locates a git monorepo's gems by the same lookup. Testbed 880.
+
+## DEC-801 — A `path` block's gems are path gems, with or without a lock
+
+**Decided.** `path "components" do … end` in a Gemfile makes each `gem`
+in it a path gem, as `path:` does: `gemfile::declarations` records the
+block's directory as the gem's `path` (and `local`), and `--dead`'s
+`path_gems` finds the gem there by its gemspec's name (DEC-800), sole
+only when no other declaration names the same directory. With a
+lockfile the `PATH` section already said so; without one the block was
+not read, so its gems were "not installed", rows whose files went
+unread, and a gem the app uses was among them (hunt 2's cbra). The
+no-lock resolver (`declared.rs`) skips the block's gems, as it skips
+`path:`, so a same-named gem on a gem server is not indexed in their
+place. Testbed 881.

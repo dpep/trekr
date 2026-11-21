@@ -978,9 +978,16 @@ fn path_gem_dirs(
         if found.iter().any(|(name, _)| *name == declaration.name) {
             continue;
         }
-        let Ok(dir) = std::fs::canonicalize(manifest.parent().unwrap_or(root).join(path)) else {
+        let Ok(source) = std::fs::canonicalize(manifest.parent().unwrap_or(root).join(path)) else {
             continue;
         };
+        // A `path` block names a directory several gems are found in.
+        let sole = declared
+            .iter()
+            .filter(|(d, _)| d.path.as_ref() == Some(path))
+            .count()
+            == 1;
+        let dir = crate::gems::gemspec_dir(&source, &declaration.name, sole).unwrap_or(source);
         if dir.starts_with(&checkout) && dir != checkout {
             found.push((declaration.name.clone(), dir));
         }
