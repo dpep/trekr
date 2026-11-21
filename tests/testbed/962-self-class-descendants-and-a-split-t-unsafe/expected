@@ -1,0 +1,5 @@
+# Found by a hunt: `self.class.descendants` in an instance method lists the
+# subclasses of the class it is written in, and `T.unsafe(self)` split from
+# `.subclasses` across lines is still self. In a class method `self.class`
+# is Class, which lists nothing of the checkout's (DEC-762).
+dead app/models Leaf=convention-only~ OLeaf=convention-only~ TLeaf=unreferenced~

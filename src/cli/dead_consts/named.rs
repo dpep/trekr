@@ -7,7 +7,7 @@
 //! never a resolved reference.
 
 use super::super::built::{TEMPLATES, Texts};
-use crate::core::RecvShape;
+use crate::core::{RecvShape, RecvValue};
 use rayon::prelude::*;
 use std::collections::HashMap;
 
@@ -246,27 +246,46 @@ impl Named {
     }
 
     /// `descendants` or `subclasses` sent to a class side's self, bare or
-    /// through `T.unsafe(self)`, an identity Sorbet does not check. A parse,
-    /// as the text cannot say which side a line is written on.
+    /// through `T.unsafe(self)`, an identity Sorbet does not check, or to
+    /// `self.class` in an instance method. A parse, as the text cannot say
+    /// which side a line is written on.
     fn read_self_listings(&mut self, path: &str, text: &str) {
         const LISTINGS: [&str; 2] = ["descendants", "subclasses"];
         if !LISTINGS.iter().any(|call| text.contains(call)) {
             return;
         }
         let lines: Vec<&str> = text.lines().collect();
-        for call in crate::extract::extract(text.as_bytes()).calls {
-            if !call.singleton || !LISTINGS.contains(&call.name.as_str()) {
+        // The source from a receiver call's message on: `unsafe(self)…`.
+        let from = |pos: &crate::core::Pos| {
+            lines
+                .get(pos.line as usize - 1)
+                .and_then(|line| line.get(pos.col as usize - 1..))
+                .unwrap_or("")
+        };
+        let calls = crate::extract::extract(text.as_bytes()).calls;
+        for call in &calls {
+            if !LISTINGS.contains(&call.name.as_str()) {
                 continue;
             }
-            let line = lines.get(call.pos.line as usize - 1).copied().unwrap_or("");
+            let recv = match &call.recv_value {
+                Some(RecvValue::Call(pos)) => calls.iter().find(|c| c.pos == *pos),
+                _ => None,
+            };
             let on_self = match call.recv {
-                RecvShape::Implicit | RecvShape::SelfRecv => true,
-                RecvShape::Other => line.contains(&format!("T.unsafe(self).{}", call.name)),
+                RecvShape::Implicit | RecvShape::SelfRecv => call.singleton,
+                // `T.unsafe(x)` hands back x; the extractor does not model it.
+                RecvShape::Other => recv.is_some_and(|recv| {
+                    let unsafe_self = recv.name == "unsafe"
+                        && recv.recv_text.as_deref() == Some("T")
+                        && from(&recv.pos).starts_with("unsafe(self)");
+                    let self_class = recv.name == "class" && recv.recv == RecvShape::SelfRecv;
+                    (unsafe_self && call.singleton) || (self_class && !call.singleton)
+                }),
                 _ => false,
             };
             if on_self {
                 self.self_listed
-                    .push((call.nesting, (path.to_string(), call.pos.line)));
+                    .push((call.nesting.clone(), (path.to_string(), call.pos.line)));
             }
         }
     }
@@ -934,7 +953,9 @@ mod tests {
         named.read_self_listings(
             "a.rb",
             "class A\n  ALL = descendants\n  def self.all = T.unsafe(self).subclasses\n  \
-             def mine = descendants\n  def theirs = T.unsafe(self).subclasses\nend\n",
+             def mine = descendants\n  def theirs = T.unsafe(self).subclasses\n  \
+             def self.split = T.unsafe(self)\n    .subclasses\n  \
+             def kinds = self.class.descendants\n  def self.meta = self.class.subclasses\nend\n",
         );
         let lines: Vec<(&[String], u32)> = named
             .self_listed
@@ -942,7 +963,7 @@ mod tests {
             .map(|(nesting, (_, line))| (nesting.as_slice(), *line))
             .collect();
         let a = ["A".to_string()];
-        assert_eq!(lines, [(&a[..], 2), (&a[..], 3)]);
+        assert_eq!(lines, [(&a[..], 2), (&a[..], 3), (&a[..], 7), (&a[..], 8)]);
     }
 
     #[test]

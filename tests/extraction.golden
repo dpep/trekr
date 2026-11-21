@@ -1050,6 +1050,9 @@ ruby tests/testbed/960-a-modules-class-side-lists-no-includers/app/models/main.r
 ruby tests/testbed/960-a-modules-class-side-lists-no-includers/app/models/registry.rb 37fe9cf7a260ae6b
 ruby tests/testbed/960-a-modules-class-side-lists-no-includers/app/models/tracked.rb ae7eeafdb236bdc6
 ruby tests/testbed/960-a-modules-class-side-lists-no-includers/app/models/widget.rb dd5a50e2de13c534
+ruby tests/testbed/962-self-class-descendants-and-a-split-t-unsafe/app/models/base.rb 93d6ea00342c5a46
+ruby tests/testbed/962-self-class-descendants-and-a-split-t-unsafe/app/models/leaves.rb 244c91b5cc70c614
+ruby tests/testbed/962-self-class-descendants-and-a-split-t-unsafe/app/models/main.rb 7842a3fac702c3c1
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

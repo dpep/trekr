@@ -55,8 +55,9 @@
   ActiveSupport indexed). Its methods still are, and a `ClassMethods` in a
   module that extends no Concern still is.
 - **`--dead` reads a class's own `descendants` as a listing of its
-  subclasses**: `descendants` in a class method, or
-  `T.unsafe(self).subclasses`, makes each subclass `convention-only` by
+  subclasses**: `descendants` in a class method,
+  `T.unsafe(self).subclasses` (on one line or two), or
+  `self.class.descendants` in an instance method, makes each subclass `convention-only` by
   `subclasses`, as `Base.subclasses` does; they were `unreferenced`. A
   module's class side lists nothing: a class that includes it is no
   subclass.

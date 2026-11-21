@@ -190,3 +190,4 @@
 913-a-concerns-class-methods-module-is-no-candidate 55fc35c42ab304ad
 930-a-test-only-methods-spec-goes-with-it 9d16faca52c733db
 960-a-modules-class-side-lists-no-includers 93381cf13bf4b771
+962-self-class-descendants-and-a-split-t-unsafe 693d9d8e6f8e9a5c

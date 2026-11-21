@@ -11402,7 +11402,7 @@ it, with `convention: {by, path?, line?}` in JSON as for a method:
 | `constantize` | a name `"Jobs::#{type.camelize}".constantize` builds, whose built part a symbol outside its own file spells (`Jobs.enqueue(:send_digest)`) |
 | `association` | a model an association names by convention (`has_many :line_items`) |
 | `test runner` | a class in a test directory that inherits a test case, or in a `test_*.rb`/`*_test.rb`/`*_spec.rb` file |
-| `subclasses` | a subclass of a checkout class whose subclasses a line lists (`Scorable.subclasses`), or its own class side does (`descendants`, `T.unsafe(self).subclasses`, DEC-721) |
+| `subclasses` | a subclass of a checkout class whose subclasses a line lists (`Scorable.subclasses`), or its own class side does (`descendants`, `T.unsafe(self).subclasses`, DEC-721), or an instance method's `self.class.descendants` (DEC-762) |
 | `registration` | an ancestor's `inherited` or `included` hook, written in the checkout, that keeps what it is handed (`<<`, `push`, `add`, `register`); a body that hands the class to another's method as it loads (`HTTP::Options.register_feature(:x, self)`) |
 | `gem namespace` | a class the checkout adds to a gem's namespace whose name a symbol spells (`OmniAuth::Strategies::Patreon`, `:patreon`) |
 | `string` | a whole string spelling it — any string with `::`, a one-word string only where a class is looked up (`class_name:`, `constantize`, …) and only when no other constant of the checkout ends so — or a YAML scalar (`class: Scheduler::Vacuum`, `enum: "LevelSetting"`) |
@@ -16999,7 +16999,8 @@ it is matched as written on the call's line, `T.unsafe(self).subclasses`.
 No store change.
 
 **Not an instance method's.** There `descendants` is the instance's, and
-`T.unsafe(self)` an instance: neither lists the class's subclasses.
+`T.unsafe(self)` an instance: neither lists the class's subclasses
+(`self.class.descendants` does, DEC-762).
 
 ## DEC-760 — A module's class side lists no subclasses
 
@@ -17017,6 +17018,22 @@ Reading it would need the block told apart from `def self.` in the
 module, then every class that includes the concern, directly or through
 another concern. Left conservative: it lists nothing, so a subclass it
 does reach stays a candidate, as before DEC-721.
+
+## DEC-762 — `self.class.descendants` lists, and `T.unsafe` is read by its receiver
+
+**Decided.** `descendants` or `subclasses` sent to `self.class` in an
+instance method lists the subclasses of the class it is written in, as
+DEC-721's class-side forms do: the instance's class is that class or one
+of its subclasses, and either way the listing reaches each subclass. In a
+class method `self.class` is `Class`, so it lists nothing of the
+checkout's. Testbed 962.
+
+**`T.unsafe(self)` by the receiver, not the line.** DEC-721 matched
+`T.unsafe(self).subclasses` in the text of the listing call's line, so a
+chain split across lines (`T.unsafe(self)` then `.subclasses`) missed. The
+receiver is now the call before it in the chain, found by its position:
+`unsafe` sent to `T`, whose source reads `unsafe(self)`. Both read the
+parse the self listing already does; no store change.
 
 
 ## DEC-670 — `--dead Gemfile`: a bundle's gems graded, never called unused
