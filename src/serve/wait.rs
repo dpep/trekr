@@ -60,12 +60,14 @@ fn need_of(method: &str) -> Option<Need> {
 struct Seen {
     indexed: bool,
     warming: Option<(u64, u64, bool)>,
+    finishing: bool,
 }
 
 fn seen(session: &Session, root: &std::path::Path) -> Seen {
     Seen {
         indexed: session.indexed(root),
         warming: session.warming(root).map(|w| (w.read, w.of, w.interrupted)),
+        finishing: session.background.first_running(root),
     }
 }
 
@@ -101,7 +103,7 @@ pub(super) fn verdict(
         return Verdict::Answer;
     };
     let now = seen(session, &root);
-    if now.indexed && now.warming.is_none() {
+    if now.indexed && now.warming.is_none() && !now.finishing {
         return Verdict::Answer;
     }
     let empty = match result {

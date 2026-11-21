@@ -198,12 +198,21 @@ pub(crate) struct View {
     failed: HashSet<PathBuf>,
     /// Running, queued, or to be run again.
     coming: HashSet<PathBuf>,
+    /// The checkout a running first index fills.
+    first: Option<PathBuf>,
 }
 
 impl View {
     /// Whether this session's index of `root` is running or will run.
     pub(crate) fn coming(&self, root: &Path) -> bool {
         self.coming.contains(root)
+    }
+
+    /// Whether this session's first index of `root` is still running. It
+    /// clears its mark at its last commit and goes on to prepare the tree
+    /// (DEC-192); in between, a cold session's answers still came back empty.
+    pub(crate) fn first_running(&self, root: &Path) -> bool {
+        self.first.as_deref() == Some(root)
     }
 
     /// Whether this session indexes at all.
@@ -311,6 +320,11 @@ impl Indexer {
                 .chain(self.waiting.iter().map(|(root, _)| root))
                 .cloned()
                 .collect(),
+            first: self
+                .running
+                .as_ref()
+                .filter(|job| job.first)
+                .map(|job| job.root.clone()),
         }
     }
 

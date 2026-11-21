@@ -18092,6 +18092,9 @@ the index is held, off the serve loop, by the rule the CLI already follows
 
 A held request is retried each time the checkout's index moves (a commit,
 its end, or the index no longer coming) and answered when the index ends.
+Its end, for this session's own first index, is the child's exit, not the
+mark's clearing: the child goes on to prepare the tree (DEC-192), and in
+that window a cold Spoom run still got empty answers.
 It is refused with `RequestFailed` and a message saying how far the index
 has got — "trekr has no whole answer for ~/app yet: it is still being
 indexed (812 of 4000 files read, counting its gems and Ruby's)" — after 30 s, at `shutdown`, or at
