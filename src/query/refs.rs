@@ -158,7 +158,9 @@ pub(crate) fn tier(
     on: &[DefinedOn],
     partial: bool,
 ) -> Reference {
-    let mut reference = refs::tier_call(tree, facts, call, path, query, target);
+    let on_object = !on.is_empty();
+    let mut reference =
+        refs::tier_call_with(tree, facts, call, path, query, target, None, on_object);
     let may_be = |class: &str| on.iter().any(|on| on.may_be(tree, class));
     if reference.ruling == Some(Ruling::NoSuchMethod)
         && !on.is_empty()

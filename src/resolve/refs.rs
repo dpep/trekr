@@ -322,11 +322,13 @@ pub(crate) fn tier_call(
     query: &Query,
     target: Option<&str>,
 ) -> Reference {
-    tier_call_with(tree, facts, call, path, query, target, None)
+    tier_call_with(tree, facts, call, path, query, target, None, false)
 }
 
 /// `tier_call`, given what an `X.new` site constructs when the caller has
-/// already worked it out (`--dead` asks about every `initialize`).
+/// already worked it out (`--dead` asks about every `initialize`), and
+/// whether the queried method is defined on an object (DEC-796).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn tier_call_with(
     tree: &Tree,
     facts: &Facts,
@@ -335,9 +337,10 @@ pub(crate) fn tier_call_with(
     query: &Query,
     target: Option<&str>,
     made: Option<&Construct>,
+    on_object: bool,
 ) -> Reference {
     let mut reference = match made {
-        _ if call.name == query.name => tier(tree, facts, call, path, query, target),
+        _ if call.name == query.name => tier(tree, facts, call, path, query, target, on_object),
         _ if let Some(predicate) = matcher_predicate(call, query) => {
             tier_matcher(tree, facts, call, &predicate, path, query, target)
         }
@@ -394,7 +397,7 @@ fn tier_matcher(
                 from: None,
                 called_as: None,
             },
-            None => tier(tree, facts, predicate, path, query, target),
+            None => tier(tree, facts, predicate, path, query, target, false),
         };
     };
     Reference {
@@ -439,6 +442,7 @@ fn tier(
     path: &str,
     query: &Query,
     target: Option<&str>,
+    on_object: bool,
 ) -> Reference {
     let shape = call.recv.as_str();
     let here = |tier, receiver_type, owner, why, proximity, ruling| Reference {
@@ -462,8 +466,9 @@ fn tier(
 
     // A `def` at the top level is Object's, and private (DEC-311). trekr
     // places it on no class, so an implicit call whose receiver has no
-    // method of the name is the one that may run it.
-    if target == Some("") {
+    // method of the name is the one that may run it. Not one written on an
+    // object at the top level (`def io.x`), which is that object's (DEC-797).
+    if target == Some("") && !on_object {
         // A call on `self` in a method defined on an object is no explicit
         // receiver, though it is typed as the object's (DEC-795).
         let explicit = !matches!(

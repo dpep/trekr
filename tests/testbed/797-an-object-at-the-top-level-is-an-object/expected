@@ -1,3 +1,8 @@
 # `class << io` and `def io.x` at the top of a script define on the object
 # `io` holds, as they do in a class body.
 symbols lib/top.rb top_write,helper_top,other
+# Only a `def` inside a class or module was read as on the object, so at
+# the top of a script `top_write` and `other` were `unreferenced`, `clear`,
+# though `io.top_write` calls one; and `helper_top`, called from
+# `top_write`'s body, was "no call names it".
+dead lib/top.rb Object#top_write=single-caller~object #helper_top=single-caller Object#other=unreferenced~object

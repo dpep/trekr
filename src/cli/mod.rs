@@ -3711,8 +3711,16 @@ fn gather_constructions(
             if !refs::may_run(&construct, own) {
                 continue;
             }
-            let reference =
-                refs::tier_call_with(tree, &facts, call, path, query, target, Some(&construct));
+            let reference = refs::tier_call_with(
+                tree,
+                &facts,
+                call,
+                path,
+                query,
+                target,
+                Some(&construct),
+                false,
+            );
             if reference.tier != refs::Tier::Excluded && reference.unplaced().is_none() {
                 keep(&mut counts, &mut found, reference);
                 return Ok((found, counts));

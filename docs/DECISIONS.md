@@ -17460,3 +17460,20 @@ the rule now finds nothing left to promote, and its output does not move.
 **Not done.** `--def` at `w.extra` stays `residue`, with no candidate:
 naming the object's `def` there would need the ladder to know the call's
 receiver holds that one object.
+
+## DEC-797 — A method defined on an object at the top level is the object's
+
+**Decided.** DEC-562's and DEC-740's reading of `def io.x` and `class <<
+io` as the object's applies at the top of a file too — a script, a rake
+file, an initializer — not only inside a class or module. A `def` in a
+top-level block keeps its own rule (DEC-311's `TOP_LEVEL_BLOCK`). Such a
+method's owner is the top level, so DEC-311's rule — a top-level method is
+Object's private one, which an explicit receiver cannot call — would
+exclude `io.x`, its only kind of call: `--refs` skips that rule for a
+method defined on an object and tiers by DEC-796 instead. Testbed 797.
+
+**Why.** `top_write`, defined in `class << io` and called as
+`io.top_write`, was `unreferenced`, `clear`; `helper_top`, called from its
+body, "no call names it", though `--def` placed the call on it.
+
+**No store change.** The mark is not stored (DEC-562).

@@ -1892,18 +1892,21 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         // (DEC-104).
         if !singleton && let Some(module) = self.hook_module() {
             def.nesting = vec![format!("::{module}")];
-        } else if !self.nesting.is_empty() {
-            // Not the scope's own when a block may run as another object, or
-            // when it is written on one (DEC-562).
+        } else {
+            // Not the scope's own when it is written on an object, at the top
+            // level too (DEC-797), or when a block in a scope may run as
+            // another object (DEC-562).
+            let in_block = || {
+                self.open_blocks
+                    .last()
+                    .copied()
+                    .flatten()
+                    .filter(|_| !self.nesting.is_empty())
+                    .map(crate::core::Unsettled::Block)
+            };
             def.unsettled = match receiver.as_ref() {
                 Some(r) => self.object_held(r),
-                None => object.clone().or_else(|| {
-                    self.open_blocks
-                        .last()
-                        .copied()
-                        .flatten()
-                        .map(crate::core::Unsettled::Block)
-                }),
+                None => object.clone().or_else(in_block),
             };
         }
 
