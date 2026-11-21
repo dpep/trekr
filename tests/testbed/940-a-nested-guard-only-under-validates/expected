@@ -3,5 +3,7 @@
 # so `bang_skip?` was unreferenced; `validates_with`'s and
 # `validates_length_of`'s hashes are the validator's data, and reading an
 # `if:` in them made `rule_data` and `tokenizer_data` convention-only, `clear`,
-# hiding two dead methods.
+# hiding two dead methods. They are unreferenced, lowered by the
+# symbol trekr does not read.
 dead app/models/widget.rb Widget=unreferenced
+dead app/models/widget.rb Widget#bang_skip?=convention-only Widget#rule_data=unreferenced~read Widget#tokenizer_data=unreferenced~read

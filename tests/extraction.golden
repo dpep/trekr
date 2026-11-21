@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 76
+version 77
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -1049,7 +1049,7 @@ ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/lib/widget.rb d7f45
 ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/spec/gadget_spec.rb e4deed07336e2573
 ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/spec/gizmo_spec.rb 83e222ffbcdb3ce1
 ruby tests/testbed/930-a-test-only-methods-spec-goes-with-it/spec/widget_spec.rb 5f058f1b6282999e
-ruby tests/testbed/940-a-nested-guard-only-under-validates/app/models/widget.rb 09972af63bf13807
+ruby tests/testbed/940-a-nested-guard-only-under-validates/app/models/widget.rb 4d9f40388568ca28
 ruby tests/testbed/940-a-nested-guard-only-under-validates/lib/active_model.rb 66cad22098c2af7c
 ruby tests/testbed/941-class-shift-onto-a-local/app/printer.rb 01e314442ce8b66b
 ruby tests/testbed/942-a-call-written-as-an-assignment-target/app/a.rb f427ea771ada52bd

@@ -6142,9 +6142,9 @@ impl<'pr> Extractor<'_> {
                 continue;
             }
             // `validates :x, exclusion: { unless: :skip? }`: each validator's
-            // options take a guard, and numericality's bounds a method
-            // (DEC-711).
-            if macro_name == "validates" || macro_name.starts_with("validates_") {
+            // options take a guard, and numericality's bounds a method. Only
+            // `validates` and `validates!` merge that hash (DEC-711).
+            if matches!(macro_name.as_str(), "validates" | "validates!") {
                 let Some(hash) = value.as_hash_node() else {
                     continue;
                 };
