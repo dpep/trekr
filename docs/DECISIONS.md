@@ -17836,6 +17836,19 @@ as "resolves to a different owner"; `--dead` graded the row `override`,
 the row is `single-caller`, one possible call, where it was an `override`
 no call names.
 
+**Measured.** `--dead app lib` on discourse and mastodon did not move
+(items 825–828 together, against 4fd21603), nor did 30 random `--refs` and
+`--def` positions in each. The checkouts' two methods defined on an object,
+discourse's `def e.cause` and `def e.backtrace` on a rescued `e` (typed
+StandardError), did: on `backtrace`, 86 calls on a receiver typed
+StandardError or Exception went from excluded, "resolves to a different
+owner", to possible, since any of them may be that one exception — the
+rule judges by class, as DEC-796 does, and cannot tell two exceptions
+apart. A call on a subclass (`MiniRacer::RuntimeError`) stays excluded, as
+under DEC-796: `may_be` reads the object's class and its ancestors, which
+is exact for `X.new` but not for a rescued `e`, whose StandardError may be
+any subclass's instance. Not changed here.
+
 **Not done: `--def` at `w.label`.** It still answers Widget#label,
 `resolved`, and `--refs` on Widget#label confirms the call. Answering
 `ambiguous` with both needs the ladder to know the receiver may hold that
