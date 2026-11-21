@@ -181,6 +181,7 @@
 815-a-cascade-wants-no-other-way-in 1fe91da3fe238386
 816-two-defs-on-one-line-are-told-apart-or-not-guessed efcb97a063cc075e
 825-a-block-in-an-objects-method-may-change-self 4770a7b9e3cfb3cb
+826-an-instances-method-is-not-its-classs 21fe6b973791f231
 885-a-second-bundles-manifest-is-refused 6dd2e5b026ee19d8
 900-a-callback-symbol-of-a-commit-job-or-test-hook-is-a-reference 4c8bf98dd1dd911c
 901-a-route-names-its-action-by-keyword-or-hash-rocket cc89def7b9d15b76

@@ -3719,7 +3719,7 @@ fn gather_constructions(
                 query,
                 target,
                 Some(&construct),
-                false,
+                &[],
             );
             if reference.tier != refs::Tier::Excluded && reference.unplaced().is_none() {
                 keep(&mut counts, &mut found, reference);

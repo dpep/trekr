@@ -1,0 +1,6 @@
+# `def w.extra` on `w = Widget.new` is a method of one Widget instance:
+# `Widget.extra`, a call on the class itself, cannot reach it. DEC-796's
+# rule asked only whether the receiver's class was Widget or an ancestor,
+# not which side, and counted the class's call as possible.
+refs app/a.rb:7:11 confirmed=0 possible=1 excluded=1 sites=app/a.rb:15:12
+dead app/a.rb Widget#extra=single-caller~Widget

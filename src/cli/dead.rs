@@ -888,43 +888,14 @@ fn dead_in(
         // it alive no more than a grep would, so they are weighed as a caveat
         // instead (DEC-541, DEC-630).
         let unplaced_sites = unplaced_caveat(&mut found, &mut counts, constructor);
-        // A `def` its scope may not own: a call of its name whose receiver
-        // has no such method may be on the object it is defined on (DEC-562).
+        // A `def` its scope may not own (DEC-562). A call of its name whose
+        // receiver may be the object was counted above (DEC-796).
         let defined_on = crate::resolve::defined_on(&tree, facts, def, file);
         // An `initialize` in a block whose `self` is not known is an
         // anonymous class's (`Class.new do`), built through whatever holds
         // it: nothing typed can say it is unused.
         if constructor && defined_on.is_some() {
             return Ok(None);
-        }
-        if let Some(on) = &defined_on {
-            let (all, _) = gather_refs(
-                &tree,
-                store,
-                root,
-                &root_str,
-                &query,
-                Some(&owner),
-                true,
-                Some(parsed),
-                None,
-            )
-            .unwrap_or_default();
-            let may_be = |class: &str| match on {
-                DefinedOn::Object(of) => class == of || tree.inherits(of, class),
-                DefinedOn::Unknown => true,
-            };
-            for mut call in all
-                .into_iter()
-                .filter(|r| r.ruling == Some(refs::Ruling::NoSuchMethod))
-                .filter(|r| r.receiver_type.as_deref().is_none_or(may_be))
-            {
-                call.tier = refs::Tier::Possible;
-                call.ruling = None;
-                call.why = "the method is defined on an object the receiver may be";
-                counts.possible += 1;
-                found.push(call);
-            }
         }
         // A symbol a send is handed runs the method: a call, where a
         // macro's symbol is only its name (DEC-664).

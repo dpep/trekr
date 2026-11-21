@@ -6,7 +6,7 @@
 use super::members::{CheckoutFiles, includer_reference};
 use crate::core::{Call, Facts};
 use crate::resolve::DefinedOn;
-use crate::resolve::refs::{self, Query, Reference, Ruling, Tier};
+use crate::resolve::refs::{self, Query, Reference, Tier};
 use crate::store::{Ref, Store};
 use crate::tree::Tree;
 use std::collections::HashMap;
@@ -158,19 +158,7 @@ pub(crate) fn tier(
     on: &[DefinedOn],
     partial: bool,
 ) -> Reference {
-    let on_object = !on.is_empty();
-    let mut reference =
-        refs::tier_call_with(tree, facts, call, path, query, target, None, on_object);
-    let may_be = |class: &str| on.iter().any(|on| on.may_be(tree, class));
-    if reference.ruling == Some(Ruling::NoSuchMethod)
-        && !on.is_empty()
-        && reference.receiver_type.as_deref().is_none_or(may_be)
-    {
-        reference.tier = Tier::Possible;
-        reference.ruling = None;
-        reference.why = "the method is defined on an object the receiver may be";
-        reference.proximity = 1;
-    }
+    let mut reference = refs::tier_call_with(tree, facts, call, path, query, target, None, on);
     if partial {
         reference.unrule();
     }

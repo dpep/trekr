@@ -17798,3 +17798,21 @@ on Object, and `--dead` graded both `unreferenced`, `clear`.
 
 **`--def` is unchanged.** At such a call it already answered `residue`
 with the name's candidates, as at the same call in any other method.
+
+## DEC-826 — An instance's method is no call of its class's
+
+**Decided.** DEC-796's rule asks which side a receiver is on, too: a
+method defined on one instance (`w = Widget.new; def w.extra`) may be run
+by a receiver typed as that class's instances or an ancestor's, never by
+the class itself, so `Widget.extra` stays excluded, "no such method".
+`DefinedOn::may_be` takes the receiver's side. The promotion now happens in
+the ladder (`resolve::refs`), where the receiver is in hand, instead of
+after it on the `Reference`, which carries only the type's name.
+Testbed 826.
+
+**`--dead`'s copy of the rule is deleted.** Its DEC-562 block gathered
+every call again and promoted the "no such method" ones, the side ignored
+the same way. Since DEC-796 the gather it ran after had promoted them
+already: removed on its own at 4fd21603, the testbed (`tests/dead.golden`
+byte for byte) and `--dead app lib` on discourse and mastodon were
+unchanged. Left in, it would have put `Widget.extra` back.

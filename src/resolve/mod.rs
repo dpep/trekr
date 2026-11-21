@@ -1576,10 +1576,11 @@ pub(crate) enum DefinedOn {
 }
 
 impl DefinedOn {
-    /// May a receiver of this class be the object?
-    pub(crate) fn may_be(&self, tree: &Tree, class: &str) -> bool {
+    /// May a receiver of this class be the object? An instance's method is
+    /// never its class's own (`singleton`).
+    pub(crate) fn may_be(&self, tree: &Tree, class: &str, singleton: bool) -> bool {
         match self {
-            DefinedOn::Object(of) => class == of || tree.inherits(of, class),
+            DefinedOn::Object(of) => !singleton && (class == of || tree.inherits(of, class)),
             DefinedOn::Unknown => true,
         }
     }

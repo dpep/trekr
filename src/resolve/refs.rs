@@ -16,6 +16,7 @@
 //!   not fit. Not listed, but **counted**: that count is the difference
 //!   between this and a grep, so it is reported rather than quietly enjoyed.
 
+use super::DefinedOn;
 use crate::core::{Call, Facts};
 use crate::tree::{Site, Tree};
 use serde::Serialize;
@@ -98,6 +99,7 @@ pub(crate) struct Reference {
 
 const SUPER_UNPLACED: &str = "`super` from a method whose owner the index cannot place";
 const SUPER_UNINDEXED: &str = "`super` from a class whose ancestors are not fully indexed";
+const ON_AN_OBJECT: &str = "the method is defined on an object the receiver may be";
 const BY_SYMBOL: &str = "named by a symbol handed to a macro — invoked by name, receiver unknown";
 const IN_A_TEMPLATE: &str =
     "a bare call in a template whose `self` trekr cannot name — any class's method of this name";
@@ -322,12 +324,13 @@ pub(crate) fn tier_call(
     query: &Query,
     target: Option<&str>,
 ) -> Reference {
-    tier_call_with(tree, facts, call, path, query, target, None, false)
+    tier_call_with(tree, facts, call, path, query, target, None, &[])
 }
 
 /// `tier_call`, given what an `X.new` site constructs when the caller has
 /// already worked it out (`--dead` asks about every `initialize`), and
-/// whether the queried method is defined on an object (DEC-796).
+/// what the queried method's `def`s their scope does not own are defined
+/// on (DEC-796).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn tier_call_with(
     tree: &Tree,
@@ -337,10 +340,10 @@ pub(crate) fn tier_call_with(
     query: &Query,
     target: Option<&str>,
     made: Option<&Construct>,
-    on_object: bool,
+    on: &[DefinedOn],
 ) -> Reference {
     let mut reference = match made {
-        _ if call.name == query.name => tier(tree, facts, call, path, query, target, on_object),
+        _ if call.name == query.name => tier(tree, facts, call, path, query, target, on),
         _ if let Some(predicate) = matcher_predicate(call, query) => {
             tier_matcher(tree, facts, call, &predicate, path, query, target)
         }
@@ -397,7 +400,7 @@ fn tier_matcher(
                 from: None,
                 called_as: None,
             },
-            None => tier(tree, facts, predicate, path, query, target, false),
+            None => tier(tree, facts, predicate, path, query, target, &[]),
         };
     };
     Reference {
@@ -442,7 +445,7 @@ fn tier(
     path: &str,
     query: &Query,
     target: Option<&str>,
-    on_object: bool,
+    on: &[DefinedOn],
 ) -> Reference {
     let shape = call.recv.as_str();
     let here = |tier, receiver_type, owner, why, proximity, ruling| Reference {
@@ -468,7 +471,7 @@ fn tier(
     // places it on no class, so an implicit call whose receiver has no
     // method of the name is the one that may run it. Not one written on an
     // object at the top level (`def io.x`), which is that object's (DEC-797).
-    if target == Some("") && !on_object {
+    if target == Some("") && on.is_empty() {
         // A call on `self` in a method defined on an object is no explicit
         // receiver, though it is typed as the object's (DEC-795).
         let explicit = !matches!(
@@ -870,6 +873,21 @@ fn tier(
             1,
             None,
         ),
+        // The queried method is defined on an object, which this receiver
+        // may be though its class has no such method (DEC-796).
+        None if on
+            .iter()
+            .any(|on| on.may_be(tree, &receiver.fqn, receiver.singleton)) =>
+        {
+            here(
+                Tier::Possible,
+                Some(receiver.fqn.clone()),
+                None,
+                ON_AN_OBJECT,
+                1,
+                None,
+            )
+        }
         // The type is settled and Ruby finds nothing — unless the chain was cut
         // short, in which case the missing ancestor could be the target.
         None if tree.ancestors(&receiver.fqn).unresolved.is_empty() => here(

@@ -114,7 +114,8 @@
   w.extra`, `--refs` on `extra` excluded `w.extra` as "no such method" on
   Widget, while `--dead` counted it. A call whose receiver may be the
   object is `possible`, in `--refs` and the editor's Find References, as
-  `--dead` grades it; one on another class is still excluded.
+  `--dead` grades it; one on another class is still excluded, and so is
+  one on the class itself (`Widget.extra`) for an instance's method.
 - **`--dead` reads `def io.x` and `class << io` at the top of a script
   as the object's**, as it does in a class: there `top_write`, called as
   `io.top_write`, was `unreferenced`, `clear`, and so was a method only its
