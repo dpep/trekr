@@ -325,10 +325,15 @@ with `group`) and shared groups (`kind: shared_group`); then every class,
 module and constant (`kind: class|module|constant`) no constant reference
 resolves to.
 
-Measured against a year of discourse's history, `unreferenced` candidates
-were deleted 19.8 % of the time against a 19.0 % base rate — no lift
-([BASELINE](BASELINE.md#dead-code-candidates-validated-against-git-history-session-36)). Hence the grading, and why trekr never says
-"dead".
+What a grade is worth was measured by reading rows by hand: an
+`unreferenced`, `clear` row was truly unused 79 % of the time on mastodon's
+app code and 89 % on discourse app rows held out from the rules, but less
+on `lib/` (DEC-372, [below](#confidence-and-caveats)); a `test-only`, `clear` method was
+only tests' 21 times in 26 (DEC-652). Git history is no stand-in: discourse
+deleted 2.5 % of its methods in a year, and no tool's candidates — trekr's,
+Spoom's or sorbet-deadcode's — are told apart from that base rate
+([COMPARISON](COMPARISON.md#--dead-against-spoom-and-sorbet-deadcode--discourse-by-git-history)).
+Hence the grading, and why trekr never says "dead".
 
 ### Tiers
 

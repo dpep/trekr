@@ -1541,6 +1541,11 @@ weigh it.
 
 ### Measured, session 36 — the bar was failed, and the tool ships anyway as disclosure
 
+*Not reproduced (2026-11-20):* the 19.0 % base rate below came out 1.0–8.0 %
+in later runs of the same window (BASELINE, "A candidate's age does not
+predict its fate"; COMPARISON's `--dead` table). What `--dead`'s grades are
+worth is measured on hand-checked rows instead (DEC-372, DEC-652).
+
 Predicted 60–75 % precision on `unreferenced`; measured **19.8 %** against a
 **19.0 % base rate** for any method in the same scope. A lift of **1.04×**,
 which is no signal. The reverses-if above is therefore in force: `--dead` ships,

@@ -13,8 +13,11 @@ For the current state, go elsewhere:
 - The gold set itself, and how a site is scored:
   [Runtime truth](#runtime-truth-the-tracepoint-gold-set-session-12); run
   `script/gold.py`.
-- `--dead` against the repo's history:
-  [Dead-code candidates](#dead-code-candidates-validated-against-git-history-session-36).
+- `--dead` against the repo's history: COMPARISON's
+  [table against Spoom and sorbet-deadcode](COMPARISON.md#--dead-against-spoom-and-sorbet-deadcode--discourse-by-git-history),
+  which `script/dead_compare.py` reproduces. Session 36's
+  [first run](#dead-code-candidates-validated-against-git-history-session-36)
+  does not reproduce; do not quote its rates.
 
 ## The first head-to-head: trekr vs ruby-lsp (2026-08-25)
 
@@ -1559,6 +1562,13 @@ makes them typing and ranking problems rather than coverage ones.
 
 
 ## Dead-code candidates, validated against git history (session 36)
+
+*Not reproduced (2026-11-20):* its 19.0 % base rate came out 1.0–8.0 % in
+later runs of the same window
+([below](#a-candidates-age-does-not-predict-its-fate-2026-11-20),
+[COMPARISON](COMPARISON.md#--dead-against-spoom-and-sorbet-deadcode--discourse-by-git-history)),
+and its truth query was not recorded. Kept as it was run; its rates should
+not be quoted.
 
 DEC-037 predicted **60–75 %** precision for the `unreferenced` tier and set the
 bar at 70 %. Measured, and the number that matters is not the one predicted.
