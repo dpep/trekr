@@ -17,6 +17,9 @@
 //! `foo.` becomes `foo.trekr_…`, a call the extractor records with its
 //! receiver, nesting and singleton-ness — exactly what the ladder needs.
 
+// Scans Ruby as text: a str slice must say why its offset is a char boundary (DEC-835).
+#![deny(clippy::string_slice)]
+
 use super::handlers;
 use super::state::Session;
 use crate::core::text::trailing_run;
@@ -150,6 +153,10 @@ impl Members {
 /// in it. Past this the list is every class's, and says it is incomplete.
 const MIXERS_OFFERED: usize = 4;
 
+#[expect(
+    clippy::string_slice,
+    reason = "offset_of answers a char boundary, and a run's start or end is one"
+)]
 pub(crate) fn completion(
     session: &mut Session,
     params: CompletionParams,
@@ -354,6 +361,10 @@ pub(crate) fn resolve(
 /// Read the context off the text before the cursor: where the word being
 /// typed starts, the word so far, and what precedes it. `None` where nothing
 /// should be offered — a comment, a string, a symbol.
+#[expect(
+    clippy::string_slice,
+    reason = "offset_of answers a char boundary, and a run's start or end is one"
+)]
 fn context(text: &str, offset: usize) -> Option<(usize, String, Context)> {
     let before = &text[..offset];
     let line_start = before.rfind('\n').map_or(0, |n| n + 1);

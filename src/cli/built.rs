@@ -12,6 +12,9 @@
 //! Evidence of a way in, never of a caller, so a row it touches keeps its
 //! tier and is graded `lower`.
 
+// Scans Ruby as text: a str slice must say why its offset is a char boundary (DEC-835).
+#![deny(clippy::string_slice)]
+
 use super::dead_consts::{in_db, in_tests};
 use crate::core::ruby::BY_NAME;
 use crate::core::{SentName, SentTo};
@@ -374,6 +377,10 @@ fn unrecorded(name: &SentName) -> Option<String> {
 /// interpolation is an attribute's derived name far more often than a
 /// method's (`:"#{field}_count"`, `:"#{period}_score"`), and a short prefix
 /// would make nearly every name a candidate, as DEC-163 found.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are a found token's end, or a length read_shape counts by chars"
+)]
 fn interpolated_symbols(line: &str) -> Vec<String> {
     let mut shapes = Vec::new();
     let mut rest = line;
@@ -440,6 +447,10 @@ fn read_shape(body: &str) -> (Option<String>, usize) {
 }
 
 /// The constants a line lists the instance methods of: `Tools.instance_methods`.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are where an ASCII token was found, or just past it"
+)]
 fn listings(line: &str) -> Vec<(String, String)> {
     let mut found = Vec::new();
     let mut rest = line;

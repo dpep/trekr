@@ -18428,7 +18428,14 @@ that only compares ASCII bytes. A run helper would not make it safer.
 
 **Guard.** The testbed runs `--dead .` on every case and fails on any
 trekr panic, and case 999 puts a multi-byte identifier before what each
-text reader looks for.
+text reader looks for. The files that scan Ruby as text (`dead_consts/
+named.rs` and `ways.rs`, `views.rs`, `built.rs`, `dead_gems.rs`,
+`conventions.rs`, `routes.rs`, `config.rs`, and `serve/complete.rs`,
+`miss.rs`, `doc.rs`) deny `clippy::string_slice`: a str slice there sits in
+a function whose `#[expect]` says why its offsets are char boundaries, or
+is written as `split_once`, `strip_prefix` or a run instead. Not crate-wide:
+most of the crate's 200-odd slices cut at an ASCII delimiter of a path or a
+key, and a deny there buys churn, not safety.
 
 Test: testbed 999; `core::text`'s unit tests.
 

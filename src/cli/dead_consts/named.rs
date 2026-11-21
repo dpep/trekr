@@ -6,6 +6,9 @@
 //! Not a parse. Each find is evidence that a name is looked up at runtime,
 //! never a resolved reference.
 
+// Scans Ruby as text: a str slice must say why its offset is a char boundary (DEC-835).
+#![deny(clippy::string_slice)]
+
 use super::super::built::{TEMPLATES, Texts};
 use crate::core::text::{is_ident, trailing_run};
 use crate::core::{RecvShape, RecvValue};
@@ -216,6 +219,10 @@ impl Named {
 
     /// `value::NAME`, and `const_get(:NAME)`: a constant read where the
     /// namespace is a value.
+    #[expect(
+        clippy::string_slice,
+        reason = "offsets are where an ASCII token was found, or just past it"
+    )]
     fn read_dynamic(&mut self, path: &str, line_no: u32, line: &str) {
         let bytes = line.as_bytes();
         let mut rest = 0;
@@ -291,6 +298,10 @@ impl Named {
         }
     }
 
+    #[expect(
+        clippy::string_slice,
+        reason = "offsets are ASCII quotes a byte scan stopped at, or a token's match"
+    )]
     fn read_ruby(&mut self, path: &str, text: &str) {
         let routes = path.starts_with("config/routes") || path.ends_with("/config/routes.rb");
         // `steps = Steps`, so that `steps.constants` lists `Steps`'.
@@ -524,11 +535,8 @@ fn inflects(line: &str, constant: &str) -> bool {
 
 /// The identifier starting at `at`.
 fn word_at(line: &str, at: usize) -> &str {
-    let rest = &line[at..];
-    let end = rest
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .unwrap_or(rest.len());
-    &rest[..end]
+    let rest = line.get(at..).unwrap_or_default();
+    crate::core::text::leading_run(rest, |c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// `Widget`, `::Admin::Widget`: a capitalised name, and segments of one.
@@ -555,6 +563,10 @@ fn is_route_path(text: &str) -> bool {
 /// The shape a constantized string spells, `*` for each interpolation: none
 /// unless what is written names three characters of a constant, or a whole
 /// namespace (`UI::*`), which bounds it however short.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are where an ASCII token was found, or just past it"
+)]
 fn shape_of(content: &str) -> Option<String> {
     let mut shape = String::new();
     let mut rest = content;
@@ -582,6 +594,10 @@ fn shape_of(content: &str) -> Option<String> {
 ///
 /// A name built at runtime (`has_one :"#{name.underscore}_search_data"`)
 /// names the shape of a class instead: `*SearchData`.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are where an ASCII token was found, or just past it"
+)]
 fn association(line: &str) -> Option<Named_> {
     let (plural, rest) = [
         ("has_and_belongs_to_many", true),
@@ -629,6 +645,10 @@ enum Named_ {
 /// the namespaces a line looks a constant up in by a name it computes.
 /// Ruby's lookup falls back to `Object`; reading it as the namespace's alone
 /// is a measured heuristic (DEC-654).
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are where an ASCII token was found, or just past it"
+)]
 fn computed_const_gets(line: &str) -> Vec<String> {
     let line = desugared(line);
     let mut found = Vec::new();
@@ -695,6 +715,10 @@ fn desugared(line: &str) -> std::borrow::Cow<'_, str> {
 /// The heredocs a line opens (`<<~SQL`, `<<-'RUBY'`), each with its
 /// terminator and whether its body is code: one handed to an eval
 /// (`class_eval <<~RUBY`) is, any other is a string's text.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are where an ASCII token was found, or just past it"
+)]
 fn heredoc_openers(line: &str) -> Vec<(&str, bool)> {
     let (spans, code_end) = string_spans(line);
     let code = line.contains("eval");
@@ -756,6 +780,10 @@ fn string_spans(line: &str) -> (Vec<(usize, usize)>, usize) {
 /// `"Jobs::#{type}".constantize` has a shape, `Regions.const_get(name)` a
 /// namespace, and `constants.map { |c| const_get(c) }` lists one: each is
 /// read for what it bounds, not here.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are a token's match, or ASCII quotes and dots beside it"
+)]
 fn unscoped_lookup(line: &str) -> Option<String> {
     let line = desugared(line);
     let line = line.as_ref();
@@ -866,6 +894,10 @@ fn unscoped_lookup(line: &str) -> Option<String> {
 /// with it (`Some(Some(base))`, as `Base.subclasses` does), and any class
 /// when it names none (`Some(None)`). `each_object(Widget)` lists instances,
 /// no class: `None`.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are where an ASCII token was found, or just past it"
+)]
 fn object_space_listing(line: &str) -> Option<Option<String>> {
     let (spans, code_end) = string_spans(line);
     let call = "ObjectSpace.each_object";
@@ -907,6 +939,10 @@ fn object_space_listing(line: &str) -> Option<Option<String>> {
 /// `Widget.descendants`, `Widget.constants`: the constants a line sends one
 /// of `calls` to, which list what they hold or what inherits them.
 /// `T.unsafe(Widget)` hands back `Widget`, unchecked.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are where an ASCII token was found, or just past it"
+)]
 fn listings(line: &str, calls: &[&str]) -> Vec<String> {
     let mut found = Vec::new();
     for call in calls {

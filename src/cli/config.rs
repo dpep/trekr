@@ -6,6 +6,9 @@
 //! that code elsewhere may hand to `public_send` or `constantize`. Evidence
 //! enough for a caveat, never for a caller.
 
+// Scans Ruby as text: a str slice must say why its offset is a char boundary (DEC-835).
+#![deny(clippy::string_slice)]
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;

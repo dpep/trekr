@@ -10,6 +10,9 @@
 //! Written after the answer is on the wire, never ahead of it: the token is
 //! read then, from the document the request already loaded.
 
+// Scans Ruby as text: a str slice must say why its offset is a char boundary (DEC-835).
+#![deny(clippy::string_slice)]
+
 use crate::core::text::{leading_run, trailing_run};
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -69,6 +72,10 @@ const TOKEN_MAX: usize = 64;
 /// The identifier under a position, with the sigils and suffixes that are part
 /// of a Ruby name (`@ivar`, `$global`, `valid?`, `save!`, `Foo::Bar`). Empty
 /// when the cursor is on punctuation or whitespace — itself worth knowing.
+#[expect(
+    clippy::string_slice,
+    reason = "offset_of answers a char boundary, and a run's start or end is one"
+)]
 pub(crate) fn token_at(text: &str, position: lsp_types::Position) -> String {
     let offset = super::convert::offset_of(text, position);
     let line_start = text[..offset].rfind('\n').map_or(0, |n| n + 1);

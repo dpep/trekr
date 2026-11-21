@@ -6,6 +6,9 @@
 //! number, so the caller decides which text is current and which line the
 //! definition is on — and is the one who must refuse when it cannot be sure.
 
+// Scans Ruby as text: a str slice must say why its offset is a char boundary (DEC-835).
+#![deny(clippy::string_slice)]
+
 use crate::core::{Def, Kind, ParamKind};
 
 /// A doc comment, cut down to what a hover has room for.
@@ -301,6 +304,10 @@ fn collapse(text: &str) -> String {
 }
 
 /// At most `max` bytes, cut at a word boundary, marked when cut.
+#[expect(
+    clippy::string_slice,
+    reason = "end is walked back to a char boundary, and rfind answers one"
+)]
 fn cap(text: &str, max: usize) -> String {
     if text.len() <= max {
         return text.to_string();
@@ -518,6 +525,10 @@ fn first_line(text: &str) -> &str {
 
 /// `(a, b = 1,\n  key: nil)` → `(a, b = 1, key: nil)`: the parenthesized
 /// list, comments dropped and whitespace collapsed, capped.
+#[expect(
+    clippy::string_slice,
+    reason = "i is char_indices' index of a one-byte bracket"
+)]
 fn written_params(after: &str) -> Option<String> {
     if !after.starts_with('(') {
         return None;
@@ -601,6 +612,7 @@ fn constant_value(value: &str) -> String {
 /// A line without its trailing comment: the text before a `#` that is not
 /// inside a string. Deliberately simple, as `complete::in_comment_or_string`
 /// is — a miss shows a comment in a signature, nothing worse.
+#[expect(clippy::string_slice, reason = "offsets come from char_indices")]
 fn code_part(line: &str) -> &str {
     let mut quote: Option<char> = None;
     let mut escaped = false;

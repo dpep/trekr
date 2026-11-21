@@ -2,6 +2,9 @@
 //! keyed on the library's own code being in the tree, so a version that does
 //! not have the convention does not claim it (DEC-362).
 
+// Scans Ruby as text: a str slice must say why its offset is a char boundary (DEC-835).
+#![deny(clippy::string_slice)]
+
 use std::collections::{HashMap, HashSet};
 
 use crate::tree::Tree;
@@ -359,13 +362,13 @@ fn first_computed_send(path: &str) -> Option<u32> {
             .iter()
             .map(|send| format!("{send}("))
             .find_map(|call| {
-                let at = line.find(&call)?;
-                let before = line[..at].trim_end_matches("self.");
+                let (before, arg) = line.split_once(call.as_str())?;
+                let before = before.trim_end_matches("self.");
                 let on_self = before
                     .chars()
                     .last()
                     .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '.' || c == ':'));
-                let arg = line[at + call.len()..].trim_start();
+                let arg = arg.trim_start();
                 let computed = arg.starts_with(|c: char| c.is_ascii_lowercase() || c == '@');
                 (on_self && computed).then_some(n as u32 + 1)
             })
@@ -512,7 +515,7 @@ fn resource_of(controller: &str) -> Option<String> {
         })
         .collect();
     let last = snake.rsplit('_').next()?;
-    let stem = &snake[..snake.len() - last.len()];
+    let stem = snake.strip_suffix(last)?;
     Some(crate::extract::camelize(&format!(
         "{stem}{}",
         crate::inflect::singular(last)
@@ -571,8 +574,8 @@ impl Source {
     /// The first argument of `call`, as written on its line.
     fn argument(&self, call: &crate::core::Call) -> Option<&str> {
         let line = self.line(call.pos.line);
-        let at = line.find(call.name.as_str())?;
-        let arg = line[at + call.name.len()..]
+        let (_, arg) = line.split_once(call.name.as_str())?;
+        let arg = arg
             .trim_start_matches(['(', ' '])
             .split([',', ')', '}'])
             .next()?
@@ -626,12 +629,12 @@ impl Source {
                 callbacks: symbols_in(callbacks, false),
                 // A list it cannot read (a constant) may name the action.
                 only: options
-                    .find("only:")
-                    .map(|i| actions_in(&options[i + 5..]))
+                    .split_once("only:")
+                    .map(|(_, listed)| actions_in(listed))
                     .filter(|only| !only.is_empty()),
                 except: options
-                    .find("except:")
-                    .map(|i| actions_in(&options[i + 7..]))
+                    .split_once("except:")
+                    .map(|(_, listed)| actions_in(listed))
                     .unwrap_or_default(),
                 lines: first as u32 + 1..=at as u32 + 1,
             });
@@ -687,10 +690,9 @@ fn constant_at(code: &str) -> Option<String> {
     if !code.starts_with(|c: char| c.is_ascii_uppercase()) {
         return None;
     }
-    let end = code
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
-        .unwrap_or(code.len());
-    Some(code[..end].trim_end_matches(':').to_string())
+    let constant =
+        crate::core::text::leading_run(code, |c| c.is_ascii_alphanumeric() || c == '_' || c == ':');
+    Some(constant.trim_end_matches(':').to_string())
 }
 
 /// What an `only:` or `except:` lists: `[:a, :b]`, `%i[a b]` or `:a`.

@@ -10,6 +10,9 @@
 //! `:controller` segment — is listed, so a row can say routes were not all
 //! read rather than that none reaches it.
 
+// Scans Ruby as text: a str slice must say why its offset is a char boundary (DEC-835).
+#![deny(clippy::string_slice)]
+
 use crate::extract::line_index::LineIndex;
 use crate::inflect::plural;
 use ruby_prism::{Node, Visit};

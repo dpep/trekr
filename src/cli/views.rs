@@ -7,6 +7,9 @@
 //! for a caller. ERB, Haml and RABL templates are not among them: the index
 //! reads those, and their calls are call sites (DEC-520, DEC-658).
 
+// Scans Ruby as text: a str slice must say why its offset is a char boundary (DEC-835).
+#![deny(clippy::string_slice)]
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
@@ -138,6 +141,10 @@ fn script_names(text: &str) -> Vec<String> {
 
 /// A script's lines of code: no comment, and no heredoc's text, which is
 /// prose (a `--help` message) far more often than Ruby.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are where an ASCII token was found, or just past it"
+)]
 fn script_code(text: &str) -> Vec<&str> {
     let mut code = Vec::new();
     let mut heredoc: Option<String> = None;
@@ -163,6 +170,10 @@ fn script_code(text: &str) -> Vec<&str> {
 }
 
 /// A line up to a `#` comment outside its strings (`#{…}` is no comment).
+#[expect(
+    clippy::string_slice,
+    reason = "a byte scan stops only at ASCII bytes, which are char boundaries"
+)]
 fn uncommented(line: &str) -> &str {
     let bytes = line.as_bytes();
     let mut quote = None;
@@ -182,6 +193,10 @@ fn uncommented(line: &str) -> &str {
 
 /// The constant paths in a line of a template's Ruby, outside its strings:
 /// `Widget`, `Admin::Widget::LIMIT`, `::Widget`.
+#[expect(
+    clippy::string_slice,
+    reason = "a byte scan stops only at ASCII bytes, which are char boundaries"
+)]
 pub(super) fn constant_paths(ruby: &str) -> Vec<String> {
     let mut found = Vec::new();
     let bytes = ruby.as_bytes();
@@ -249,6 +264,10 @@ fn template_text(bytes: &[u8]) -> Option<&str> {
 /// follows a tag's `=`, `{` or `(`, every `#{…}`, and the lines a Ruby line
 /// ending in a comma continues onto. Not a `-#` comment (Haml's, from when
 /// this read Haml too).
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are where an ASCII token was found, or just past it"
+)]
 fn indented_ruby(text: &str) -> String {
     let mut ruby = String::new();
     let mut continued = false;
@@ -293,6 +312,7 @@ fn indented_ruby(text: &str) -> String {
 /// The identifiers in some Ruby, with a trailing `?` or `!`. A string's
 /// text is no name — `t(".edit")` is an i18n key — but a double-quoted
 /// string's `#{…}` is Ruby.
+#[expect(clippy::string_slice, reason = "offsets come from char_indices")]
 fn words(ruby: &str) -> Vec<String> {
     let mut found = Vec::new();
     let mut chars = ruby.char_indices().peekable();

@@ -9,6 +9,9 @@
 //! configures the app at boot. What was found is the tier; what might still
 //! reach it is the caveat. trekr never says a gem is unused.
 
+// Scans Ruby as text: a str slice must say why its offset is a char boundary (DEC-835).
+#![deny(clippy::string_slice)]
+
 use super::dead::{DeadTier, Grade};
 use super::dead_consts::in_tests;
 use super::*;
@@ -1899,6 +1902,10 @@ fn slim_ruby(text: &str) -> String {
 
 /// One Slim line's Ruby, and the block it opens, split as Slim 5's parser
 /// splits it (`parse_line_indicators`).
+#[expect(
+    clippy::string_slice,
+    reason = "past a first character matched as ASCII"
+)]
 fn slim_line(body: &str) -> (String, Option<SlimBlock>) {
     // An embedded engine, its first line written on its own: `ruby: x = 1`.
     if let Some((engine, first)) = body.split_once(':')
@@ -1968,6 +1975,10 @@ fn slim_attr_name(text: &str) -> usize {
 /// A tag line's Ruby: `p = x` outputs `x`; `a href=url_for(x)` computes an
 /// attribute; `.card*x.attrs` splats one; `a href="…#{x}"` interpolates;
 /// text after the tag does not.
+#[expect(
+    clippy::string_slice,
+    reason = "lengths are counted by char_indices or found by find"
+)]
 fn slim_tag(line: &str) -> String {
     let mut ruby = Vec::new();
     let mut rest = &line[slim_tag_name(line)..];
@@ -2080,6 +2091,10 @@ fn value_end(value: &str) -> usize {
 }
 
 /// Each `#{…}` in text, its Ruby joined by spaces.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are a found token's end, or from char_indices"
+)]
 fn interpolations(text: &str) -> String {
     let mut found = Vec::new();
     let mut rest = text;
@@ -2105,6 +2120,10 @@ fn interpolations(text: &str) -> String {
 
 /// A text's words, by line: each constant path (`Diffy::Diff`), method
 /// name (`paginate`, `valid?`), and `require <path>` for a literal require.
+#[expect(
+    clippy::string_slice,
+    reason = "a byte scan stops only at ASCII bytes, which are char boundaries"
+)]
 fn words(text: &str) -> Vec<(u32, String)> {
     let mut found = Vec::new();
     for (at, line) in text.lines().enumerate() {
@@ -2371,6 +2390,10 @@ impl Texts {
 /// Whether `word` is in `line` with no name character either side; `-`
 /// counts as one, so `rubocop` is not in `rubocop-rails`, and so does a
 /// `.` before it: `.yardoc` is a directory, not yard.
+#[expect(
+    clippy::string_slice,
+    reason = "offsets are where an ASCII token was found, or just past it"
+)]
 fn has_word(line: &str, word: &str) -> bool {
     let named = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
     line.match_indices(word).any(|(at, _)| {
@@ -2698,6 +2721,7 @@ fn placed(nesting: &[String]) -> String {
 
 /// The bundled gem a gem's name says it plugs into: `rubocop` for
 /// `rubocop-rails`, `omniauth` for `omniauth-github`.
+#[expect(clippy::string_slice, reason = "offsets come from char_indices")]
 fn plugin_of(name: &str, lock: &Lock, installed: &HashMap<String, String>) -> Option<String> {
     let known = |n: &str| lock.needs.contains_key(n) || installed.contains_key(n);
     name.char_indices()

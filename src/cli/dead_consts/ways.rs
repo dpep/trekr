@@ -3,6 +3,9 @@
 //! registry, a string — and what may, which a row says as a caveat
 //! (DEC-421).
 
+// Scans Ruby as text: a str slice must say why its offset is a char boundary (DEC-835).
+#![deny(clippy::string_slice)]
+
 use std::collections::{HashMap, HashSet};
 
 use super::named::{self, Named, plain};
@@ -305,7 +308,9 @@ impl Ways<'_> {
                 continue;
             }
             let (before, after) = shape.split_once('*').unwrap_or((shape, ""));
-            let built = &fqn[before.len()..fqn.len() - after.len()];
+            let Some(built) = fqn.strip_prefix(before).and_then(|r| r.strip_suffix(after)) else {
+                continue;
+            };
             if let Some(from) = named.symbol_outside(&plain(built), relative) {
                 return convention(
                     "constantize",
@@ -324,7 +329,9 @@ impl Ways<'_> {
                 continue;
             }
             let (before, after) = shape.split_once('*').unwrap_or((shape, ""));
-            let built = &fqn[before.len()..fqn.len() - after.len()];
+            let Some(built) = fqn.strip_prefix(before).and_then(|r| r.strip_suffix(after)) else {
+                continue;
+            };
             let class = built.rsplit("::").next().unwrap_or(built);
             if !after.is_empty() && self.classes.contains(&plain(class)) {
                 return convention(
@@ -712,6 +719,10 @@ impl Ways<'_> {
     /// Where the namespace `fqn` is written in lists its own constants —
     /// `constants.select { … }` in one of its methods — the first file and
     /// line that does.
+    #[expect(
+        clippy::string_slice,
+        reason = "offsets are where an ASCII token was found, or just past it"
+    )]
     fn lists_own_constants(&self, namespace: &str) -> Option<(String, u32)> {
         if let Some(known) = self.own_listings.borrow().get(namespace) {
             return known.clone();
