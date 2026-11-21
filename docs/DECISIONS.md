@@ -18215,3 +18215,23 @@ no `initialize` defined on an object, and its calls there are `super`s and
 `new`s, which never read it. Output is byte-identical on 44 `--refs`
 queries over discourse and rails and on three `--dead` scopes.
 
+## DEC-856 — Go to Definition on a call is one function beneath both fronts
+
+**Decided.** What a call runs — `resolve::method_at`, then, where
+`includers_may_answer` says a shared group's includers may answer, their
+`includer_answer` (DEC-490) — is `query::def::method_answer(tree, files,
+facts, call, relative)`. `--def` passes a `CheckoutFiles` over disk, the
+editor one over its open buffers; neither re-states the pair.
+
+**Why.** The pair was written in `cmd_def` and in the server's
+`method_answer`, a "remember to" a fix had to land in twice.
+
+**Cost.** The server copies its open buffers into the `CheckoutFiles`
+for every call it answers, not only for one in a shared group's body:
+the tree is borrowed from the session, so the copy cannot wait for the
+check. It is a copy of the few open documents' text.
+
+**Not done.** A shared answer over every `Subject` (DEC-524's fronts
+render JSON disclosure on one side and `Location`s on the other): grown a
+branch at a time, when a fix needs it in both.
+

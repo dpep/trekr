@@ -566,28 +566,25 @@ fn resolve_at(
     })
 }
 
-/// The method a call resolves to, by `--def`'s rule: a shared group's body
-/// reads what its includers define (DEC-490).
+/// The method a call resolves to, by `--def`'s rule, reading the open
+/// buffers before disk.
 fn method_answer(
     session: &mut Session,
     located: &Located,
     facts: &crate::core::Facts,
     call: &crate::core::Call,
 ) -> anyhow::Result<crate::resolve::MethodAnswer> {
-    let tree = session.tree(&located.root)?;
-    let answer = crate::resolve::method_at(tree, facts, call, &located.relative);
-    if !crate::resolve::members::includers_may_answer(call, &answer) {
-        return Ok(answer);
-    }
-    // Only now are the open buffers copied: never for app code.
     let open = overlay(session, &located.root);
     let (tree, store) = session.tree_and_store(&located.root)?;
     let root = located.root.to_string_lossy().into_owned();
     let files = CheckoutFiles::with_open(store, &located.root, &root, open);
-    Ok(
-        crate::query::members::includer_answer(tree, &files, &located.relative, call, &answer)
-            .unwrap_or(answer),
-    )
+    Ok(crate::query::def::method_answer(
+        tree,
+        &files,
+        facts,
+        call,
+        &located.relative,
+    ))
 }
 
 /// Why a click found nothing, when nothing more specific was noted.

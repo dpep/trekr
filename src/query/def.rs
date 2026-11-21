@@ -14,6 +14,23 @@ use crate::tree::Tree;
 use std::ops::Deref;
 use std::path::Path;
 
+/// The method the call `call` in the file at `relative` runs (DEC-856): by
+/// the receiver ladder, and in a shared group's body by what its includers
+/// define (DEC-490), which only `files` can read.
+pub(crate) fn method_answer(
+    tree: &Tree,
+    files: &super::members::CheckoutFiles<'_>,
+    facts: &Facts,
+    call: &crate::core::Call,
+    relative: &str,
+) -> crate::resolve::MethodAnswer {
+    let answer = crate::resolve::method_at(tree, facts, call, relative);
+    if !crate::resolve::members::includers_may_answer(call, &answer) {
+        return answer;
+    }
+    super::members::includer_answer(tree, files, relative, call, &answer).unwrap_or(answer)
+}
+
 /// The files a `render` or `extends` names, checkout-relative, and the class
 /// its object was given (DEC-524).
 pub(crate) struct Reached {

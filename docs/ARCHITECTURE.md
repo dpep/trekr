@@ -1011,7 +1011,9 @@ call, then an unplaced `super` or a symbol that names no method. The fronts
 differ only around it: a column names a character, while an editor's caret is
 first read onto one (`query::position::caret_reads`, DEC-036 addendum); the
 CLI snaps where nothing is written and the editor does not; and each answers
-the subject from its own reads. A variable is answered from the file's flow
+the subject from its own reads. A call is answered by
+`query::def::method_answer` in both: the receiver ladder, then a shared
+group's includers (DEC-490, DEC-856). A variable is answered from the file's flow
 (`resolve/vars.rs`, DEC-064) before anything snaps: a local or parameter with
 the writes its read can see, an ivar or cvar with its writes in the file — the
 class's other files are the LSP's to read, and the answer says they were not

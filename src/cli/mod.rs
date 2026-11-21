@@ -5337,16 +5337,10 @@ fn cmd_def(
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| spec.path.clone());
             let facts = crate::extract::extract(&source);
+            let root_str = root.to_string_lossy().into_owned();
             let answer_from = |tree: &Tree| {
-                let answer = crate::resolve::method_at(tree, &facts, &call, &relative);
-                // A shared group's body reads what its includers define (DEC-490).
-                if !crate::resolve::members::includers_may_answer(&call, &answer) {
-                    return answer;
-                }
-                let root_str = root.to_string_lossy().into_owned();
                 let files = crate::query::members::CheckoutFiles::new(&store, &root, &root_str);
-                crate::query::members::includer_answer(tree, &files, &relative, &call, &answer)
-                    .unwrap_or(answer)
+                crate::query::def::method_answer(tree, &files, &facts, &call, &relative)
             };
             let mut answer = answer_from(&tree);
             let found = matches!(answer.status, Status::Resolved | Status::Ambiguous);
