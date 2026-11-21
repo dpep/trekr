@@ -1,0 +1,2 @@
+module AuditConcern
+end

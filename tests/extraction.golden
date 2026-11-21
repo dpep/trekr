@@ -1148,6 +1148,11 @@ ruby tests/testbed/962-self-class-descendants-and-a-split-t-unsafe/app/models/le
 ruby tests/testbed/962-self-class-descendants-and-a-split-t-unsafe/app/models/main.rb 7842a3fac702c3c1
 ruby tests/testbed/963-a-live-def-holds-the-call-a-candidate-would/app/main.rb 309fab0b7361743b
 ruby tests/testbed/963-a-live-def-holds-the-call-a-candidate-would/app/report.rb d530ead30e670d54
+ruby tests/testbed/965-a-concern-through-a-constant-alias/app/aliased.rb 93b7a7a4bd1c580b
+ruby tests/testbed/965-a-concern-through-a-constant-alias/app/audit_concern.rb 16e4f73cc8961fae
+ruby tests/testbed/965-a-concern-through-a-constant-alias/app/main.rb 99db035173f19c8a
+ruby tests/testbed/965-a-concern-through-a-constant-alias/app/pretend.rb cfd42b7813dc96fe
+ruby tests/testbed/965-a-concern-through-a-constant-alias/app/widget.rb 2cbaad4b3d00232f
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

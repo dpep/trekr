@@ -70,7 +70,9 @@
   `--def` placed `Widget.tracked_fields` on it; it is `residue`
   now. A concern is one whose `extend` resolves to
   `ActiveSupport::Concern`, or, with ActiveSupport not indexed, is
-  written `ActiveSupport::Concern` or `Concern`.
+  written `ActiveSupport::Concern` or `Concern` — through a constant
+  alias too (`C = ActiveSupport::Concern; extend C`), which was no
+  concern, so its `ClassMethods` were no class methods of an includer.
 - **`--dead` reads a class's own `descendants` as a listing of its
   subclasses**: `descendants` in a class method,
   `T.unsafe(self).subclasses` (on one line or two), or

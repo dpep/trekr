@@ -3636,17 +3636,26 @@ impl Tree {
 
     /// Does this module extend `ActiveSupport::Concern`? As it resolves, or,
     /// with ActiveSupport not indexed, as written: a checkout module that
-    /// merely ends in `Concern` is no concern.
+    /// merely ends in `Concern` is no concern. Through a constant alias
+    /// (`C = ActiveSupport::Concern`), by what the alias names.
     pub(crate) fn is_concern(&self, module_name: &str) -> bool {
+        let written = |name: &str| {
+            matches!(
+                name.trim_start_matches("::"),
+                "ActiveSupport::Concern" | "Concern"
+            )
+        };
         self.names.get(module_name).is_some_and(|entry| {
             entry.kind() == "module"
                 && entry.extends().iter().any(|target| {
-                    match self.resolve_lexical(target.name, &target.nesting) {
-                        Some(fqn) => fqn == "ActiveSupport::Concern",
-                        None => matches!(
-                            target.name.trim_start_matches("::"),
-                            "ActiveSupport::Concern" | "Concern"
-                        ),
+                    let Some(fqn) = self.resolve_lexical(target.name, &target.nesting) else {
+                        return written(target.name);
+                    };
+                    let fqn = self.namespace_of(&fqn);
+                    // An alias whose target is not indexed ends the walk on itself.
+                    match self.names.get(&fqn).and_then(EntryRef::alias_of) {
+                        Some(alias) => written(alias.name),
+                        None => fqn == "ActiveSupport::Concern",
                     }
                 })
         })

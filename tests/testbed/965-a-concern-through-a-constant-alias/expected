@@ -1,0 +1,8 @@
+# Found by a hunt: a module extending ActiveSupport::Concern through a
+# constant alias (`C = ActiveSupport::Concern; extend C`) was no concern, so
+# its `ClassMethods` were no class methods of an includer. The alias is
+# followed to what it names; one naming a plain module stays no concern
+# (DEC-761).
+def app/main.rb:1:8 status=resolved owner=Aliased::ClassMethods
+def app/main.rb:2:8 status=residue
+dead app Aliased::ClassMethods=none Pretend::ClassMethods=unreferenced~

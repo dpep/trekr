@@ -17047,6 +17047,18 @@ for ActiveSupport with an empty checkout `module Concern`; they now write
 Foo::Concern` from an unindexed gem) is no concern; a gem's own
 Concern-alike is not modelled.
 
+## DEC-790 — A concern through a constant alias is read by what it names
+
+**Decided.** `C = ActiveSupport::Concern; extend C` is a concern: the
+`extend` target is followed through constant aliases by the tree's own
+walk (`namespace_of`, which `A::B` lookup already uses), and the end of it
+is weighed as DEC-761 weighs a target. An alias whose target is not
+indexed (ActiveSupport absent) ends the walk on itself, and its written
+target is weighed as written. `A = AuditConcern; extend A` stays no
+concern. It was none either way, so `--def Widget.aliased_fields` was
+`residue` and the module's `ClassMethods` a candidate. Testbed 965. No
+discourse row moved: discourse has no such alias.
+
 ## DEC-762 — `self.class.descendants` lists, and `T.unsafe` is read by its receiver
 
 **Decided.** `descendants` or `subclasses` sent to `self.class` in an
