@@ -845,14 +845,20 @@ fn tier(
         ),
         // `self` is the written scope only if the block it is in runs as it
         // stands, which a method that is not Ruby's own does not promise.
-        None if receiver.via == "self" && super::self_unsettled(tree, facts, call, path) => here(
-            Tier::Possible,
-            Some(receiver.fqn.clone()),
-            None,
-            "the call is in a block whose `self` the method it is handed to may change",
-            1,
-            None,
-        ),
+        // Nor is it the object a method is defined on (DEC-825).
+        None if (receiver.via == "self"
+            || matches!(call.recv_value, Some(crate::core::RecvValue::Held { .. })))
+            && super::self_unsettled(tree, facts, call, path) =>
+        {
+            here(
+                Tier::Possible,
+                Some(receiver.fqn.clone()),
+                None,
+                "the call is in a block whose `self` the method it is handed to may change",
+                1,
+                None,
+            )
+        }
         // A relation hands a name it lacks to its model's class methods, and
         // the chain did not say which model, or that model's class methods
         // are not all indexed (DEC-444).

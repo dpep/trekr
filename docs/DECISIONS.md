@@ -17778,3 +17778,23 @@ Testbed 887; unit test `a_slim_views_ruby_is_its_code_not_its_text`.
 Testbed 888 (the dot). The other two are not testbed-shaped — the harness
 asserts no `needed_by` and passes one target — and were checked on hunt
 2's gspath and dualboot checkouts against the build before.
+
+## DEC-825 — A block that may change `self` outranks the object a method is defined on
+
+**Decided.** In a method defined on an object (DEC-795), a bare call in a
+block handed to a method that may run it as another object —
+`instance_exec`, a DSL's `Router.draw do get "/a" end` (DEC-391) — is
+`possible`, "the call is in a block whose `self` the method it is handed to
+may change", when the object's class has no method of the name, as the
+same call is in any other method. A block Ruby's own method runs as it
+stands (`[1].each { … }`) keeps the object as `self`. The rule is the
+`--refs` ladder's (`resolve::refs`), so `--dead` and the editor's Find
+References answer the same. Testbed 825.
+
+**Why.** DEC-795 records such a call as one on the object
+(`RecvValue::Held`), and the ladder's rung for an unsettled block read only
+a receiver typed as `self`: `get` and `helper_three` were "no such method"
+on Object, and `--dead` graded both `unreferenced`, `clear`.
+
+**`--def` is unchanged.** At such a call it already answered `residue`
+with the name's candidates, as at the same call in any other method.

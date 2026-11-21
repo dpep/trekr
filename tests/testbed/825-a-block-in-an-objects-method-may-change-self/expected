@@ -1,0 +1,13 @@
+# In a method defined on an object, a bare call in a block handed to a
+# method that may run it as another object (`instance_exec`, a DSL's
+# `draw do`) is not pinned to the object: the block's `self` may be anything.
+# DEC-795 typed it as the object and ruled `helper_three` and `get` out as
+# "no such method" on Object, so `--dead` called both unreferenced, clear.
+refs Printer.helper_three confirmed=0 possible=1 excluded=0
+refs app/a.rb:6:7 confirmed=0 possible=1 excluded=0 sites=app/a.rb:15:9
+dead app/a.rb Printer#helper_three=single-caller Router#get=single-caller
+# A block Ruby's own `each` runs keeps the object as `self`: Object has no
+# `helper_four`, so the call is still ruled out.
+refs Printer.helper_four confirmed=0 possible=0 excluded=1
+dead app/a.rb Printer#helper_four=unreferenced
+def app/a.rb:15:9 status=residue candidate1=Router

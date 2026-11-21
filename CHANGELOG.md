@@ -106,7 +106,9 @@
   and a bare `helper_one` was `confirmed` by `--refs`, and placed by
   `--def`, as the enclosing class's `helper_one`, which Ruby would not
   call. The call is typed as the object (`obj = Object.new` is an
-  `Object`), or untyped when trekr cannot type it.
+  `Object`), or untyped when trekr cannot type it. One in a block a
+  method may run as another object (`instance_exec`, a DSL's `draw do`)
+  stays `possible` when the object lacks the name.
 - **`--refs` on a method defined on an object counts the calls that may
   be on it**: with `w = Widget.new; class << w; def extra; end; end;
   w.extra`, `--refs` on `extra` excluded `w.extra` as "no such method" on
