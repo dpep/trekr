@@ -45,7 +45,7 @@ use std::process::Command;
 
 mod support;
 
-use support::git;
+use support::{FIXTURE_RUBY, commit_all, git};
 
 /// Stage one case as a real checkout with its own database.
 fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
@@ -58,7 +58,7 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
     // libraries' signatures in `rbs/stdlib/`, more of core's in `rbs/core/`.
     let home = home_of(&dir);
     let _ = fs::remove_dir_all(&home);
-    let lib = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby");
+    let lib = home.join(format!(".rvm/rubies/ruby-{FIXTURE_RUBY}/lib/ruby"));
     fs::create_dir_all(lib.join("9.8.0")).unwrap();
     if case.join("ruby").is_dir() {
         copy_tree(&case.join("ruby"), &lib.join("9.8.0"));
@@ -72,7 +72,7 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
     if case.join("rbs").is_dir() {
         copy_tree(&case.join("rbs"), &rbs);
     }
-    fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
+    fs::write(dir.join(".ruby-version"), format!("{FIXTURE_RUBY}\n")).unwrap();
 
     // Everything but the expectations file is source.
     for entry in fs::read_dir(case).unwrap().flatten() {
@@ -95,19 +95,7 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
     }
 
     git(&dir, &["init", "-q"]);
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "case",
-        ],
-    );
+    commit_all(&dir);
     let indexed = trekr_in(&dir)
         .args(["--index", "--json"])
         .env("TREKR_DB", &db)

@@ -66,14 +66,25 @@ pub fn scratch(label: &str) -> (PathBuf, PathBuf) {
     (dir, store.join("trekr.db"))
 }
 
-/// A home holding one Ruby, 9.8.7, installed as rvm installs one, with an
+/// The Ruby every fixture checkout names in `.ruby-version`, and the one
+/// [`fixture_home`] installs.
+pub const FIXTURE_RUBY: &str = "9.8.7";
+
+/// [`scratch`], naming [`FIXTURE_RUBY`] in its `.ruby-version`.
+pub fn ruby_scratch(label: &str) -> (PathBuf, PathBuf) {
+    let (dir, db) = scratch(label);
+    fs::write(dir.join(".ruby-version"), format!("{FIXTURE_RUBY}\n")).unwrap();
+    (dir, db)
+}
+
+/// A home holding one Ruby, [`FIXTURE_RUBY`], installed as rvm installs one, with an
 /// empty stdlib and the rbs fixture as its signatures: what core is served
 /// from (DEC-240), whatever Ruby the machine running the suite has.
 pub fn fixture_home() -> &'static Path {
     static HOME: OnceLock<PathBuf> = OnceLock::new();
     HOME.get_or_init(|| {
         let home = root().join("ruby-home");
-        let lib = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby");
+        let lib = home.join(format!(".rvm/rubies/ruby-{FIXTURE_RUBY}/lib/ruby"));
         fs::create_dir_all(lib.join("9.8.0")).unwrap();
         fs::create_dir_all(lib.join("gems/9.8.0/specifications/default")).unwrap();
         fs::create_dir_all(lib.join("gems/9.8.0/gems")).unwrap();
@@ -112,11 +123,32 @@ fn outside(name: &std::ffi::OsStr) -> bool {
     })
 }
 
+/// Strips them, and keeps git off the machine's own config: a global
+/// `commit.gpgsign` had every fixture commit sign with the developer's key.
 fn strip_outside(command: &mut Command) -> &mut Command {
     for (name, _) in std::env::vars_os().filter(|(name, _)| outside(name)) {
         command.env_remove(name);
     }
     command
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+}
+
+/// Stage everything in `dir` and commit it, as nobody in particular.
+pub fn commit_all(dir: &Path) {
+    git(dir, &["add", "-A"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "fixture",
+        ],
+    );
 }
 
 /// `git`, run in a scratch directory and nowhere else.

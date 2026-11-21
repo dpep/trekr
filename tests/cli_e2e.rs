@@ -14,15 +14,7 @@ use std::process::{Command, Output};
 
 mod support;
 
-use support::{fixture_home, git, git_only};
-
-/// A scratch repo and database for one test (see `support::scratch`), whose
-/// checkout runs on the fixture's Ruby.
-fn scratch(label: &str) -> (PathBuf, PathBuf) {
-    let (dir, db) = support::scratch(label);
-    fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
-    (dir, db)
-}
+use support::{commit_all, fixture_home, git, git_only, ruby_scratch};
 
 /// A git repo holding one fixture-sized Ruby file.
 fn repo(dir: &Path) {
@@ -34,19 +26,7 @@ fn repo(dir: &Path) {
          def helper\n  end\nend\n",
     )
     .unwrap();
-    git(dir, &["add", "-A"]);
-    git(
-        dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(dir);
 }
 
 fn trekr(db: &Path, cwd: &Path, args: &[&str]) -> Output {
@@ -75,7 +55,7 @@ fn json(out: &Output) -> serde_json::Value {
 
 #[test]
 fn indexes_reports_and_outlines_through_the_cli() {
-    let (dir, db) = scratch("basics");
+    let (dir, db) = ruby_scratch("basics");
     repo(&dir);
 
     let indexed = json(&trekr(&db, &dir, &["--index", "--json"]));
@@ -147,7 +127,7 @@ fn paths_in(value: &serde_json::Value, found: &mut Vec<(String, serde_json::Valu
 
 #[test]
 fn every_path_is_relative_to_the_root_beside_it() {
-    let (dir, db) = scratch("paths");
+    let (dir, db) = ruby_scratch("paths");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
     let root = fs::canonicalize(&dir)
@@ -199,7 +179,7 @@ fn every_path_is_relative_to_the_root_beside_it() {
 /// does: relative, with the root beside them.
 #[test]
 fn a_templates_answers_write_paths_relative_to_their_root() {
-    let (dir, db) = scratch("tmplpaths");
+    let (dir, db) = ruby_scratch("tmplpaths");
     git(&dir, &["init", "-q"]);
     for (path, text) in [
         (
@@ -216,19 +196,7 @@ fn a_templates_answers_write_paths_relative_to_their_root() {
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(file, text).unwrap();
     }
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr(&db, &dir, &["--index"]);
     let root = fs::canonicalize(&dir)
         .unwrap()
@@ -277,7 +245,7 @@ fn a_templates_answers_write_paths_relative_to_their_root() {
 /// written as; when that has no value either, the missing partial leads.
 #[test]
 fn a_render_that_reaches_nothing_says_the_template_is_missing() {
-    let (dir, db) = scratch("tmplmiss");
+    let (dir, db) = ruby_scratch("tmplmiss");
     git(&dir, &["init", "-q"]);
     for (path, text) in [
         (
@@ -293,19 +261,7 @@ fn a_render_that_reaches_nothing_says_the_template_is_missing() {
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(file, text).unwrap();
     }
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr(&db, &dir, &["--index"]);
     let view = "app/views/widgets/index.html.erb";
 
@@ -330,7 +286,7 @@ fn a_render_that_reaches_nothing_says_the_template_is_missing() {
 
 #[test]
 fn indexes_edits_and_untracked_files_without_touching_the_git_index() {
-    let (dir, db) = scratch("worktree");
+    let (dir, db) = ruby_scratch("worktree");
     repo(&dir);
     fs::write(dir.join(".gitignore"), "ignored/\n").unwrap();
     fs::create_dir_all(dir.join("lib/deep")).unwrap();
@@ -366,7 +322,7 @@ fn indexes_edits_and_untracked_files_without_touching_the_git_index() {
 
 #[test]
 fn reindexing_an_unchanged_checkout_parses_nothing() {
-    let (dir, db) = scratch("noop");
+    let (dir, db) = ruby_scratch("noop");
     repo(&dir);
 
     trekr(&db, &dir, &["--index"]);
@@ -382,7 +338,7 @@ fn reindexing_an_unchanged_checkout_parses_nothing() {
 
 #[test]
 fn an_uncommitted_edit_is_indexed_like_any_other_content() {
-    let (dir, db) = scratch("dirty");
+    let (dir, db) = ruby_scratch("dirty");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -414,7 +370,7 @@ fn an_uncommitted_edit_is_indexed_like_any_other_content() {
 /// decides what is known once it holds the lock, and reads the file again.
 #[test]
 fn an_index_behind_a_collection_reads_again_what_it_collected() {
-    let (dir, db) = scratch("index-behind-gc");
+    let (dir, db) = ruby_scratch("index-behind-gc");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     fs::write(
@@ -454,7 +410,7 @@ fn an_index_behind_a_collection_reads_again_what_it_collected() {
 /// reuses it — and collected once unmapped longer than that.
 #[test]
 fn a_replaced_version_is_kept_for_the_retention_then_collected() {
-    let (dir, db) = scratch("retention");
+    let (dir, db) = ruby_scratch("retention");
     repo(&dir);
     let original = fs::read_to_string(dir.join("widget.rb")).unwrap();
     assert!(trekr(&db, &dir, &["--index"]).status.success());
@@ -517,7 +473,7 @@ fn a_replaced_version_is_kept_for_the_retention_then_collected() {
 
 #[test]
 fn a_second_worktree_of_the_same_content_costs_no_parsing() {
-    let (dir, db) = scratch("worktree");
+    let (dir, db) = ruby_scratch("worktree");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -559,7 +515,7 @@ fn trekr_env(db: &Path, cwd: &Path, args: &[&str], vars: &[(&str, &str)]) -> Out
 
 #[test]
 fn profile_reports_on_stderr_so_stdout_stays_the_answer() {
-    let (dir, db) = scratch("profile");
+    let (dir, db) = ruby_scratch("profile");
     repo(&dir);
 
     let out = trekr(&db, &dir, &["--index", "--profile", "--json"]);
@@ -619,7 +575,7 @@ fn profile_reports_on_stderr_so_stdout_stays_the_answer() {
 
 #[test]
 fn without_the_flag_no_profile_is_printed() {
-    let (dir, db) = scratch("noprofile");
+    let (dir, db) = ruby_scratch("noprofile");
     repo(&dir);
     let out = trekr(&db, &dir, &["--index", "--json"]);
     assert!(
@@ -631,7 +587,7 @@ fn without_the_flag_no_profile_is_printed() {
 
 #[test]
 fn jobs_comes_from_the_flag_then_the_environment_then_the_machine() {
-    let (dir, db) = scratch("jobs");
+    let (dir, db) = ruby_scratch("jobs");
     repo(&dir);
 
     let jobs = |out: &Output| -> u64 {
@@ -679,7 +635,7 @@ fn jobs_comes_from_the_flag_then_the_environment_then_the_machine() {
 /// as a position already could be.
 #[test]
 fn context_points_a_name_query_at_a_checkout() {
-    let (dir, db) = scratch("context");
+    let (dir, db) = ruby_scratch("context");
     repo(&dir);
     trekr(&db, &dir, &["--index", "--no-gems"]);
     let elsewhere = std::env::temp_dir();
@@ -720,9 +676,9 @@ fn context_points_a_name_query_at_a_checkout() {
 /// another Ruby's newer copy was never on this load path (DEC-152).
 #[test]
 fn with_no_lockfile_only_the_active_rubys_gems_are_picked() {
-    let (dir, db) = scratch("declared-ruby");
+    let (dir, db) = ruby_scratch("declared-ruby");
     repo(&dir);
-    let (home, _) = scratch("declared-ruby-home");
+    let (home, _) = ruby_scratch("declared-ruby-home");
     let current = home.join(".rvm/gems/ruby-3.4.9");
     for gems in [
         current.join("gems/widget-0.2.0/lib"),
@@ -778,7 +734,7 @@ fn with_no_lockfile_only_the_active_rubys_gems_are_picked() {
 /// what is installed instead (DEC-134), and the answer says which it was.
 #[test]
 fn with_no_lockfile_the_gemspecs_dependencies_are_resolved() {
-    let (dir, db) = scratch("declared");
+    let (dir, db) = ruby_scratch("declared");
     repo(&dir);
     for version in ["0.1.0", "0.2.0", "1.0.0"] {
         let lib = dir.join(format!(
@@ -820,7 +776,7 @@ fn with_no_lockfile_the_gemspecs_dependencies_are_resolved() {
 /// whatever order a hash held them in.
 #[test]
 fn dead_answers_the_same_every_run() {
-    let (dir, db) = scratch("dead-stable");
+    let (dir, db) = ruby_scratch("dead-stable");
     repo(&dir);
     fs::write(
         dir.join("lexer.rb"),
@@ -833,19 +789,7 @@ fn dead_answers_the_same_every_run() {
         "module Language\n  def self.marks\n    Lexer::Punctuation.constants\n  end\nend\n",
     )
     .unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "lexer",
-        ],
-    );
+    commit_all(&dir);
     trekr(&db, &dir, &["--index"]);
     let runs: Vec<String> = (0..6)
         .map(|_| stdout(&trekr(&db, &dir, &["--dead", ".", "--json"])))
@@ -870,7 +814,7 @@ fn dead_answers_the_same_every_run() {
 
 #[test]
 fn dead_reads_what_a_gems_base_class_reaches_by_name() {
-    let (dir, db) = scratch("dead-gem-base");
+    let (dir, db) = ruby_scratch("dead-gem-base");
     repo(&dir);
     let gems = dir.join("vendor/bundle/ruby/3.3.0/gems");
     for (gem, file, source) in [
@@ -930,7 +874,7 @@ fn dead_reads_what_a_gems_base_class_reaches_by_name() {
 
 #[test]
 fn a_gem_is_indexed_once_and_a_missing_one_is_reported() {
-    let (dir, db) = scratch("gems");
+    let (dir, db) = ruby_scratch("gems");
     repo(&dir);
 
     // No lockfile, no gems: said, not left to look like an empty bundle.
@@ -1000,7 +944,7 @@ fn a_gem_is_indexed_once_and_a_missing_one_is_reported() {
 /// the blob would orphan the first gem's rows.
 #[test]
 fn a_file_two_gems_share_is_parsed_once_and_answers_for_both() {
-    let (dir, db) = scratch("gems-shared");
+    let (dir, db) = ruby_scratch("gems-shared");
     repo(&dir);
     let shared = "module Shared\n  def helpers\n  end\nend\n";
     for (gem, own) in [("alpha-1.0.0", "Alpha"), ("beta-1.0.0", "Beta")] {
@@ -1062,7 +1006,7 @@ fn a_file_two_gems_share_is_parsed_once_and_answers_for_both() {
 
 #[test]
 fn every_command_speaks_ndjson_as_well_as_json() {
-    let (dir, db) = scratch("ndjson");
+    let (dir, db) = ruby_scratch("ndjson");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -1089,7 +1033,7 @@ fn every_command_speaks_ndjson_as_well_as_json() {
 /// rows, and how many there were.
 #[test]
 fn ndjson_streams_a_row_set_one_row_per_line_then_the_answer() {
-    let (dir, db) = scratch("ndjson-rows");
+    let (dir, db) = ruby_scratch("ndjson-rows");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -1141,7 +1085,7 @@ fn ndjson_streams_a_row_set_one_row_per_line_then_the_answer() {
 
 #[test]
 fn refs_disclose_the_receiver_rather_than_guessing_at_it() {
-    let (dir, db) = scratch("refs");
+    let (dir, db) = ruby_scratch("refs");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -1188,7 +1132,7 @@ fn refs_disclose_the_receiver_rather_than_guessing_at_it() {
 /// `class << self` says the name it has: the pre-0.9.1 spelling found it.
 #[test]
 fn a_whole_name_miss_names_the_singleton_class_constant() {
-    let (dir, db) = scratch("refs-singleton");
+    let (dir, db) = ruby_scratch("refs-singleton");
     git(&dir, &["init", "-q"]);
     fs::write(
         dir.join("widget.rb"),
@@ -1219,7 +1163,7 @@ fn a_whole_name_miss_names_the_singleton_class_constant() {
 /// rather than reading as a name nothing defines.
 #[test]
 fn a_whole_name_miss_names_the_ancestor_ruby_finds_it_on() {
-    let (dir, db) = scratch("refs-ancestor");
+    let (dir, db) = ruby_scratch("refs-ancestor");
     git(&dir, &["init", "-q"]);
     fs::write(
         dir.join("widget.rb"),
@@ -1282,24 +1226,12 @@ fn nested_repo(dir: &Path) {
         "end\n",                   // 14
     );
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(dir, &["add", "-A"]);
-    git(
-        dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(dir);
 }
 
 #[test]
 fn def_resolves_a_constant_through_the_ancestor_chain() {
-    let (dir, db) = scratch("def");
+    let (dir, db) = ruby_scratch("def");
     nested_repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -1320,7 +1252,7 @@ fn def_resolves_a_constant_through_the_ancestor_chain() {
 
 #[test]
 fn def_on_a_declaration_answers_with_the_declaration_itself() {
-    let (dir, db) = scratch("defself");
+    let (dir, db) = ruby_scratch("defself");
     nested_repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -1334,7 +1266,7 @@ fn def_on_a_declaration_answers_with_the_declaration_itself() {
 
 #[test]
 fn def_resolves_an_implicit_call_through_the_ancestor_chain() {
-    let (dir, db) = scratch("defcall");
+    let (dir, db) = ruby_scratch("defcall");
     nested_repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -1354,7 +1286,7 @@ fn def_resolves_an_implicit_call_through_the_ancestor_chain() {
 
 #[test]
 fn def_on_an_unknown_receiver_is_residue_that_still_offers_candidates() {
-    let (dir, db) = scratch("defresidue");
+    let (dir, db) = ruby_scratch("defresidue");
     nested_repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -1378,7 +1310,7 @@ fn def_on_an_unknown_receiver_is_residue_that_still_offers_candidates() {
 
 #[test]
 fn def_reads_the_working_tree_rather_than_the_index() {
-    let (dir, db) = scratch("defdirty");
+    let (dir, db) = ruby_scratch("defdirty");
     nested_repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -1396,7 +1328,7 @@ fn def_reads_the_working_tree_rather_than_the_index() {
 
 #[test]
 fn ancestors_linearize_in_rubys_order() {
-    let (dir, db) = scratch("anc");
+    let (dir, db) = ruby_scratch("anc");
     git(&dir, &["init", "-q"]);
     fs::write(
         dir.join("app.rb"),
@@ -1404,19 +1336,7 @@ fn ancestors_linearize_in_rubys_order() {
          class C < Base\n  include I\n  prepend P\nend\n",
     )
     .unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr(&db, &dir, &["--index"]);
 
     let answer = json(&trekr(&db, &dir, &["--ancestors", "C", "--json"]));
@@ -1436,7 +1356,7 @@ fn ancestors_linearize_in_rubys_order() {
 
 #[test]
 fn a_constant_card_on_a_split_name_lists_each_declaration() {
-    let (dir, db) = scratch("splitcard");
+    let (dir, db) = ruby_scratch("splitcard");
     git(&dir, &["init", "-q"]);
     fs::create_dir_all(dir.join("fake")).unwrap();
     fs::create_dir_all(dir.join("models")).unwrap();
@@ -1446,19 +1366,7 @@ fn a_constant_card_on_a_split_name_lists_each_declaration() {
         "class Record\nend\nclass Post < Record\nend\n",
     )
     .unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr(&db, &dir, &["--index"]);
 
     let card = json(&trekr(&db, &dir, &["Post", "--json"]));
@@ -1481,7 +1389,7 @@ fn a_constant_card_on_a_split_name_lists_each_declaration() {
 /// is not a model has no `table` at all.
 #[test]
 fn a_models_card_carries_its_table() {
-    let (dir, db) = scratch("model-card");
+    let (dir, db) = ruby_scratch("model-card");
     git(&dir, &["init", "-q"]);
     fs::create_dir_all(dir.join("db")).unwrap();
     fs::write(
@@ -1498,19 +1406,7 @@ fn a_models_card_carries_its_table() {
          CREATE UNIQUE INDEX index_widgets_on_name ON public.widgets USING btree (name);\n",
     )
     .unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr(&db, &dir, &["--index"]);
 
     let card = json(&trekr(&db, &dir, &["Widget", "--json"]));
@@ -1550,7 +1446,7 @@ fn a_models_card_carries_its_table() {
 /// as for the editor: `<core>/String.rb` named nothing a caller could open.
 #[test]
 fn a_core_definition_is_a_file_that_exists() {
-    let (dir, db) = scratch("core-file");
+    let (dir, db) = ruby_scratch("core-file");
     repo(&dir);
     fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
     trekr(&db, &dir, &["--index"]);
@@ -1572,7 +1468,7 @@ fn a_core_definition_is_a_file_that_exists() {
 /// One fact, one field name, in every command that reports it (DEC-080).
 #[test]
 fn the_same_fact_has_the_same_name_in_every_command() {
-    let (dir, db) = scratch("names");
+    let (dir, db) = ruby_scratch("names");
     repo(&dir);
     fs::write(
         dir.join("use.rb"),
@@ -1661,24 +1557,12 @@ fn collision_repo(dir: &Path) {
         "end\n",                    // 22
     );
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(dir, &["add", "-A"]);
-    git(
-        dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(dir);
 }
 
 #[test]
 fn refs_narrowed_by_receiver_separates_confirmed_from_possible() {
-    let (dir, db) = scratch("refsnarrow");
+    let (dir, db) = ruby_scratch("refsnarrow");
     collision_repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -1735,7 +1619,7 @@ fn refs_narrowed_by_receiver_separates_confirmed_from_possible() {
 
 #[test]
 fn refs_for_a_class_method_are_a_different_question() {
-    let (dir, db) = scratch("refssingleton");
+    let (dir, db) = ruby_scratch("refssingleton");
     git(&dir, &["init", "-q"]);
     fs::write(
         dir.join("app.rb"),
@@ -1760,19 +1644,7 @@ fn refs_for_a_class_method_are_a_different_question() {
         ),
     )
     .unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr(&db, &dir, &["--index"]);
 
     let class_method = json(&trekr(&db, &dir, &["--refs", "Widget.save", "--json"]));
@@ -1800,7 +1672,7 @@ fn refs_for_a_class_method_are_a_different_question() {
 
 #[test]
 fn refs_text_folds_an_initializes_untyped_news_into_one_line() {
-    let (dir, db) = scratch("refsuntypednew");
+    let (dir, db) = ruby_scratch("refsuntypednew");
     git(&dir, &["init", "-q"]);
     fs::write(
         dir.join("app.rb"),
@@ -1819,19 +1691,7 @@ fn refs_text_folds_an_initializes_untyped_news_into_one_line() {
         ),
     )
     .unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr(&db, &dir, &["--index"]);
 
     let text = stdout(&trekr(&db, &dir, &["--refs", "Widget#initialize"]));
@@ -1854,7 +1714,7 @@ fn refs_text_folds_an_initializes_untyped_news_into_one_line() {
 
 #[test]
 fn a_bare_name_still_reports_every_mention_and_now_says_what_each_resolves_to() {
-    let (dir, db) = scratch("refsbare");
+    let (dir, db) = ruby_scratch("refsbare");
     collision_repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -1885,7 +1745,7 @@ fn a_bare_name_still_reports_every_mention_and_now_says_what_each_resolves_to() 
 
 #[test]
 fn refs_on_an_unknown_owner_is_a_definitive_no() {
-    let (dir, db) = scratch("refsunknown");
+    let (dir, db) = ruby_scratch("refsunknown");
     collision_repo(&dir);
     trekr(&db, &dir, &["--index"]);
     assert_eq!(
@@ -1900,7 +1760,7 @@ fn refs_on_an_unknown_owner_is_a_definitive_no() {
 /// commands — and only when the whole chain was seen.
 #[test]
 fn a_method_the_owner_does_not_have_is_named_as_such() {
-    let (dir, db) = scratch("nosuchmethod");
+    let (dir, db) = ruby_scratch("nosuchmethod");
     collision_repo(&dir);
     fs::write(dir.join("thing.rb"), "class Thing < Unindexed::Base\nend\n").unwrap();
     fs::write(
@@ -1967,7 +1827,7 @@ fn a_method_the_owner_does_not_have_is_named_as_such() {
 /// agree on that, in the exit code and in what they list.
 #[test]
 fn refs_to_a_method_that_does_not_exist_list_nothing_in_either_mode() {
-    let (dir, db) = scratch("refsnothing");
+    let (dir, db) = ruby_scratch("refsnothing");
     collision_repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
@@ -2000,7 +1860,7 @@ fn refs_to_a_method_that_does_not_exist_list_nothing_in_either_mode() {
 
 #[test]
 fn nothing_to_report_is_an_exit_code_not_an_error() {
-    let (dir, db) = scratch("empty");
+    let (dir, db) = ruby_scratch("empty");
     repo(&dir);
 
     // Never indexed: no answer yet, as a query says (DEC-170). The store's
@@ -2039,11 +1899,11 @@ fn nothing_to_report_is_an_exit_code_not_an_error() {
 /// stdout, the message on stderr either way (DEC-067).
 #[test]
 fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
-    let (dir, db) = scratch("errors");
+    let (dir, db) = ruby_scratch("errors");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     // Outside any checkout, deliberately not `git init`ed.
-    let (plain, _) = scratch("errors-plain");
+    let (plain, _) = ruby_scratch("errors-plain");
     let no_git = dir.join("empty-path");
     fs::create_dir_all(&no_git).unwrap();
     let no_git = no_git.to_string_lossy().into_owned();
@@ -2313,7 +2173,7 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
 /// command refuses that.
 #[test]
 fn a_completion_script_is_generated_without_a_repository() {
-    let (dir, db) = scratch("completions");
+    let (dir, db) = ruby_scratch("completions");
     let out = trekr(&db, &dir, &["--completions", "bash"]);
 
     assert_eq!(out.status.code(), Some(0), "generating a script succeeded");
@@ -2334,29 +2194,17 @@ fn a_completion_script_is_generated_without_a_repository() {
 /// file resolved against a namespace that had never heard of it.
 #[test]
 fn a_position_resolves_against_its_own_repo_not_the_current_directory() {
-    let (dir, db) = scratch("elsewhere");
+    let (dir, db) = ruby_scratch("elsewhere");
     repo(&dir);
     // A second repo, indexed and never visited.
-    let (other, _) = scratch("elsewhere-other");
+    let (other, _) = ruby_scratch("elsewhere-other");
     git(&other, &["init", "-q"]);
     fs::write(
         other.join("app.rb"),
         "module Widgets\n  class Gauge\n  end\n  Gauge\nend\n",
     )
     .unwrap();
-    git(&other, &["add", "-A"]);
-    git(
-        &other,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&other);
     trekr(&db, &other, &["--index"]);
 
     let target = format!("{}:4:3", other.join("app.rb").display());
@@ -2384,7 +2232,7 @@ fn a_position_resolves_against_its_own_repo_not_the_current_directory() {
 /// failed every command until someone upgraded, and dropping would ping-pong.
 #[test]
 fn an_older_binary_keeps_its_own_store_beside_a_newer_one() {
-    let (dir, db) = scratch("newerdb");
+    let (dir, db) = ruby_scratch("newerdb");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
     rusqlite::Connection::open(&db)
@@ -2445,7 +2293,7 @@ fn rebuilt_on_status(db: &Path, dir: &Path, said: &str) {
 
 #[test]
 fn a_store_that_is_not_a_database_is_rebuilt() {
-    let (dir, db) = scratch("garbage");
+    let (dir, db) = ruby_scratch("garbage");
     repo(&dir);
     fs::create_dir_all(db.parent().unwrap()).unwrap();
     fs::write(&db, "not a database ".repeat(1000)).unwrap();
@@ -2461,7 +2309,7 @@ fn a_store_that_is_not_a_database_is_rebuilt() {
 
 #[test]
 fn a_truncated_store_is_rebuilt() {
-    let (dir, db) = scratch("truncated");
+    let (dir, db) = ruby_scratch("truncated");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
     let len = fs::metadata(&db).unwrap().len();
@@ -2477,7 +2325,7 @@ fn a_truncated_store_is_rebuilt() {
 
 #[test]
 fn a_rebuild_that_fails_is_set_aside_and_rebuilt() {
-    let (dir, db) = scratch("failedrebuild");
+    let (dir, db) = ruby_scratch("failedrebuild");
     repo(&dir);
     fs::create_dir_all(db.parent().unwrap()).unwrap();
     // an old store whose drop fails midway: a view where a table was
@@ -2493,7 +2341,7 @@ fn a_rebuild_that_fails_is_set_aside_and_rebuilt() {
 
 #[test]
 fn concurrent_commands_on_a_broken_store_rebuild_it_once() {
-    let (dir, db) = scratch("concurrent");
+    let (dir, db) = ruby_scratch("concurrent");
     repo(&dir);
     fs::create_dir_all(db.parent().unwrap()).unwrap();
     fs::write(&db, "not a database ".repeat(1000)).unwrap();
@@ -2527,7 +2375,7 @@ fn concurrent_commands_on_a_broken_store_rebuild_it_once() {
 /// (`indexed`), not a second use: `index` counts only an asked-for `--index`.
 #[test]
 fn the_index_a_query_spawns_is_not_counted_as_a_use() {
-    let (dir, db) = scratch("usage-spawned");
+    let (dir, db) = ruby_scratch("usage-spawned");
     repo(&dir);
     let spawned = [("TREKR_SPAWNED_BY_QUERY", "1")];
     assert!(
@@ -2548,7 +2396,7 @@ fn the_index_a_query_spawns_is_not_counted_as_a_use() {
 /// by whom, and how often they come back empty.
 #[test]
 fn usage_counts_each_command_by_caller_and_outcome() {
-    let (dir, db) = scratch("usage");
+    let (dir, db) = ruby_scratch("usage");
     repo(&dir);
     let agent = [("CLAUDECODE", "1")];
 
@@ -2685,7 +2533,7 @@ fn usage_tells_modes_and_knobs_apart_and_records_the_version() {
 /// as `tree-built`, at random, when a fast index beat the first look.
 #[test]
 fn a_query_whose_index_beat_its_first_look_maps_the_tree_that_index_prepared() {
-    let (dir, db) = scratch("index-beat-look");
+    let (dir, db) = ruby_scratch("index-beat-look");
     repo(&dir);
     let out = trekr_env(
         &db,
@@ -2711,7 +2559,7 @@ fn a_query_whose_index_beat_its_first_look_maps_the_tree_that_index_prepared() {
 /// Asking trekr about itself is not a use of it; a call it could not parse is.
 #[test]
 fn help_and_version_are_not_counted_but_a_malformed_call_is() {
-    let (dir, db) = scratch("usage-help");
+    let (dir, db) = ruby_scratch("usage-help");
     repo(&dir);
     for args in [&["--help"][..], &["--version"], &["-h"]] {
         assert_eq!(trekr(&db, &dir, args).status.code(), Some(0));
@@ -2752,7 +2600,7 @@ fn help_and_version_are_not_counted_but_a_malformed_call_is() {
 /// PLAN promised the flag from the start; only the rendering was missing.
 #[test]
 fn explain_renders_the_disclosure_the_json_already_carries() {
-    let (dir, db) = scratch("explain");
+    let (dir, db) = ruby_scratch("explain");
     git(&dir, &["init", "-q"]);
     // Two classes define `ship`, so the answer is ambiguous with a candidate
     // list — the case where an explanation is worth reading.
@@ -2763,19 +2611,7 @@ fn explain_renders_the_disclosure_the_json_already_carries() {
          \x20 def sweep\n    thing.ship\n  end\nend\n",
     )
     .unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr(&db, &dir, &["--index"]);
 
     let plain = stdout(&trekr(&db, &dir, &["--def", "app.rb:11:13"]));
@@ -2821,8 +2657,8 @@ fn explain_renders_the_disclosure_the_json_already_carries() {
 /// `bundler/gems/<repo>-<sha>/`, and a monorepo's gems are subdirectories
 /// of that checkout, each with its gemspec (DEC-150).
 fn git_monorepo_app(label: &str) -> (PathBuf, PathBuf, PathBuf) {
-    let (app, db) = scratch(label);
-    let (gems, _) = scratch(&format!("{label}-gems"));
+    let (app, db) = ruby_scratch(label);
+    let (gems, _) = ruby_scratch(&format!("{label}-gems"));
     let checkout = gems.join("bundler/gems/kit-abc123def456");
     for (gem, file, body) in [
         (
@@ -2878,19 +2714,7 @@ fn git_monorepo_app(label: &str) -> (PathBuf, PathBuf, PathBuf) {
         ),
     )
     .unwrap();
-    git(&app, &["add", "-A"]);
-    git(
-        &app,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&app);
     (app, db, gems)
 }
 
@@ -2968,8 +2792,8 @@ fn a_position_in_a_git_gem_answers_from_the_app() {
 /// that requires it, and bundling json showed it to every app.
 #[test]
 fn a_bundled_json_gems_opt_in_extensions_are_left_out() {
-    let (app, db) = scratch("json-add-app");
-    let (gems, _) = scratch("json-add-gems");
+    let (app, db) = ruby_scratch("json-add-app");
+    let (gems, _) = ruby_scratch("json-add-gems");
     let lib = gems.join("gems/json-9.9.9/lib");
     fs::create_dir_all(lib.join("json/add")).unwrap();
     fs::write(
@@ -2994,19 +2818,7 @@ fn a_bundled_json_gems_opt_in_extensions_are_left_out() {
          \nPLATFORMS\n  ruby\n\nDEPENDENCIES\n  json\n",
     )
     .unwrap();
-    git(&app, &["add", "-A"]);
-    git(
-        &app,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&app);
     let env = [("GEM_HOME", gems.to_str().unwrap())];
     let index = json(&trekr_env(&db, &app, &["--index", "--json"], &env));
     assert_eq!(index["gems"]["files"], 1, "{index}");
@@ -3029,8 +2841,8 @@ fn a_bundled_json_gems_opt_in_extensions_are_left_out() {
 /// rather than in the testbed.
 #[test]
 fn a_gem_position_answers_from_an_app_that_resolves_it() {
-    let (app, db) = scratch("gemctx-app");
-    let (gems, _) = scratch("gemctx-gems");
+    let (app, db) = ruby_scratch("gemctx-app");
+    let (gems, _) = ruby_scratch("gemctx-gems");
 
     // Two gems: one defines a method, the other calls it. Laid out the way
     // bundler does, because that is how they are located.
@@ -3059,19 +2871,7 @@ fn a_gem_position_answers_from_an_app_that_resolves_it() {
          \nPLATFORMS\n  ruby\n\nDEPENDENCIES\n  helper\n  user\n",
     )
     .unwrap();
-    git(&app, &["add", "-A"]);
-    git(
-        &app,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&app);
 
     let out = trekr_env(
         &db,
@@ -3152,7 +2952,7 @@ fn a_gem_position_answers_from_an_app_that_resolves_it() {
 /// accident.
 #[test]
 fn human_output_shortens_home_and_json_keeps_it_absolute() {
-    let (dir, db) = scratch("tilde");
+    let (dir, db) = ruby_scratch("tilde");
     repo(&dir);
     // Canonical, because git reports `/private/var/...` where `temp_dir()`
     // says `/var/...` on macOS — the same symlink DEC-026 audited.
@@ -3204,7 +3004,7 @@ fn human_output_shortens_home_and_json_keeps_it_absolute() {
 /// nothing" and would tell a script the question had been answered.
 #[test]
 fn with_no_index_an_unindexed_checkout_is_a_setup_problem_not_a_residue() {
-    let (dir, db) = scratch("not-indexed");
+    let (dir, db) = ruby_scratch("not-indexed");
     repo(&dir);
 
     for args in [
@@ -3286,7 +3086,7 @@ fn a_first_query_indexes_the_checkout_and_answers() {
         ("auto-ancestors", vec!["--ancestors", "Widget"]),
         ("auto-dead", vec!["--dead", "."]),
     ] {
-        let (dir, db) = scratch(label);
+        let (dir, db) = ruby_scratch(label);
         repo(&dir);
         let mut asked = args.clone();
         asked.push("--json");
@@ -3314,7 +3114,7 @@ fn a_first_query_indexes_the_checkout_and_answers() {
 /// in, and says if the rest is not.
 #[test]
 fn a_first_whole_checkout_question_waits_for_the_whole_index() {
-    let (dir, db) = scratch("auto-whole");
+    let (dir, db) = ruby_scratch("auto-whole");
     collision_repo(&dir);
     let out = trekr(&db, &dir, &["--refs", "Widget#save", "--json"]);
     assert_eq!(out.status.code(), Some(0));
@@ -3327,7 +3127,7 @@ fn a_first_whole_checkout_question_waits_for_the_whole_index() {
 /// `--status` reports; it never indexes.
 #[test]
 fn status_stays_read_only_in_an_unindexed_checkout() {
-    let (dir, db) = scratch("auto-status");
+    let (dir, db) = ruby_scratch("auto-status");
     repo(&dir);
     let out = trekr(&db, &dir, &["--status", "--json"]);
     assert_eq!(out.status.code(), Some(2));
@@ -3341,9 +3141,9 @@ fn status_stays_read_only_in_an_unindexed_checkout() {
 /// answer alone.
 #[test]
 fn a_first_index_longer_than_a_second_says_so_on_stderr() {
-    let (dir, db) = scratch("auto-notice");
+    let (dir, db) = ruby_scratch("auto-notice");
     repo(&dir);
-    let (other, _) = scratch("auto-notice-other");
+    let (other, _) = ruby_scratch("auto-notice-other");
     repo(&other);
     assert!(trekr(&db, &other, &["--index"]).status.success());
 
@@ -3367,7 +3167,7 @@ fn a_first_index_longer_than_a_second_says_so_on_stderr() {
     assert!(json(&out)["references"].is_array(), "stdout is the answer");
 
     // A quick one says nothing.
-    let (quick, _) = scratch("auto-notice-quick");
+    let (quick, _) = ruby_scratch("auto-notice-quick");
     repo(&quick);
     let out = trekr(&db, &quick, &["--refs", "Widget#helper", "--json"]);
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
@@ -3380,7 +3180,7 @@ fn a_first_index_longer_than_a_second_says_so_on_stderr() {
 /// "database is locked".
 #[test]
 fn first_queries_at_once_share_one_index() {
-    let (dir, db) = scratch("auto-race");
+    let (dir, db) = ruby_scratch("auto-race");
     collision_repo(&dir);
     let asked = [
         vec!["--refs", "Widget#save", "--json"],
@@ -3422,7 +3222,7 @@ fn first_queries_at_once_share_one_index() {
 /// died is finished by the query that finds it.
 #[test]
 fn a_query_waits_for_an_index_under_way_and_finishes_one_cut_short() {
-    let (dir, db) = scratch("auto-behind");
+    let (dir, db) = ruby_scratch("auto-behind");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     let indexer = stand_in_indexer(&db, &dir);
@@ -3468,7 +3268,7 @@ fn a_query_waits_for_an_index_under_way_and_finishes_one_cut_short() {
 /// miss there waits for the rest, it waits for its own index as its own.
 #[test]
 fn an_early_answer_says_the_rest_is_indexed_in_the_background() {
-    let (dir, db) = scratch("auto-background");
+    let (dir, db) = ruby_scratch("auto-background");
     repo(&dir);
     let stall = [("TREKR_TEST_STALL_MS", "4000")];
     let limit = std::time::Duration::from_secs(20);
@@ -3479,7 +3279,7 @@ fn an_early_answer_says_the_rest_is_indexed_in_the_background() {
     assert!(stderr.contains("in the background"), "{stderr}");
     settled(&db, &dir);
 
-    let (dir, db) = scratch("auto-background-miss");
+    let (dir, db) = ruby_scratch("auto-background-miss");
     repo(&dir);
     let miss = trekr_within(&db, &dir, &["--def", "widget.rb:1:17"], &stall, limit);
     let stderr = String::from_utf8_lossy(&miss.stderr);
@@ -3492,7 +3292,7 @@ fn an_early_answer_says_the_rest_is_indexed_in_the_background() {
 /// by its first query.
 #[test]
 fn status_of_an_empty_store_says_the_first_query_indexes() {
-    let (dir, db) = scratch("status-empty");
+    let (dir, db) = ruby_scratch("status-empty");
     repo(&dir);
     let out = trekr(&db, &dir, &["--status", "--all"]);
     let text = stdout(&out);
@@ -3507,26 +3307,14 @@ fn status_of_an_empty_store_says_the_first_query_indexes() {
 /// started by hand — no file asked first — pausing after its first part and
 /// again as the rest's write holds the store.
 fn slow_first_index(label: &str, bulk_ms: &str) -> (PathBuf, PathBuf, std::process::Child) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     repo(&dir);
     fs::write(
         dir.join("other.rb"),
         "class Other\n  def go\n    Widget.new\n    Nowhere.new\n  end\nend\n",
     )
     .unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "other",
-        ],
-    );
+    commit_all(&dir);
     let winner = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
         .args(["--index"])
         .current_dir(&dir)
@@ -3629,7 +3417,7 @@ fn a_miss_from_an_early_store_waits_a_bounded_while_and_says_so() {
 /// to read first — the editor's open files — to the winner (DEC-512).
 #[test]
 fn a_losing_index_hands_its_hints_to_the_winner() {
-    let (dir, db) = scratch("handed-loser");
+    let (dir, db) = ruby_scratch("handed-loser");
     repo(&dir);
     assert_eq!(trekr(&db, &dir, &["--status"]).status.code(), Some(2));
     let mut other = Command::new("sleep").arg("30").spawn().unwrap();
@@ -3674,7 +3462,7 @@ fn a_losing_index_hands_its_hints_to_the_winner() {
 /// that is what it waited for — not a write lock, which it never waited on.
 #[test]
 fn an_index_that_outwaits_another_index_says_so() {
-    let (dir, db) = scratch("claim-outwaited");
+    let (dir, db) = ruby_scratch("claim-outwaited");
     repo(&dir);
     assert_eq!(trekr(&db, &dir, &["--status"]).status.code(), Some(2));
     let mut other = Command::new("sleep").arg("30").spawn().unwrap();
@@ -3699,7 +3487,7 @@ fn an_index_that_outwaits_another_index_says_so() {
 /// last to close, which is what would have checkpointed and removed it.
 #[test]
 fn a_first_query_leaves_no_write_ahead_log() {
-    let (dir, db) = scratch("auto-wal");
+    let (dir, db) = ruby_scratch("auto-wal");
     repo(&dir);
     let out = trekr(&db, &dir, &["--refs", "Widget#helper", "--json"]);
     assert_eq!(out.status.code(), Some(0));
@@ -3717,22 +3505,10 @@ fn a_first_query_leaves_no_write_ahead_log() {
 /// to go — waits for the rest.
 #[test]
 fn a_position_the_index_cannot_change_answers_at_once_while_it_runs() {
-    let (dir, db) = scratch("auto-final");
+    let (dir, db) = ruby_scratch("auto-final");
     repo(&dir);
     fs::write(dir.join("thing.rb"), "class Outer::Thing\nend\n").unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "thing",
-        ],
-    );
+    commit_all(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     let indexer = stand_in_indexer(&db, &dir);
     let started = std::time::Instant::now();
@@ -3757,7 +3533,7 @@ fn a_position_the_index_cannot_change_answers_at_once_while_it_runs() {
 /// whole, no `warming`.
 #[test]
 fn an_answer_from_the_file_alone_waits_for_no_index() {
-    let (dir, db) = scratch("auto-file-alone");
+    let (dir, db) = ruby_scratch("auto-file-alone");
     repo(&dir);
     assert_eq!(trekr(&db, &dir, &["--status"]).status.code(), Some(2));
     let indexer = stand_in_indexer(&db, &dir);
@@ -3818,9 +3594,9 @@ impl StandIn {
 /// reported as `--index` reports it (DEC-400): incomplete, exit 2.
 #[test]
 fn a_first_query_whose_index_outwaits_the_lock_is_incomplete() {
-    let (dir, db) = scratch("auto-outwaited");
+    let (dir, db) = ruby_scratch("auto-outwaited");
     repo(&dir);
-    let (other, _) = scratch("auto-outwaited-other");
+    let (other, _) = ruby_scratch("auto-outwaited-other");
     repo(&other);
     assert!(trekr(&db, &other, &["--index"]).status.success());
     let holder = rusqlite::Connection::open(&db).unwrap();
@@ -3886,7 +3662,7 @@ fn a_first_query_whose_index_dies_after_claiming_ends() {
         ("kill", 2, "stopped by a signal"),
         ("fail", 74, "disk I/O error"),
     ] {
-        let (dir, db) = scratch(&format!("auto-dies-{hook}"));
+        let (dir, db) = ruby_scratch(&format!("auto-dies-{hook}"));
         repo(&dir);
         let out = trekr_within(
             &db,
@@ -3929,7 +3705,7 @@ fn a_claim_whose_pid_was_reused_is_taken_over() {
         vec!["--index", "--json"],
         vec!["--refs", "Widget#helper", "--json"],
     ] {
-        let (dir, db) = scratch(&format!("reused-{}", args[0].trim_start_matches('-')));
+        let (dir, db) = ruby_scratch(&format!("reused-{}", args[0].trim_start_matches('-')));
         repo(&dir);
         assert!(trekr(&db, &dir, &["--status"]).status.code() == Some(2));
         let root = fs::canonicalize(&dir).unwrap();
@@ -3957,7 +3733,7 @@ fn a_claim_whose_pid_was_reused_is_taken_over() {
 /// says so, rather than that nobody ever indexed it.
 #[test]
 fn no_index_beside_anothers_first_index_says_it_is_under_way() {
-    let (dir, db) = scratch("noindex-warming");
+    let (dir, db) = ruby_scratch("noindex-warming");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--status"]).status.code() == Some(2));
     let root = fs::canonicalize(&dir).unwrap();
@@ -3992,7 +3768,7 @@ fn no_index_beside_anothers_first_index_says_it_is_under_way() {
 /// line — and says that it did.
 #[test]
 fn a_rough_column_snaps_to_the_nearest_name_and_discloses_it() {
-    let (dir, db) = scratch("snap");
+    let (dir, db) = ruby_scratch("snap");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
 
@@ -4049,7 +3825,7 @@ fn a_rough_column_snaps_to_the_nearest_name_and_discloses_it() {
 /// and this pins the difference between the two.
 #[test]
 fn a_body_only_edit_is_still_written_even_though_the_surface_is_unchanged() {
-    let (dir, db) = scratch("map-key");
+    let (dir, db) = ruby_scratch("map-key");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
 
@@ -4088,7 +3864,7 @@ fn a_body_only_edit_is_still_written_even_though_the_surface_is_unchanged() {
 /// and discloses that the rest of the index may lag.
 #[test]
 fn a_query_reads_every_file_changed_since_the_index_commits_included() {
-    let (dir, db) = scratch("freshness");
+    let (dir, db) = ruby_scratch("freshness");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
 
@@ -4114,19 +3890,7 @@ fn a_query_reads_every_file_changed_since_the_index_commits_included() {
         "class Other\n  def only_here\n  end\nend\n",
     )
     .unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "edit",
-        ],
-    );
+    commit_all(&dir);
 
     let out = trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]);
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -4156,7 +3920,7 @@ fn a_query_reads_every_file_changed_since_the_index_commits_included() {
 /// says when the file it asked about could not be refreshed (DEC-065).
 #[test]
 fn read_commands_answer_and_exit_while_another_process_writes() {
-    let (dir, db) = scratch("held-lock");
+    let (dir, db) = ruby_scratch("held-lock");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
 
@@ -4224,7 +3988,7 @@ fn read_commands_answer_and_exit_while_another_process_writes() {
 /// asked about or the one defining what it calls (DEC-035).
 #[test]
 fn an_edit_git_has_not_noticed_is_read_by_the_next_query() {
-    let (dir, db) = scratch("unstaged");
+    let (dir, db) = ruby_scratch("unstaged");
     repo(&dir);
     fs::write(dir.join("caller.rb"), "Widget.new.resize(1)\n").unwrap();
     git(&dir, &["add", "-A"]);
@@ -4270,7 +4034,7 @@ fn an_edit_git_has_not_noticed_is_read_by_the_next_query() {
 /// moves git's index, and a file it adds is not read until `--index`.
 #[test]
 fn whole_checkout_questions_read_edits_and_say_what_may_lag() {
-    let (dir, db) = scratch("whole-fresh");
+    let (dir, db) = ruby_scratch("whole-fresh");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     // `resize`'s tier.
@@ -4347,7 +4111,7 @@ fn whole_checkout_questions_read_edits_and_say_what_may_lag() {
 #[cfg(unix)]
 #[test]
 fn a_file_found_by_its_name_is_read_bounded() {
-    let (dir, db) = scratch("named-devices");
+    let (dir, db) = ruby_scratch("named-devices");
     repo(&dir);
     fs::create_dir_all(dir.join("config")).unwrap();
     for name in [
@@ -4373,7 +4137,7 @@ fn a_file_found_by_its_name_is_read_bounded() {
 #[cfg(unix)]
 #[test]
 fn a_pipe_or_a_device_is_refused_rather_than_read() {
-    let (dir, db) = scratch("devices");
+    let (dir, db) = ruby_scratch("devices");
     repo(&dir);
     std::os::unix::fs::symlink("/dev/zero", dir.join("zero.rb")).unwrap();
     let made = Command::new("mkfifo")
@@ -4418,7 +4182,7 @@ fn a_pipe_or_a_device_is_refused_rather_than_read() {
 /// clamps one: never a variable on a later line.
 #[test]
 fn a_column_past_the_line_stays_on_its_line() {
-    let (dir, db) = scratch("past-eol");
+    let (dir, db) = ruby_scratch("past-eol");
     repo(&dir);
     fs::write(
         dir.join("counter.rb"),
@@ -4442,7 +4206,7 @@ fn a_column_past_the_line_stays_on_its_line() {
 /// `--index` read (DEC-035).
 #[test]
 fn a_reverted_edit_is_not_answered_from() {
-    let (dir, db) = scratch("reverted");
+    let (dir, db) = ruby_scratch("reverted");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     let file = dir.join("widget.rb");
@@ -4485,7 +4249,7 @@ fn a_reverted_edit_is_not_answered_from() {
 /// edit made since is answered as it is now, and an index since drops it.
 #[test]
 fn an_edit_is_answered_as_it_is_now_not_as_last_read() {
-    let (dir, db) = scratch("guess");
+    let (dir, db) = ruby_scratch("guess");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     let file = dir.join("widget.rb");
@@ -4517,7 +4281,7 @@ fn an_edit_is_answered_as_it_is_now_not_as_last_read() {
 #[test]
 fn queries_over_the_same_deletions_share_one_copy() {
     use std::os::unix::fs::MetadataExt;
-    let (dir, db) = scratch("deleted-order");
+    let (dir, db) = ruby_scratch("deleted-order");
     repo(&dir);
     for i in 0..6 {
         fs::write(dir.join(format!("w{i}.rb")), format!("class W{i}\nend\n")).unwrap();
@@ -4549,7 +4313,7 @@ fn queries_over_the_same_deletions_share_one_copy() {
 /// and maps nothing to them — so `--gc` collects them once the edit is gone.
 #[test]
 fn a_query_records_new_bytes_and_maps_nothing() {
-    let (dir, db) = scratch("query-blob");
+    let (dir, db) = ruby_scratch("query-blob");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     let blobs = || json(&trekr(&db, &dir, &["--status", "--json"]))["totals"]["blobs"].clone();
@@ -4587,7 +4351,7 @@ fn a_query_records_new_bytes_and_maps_nothing() {
 /// help of `--gc` and `--drop` says where they are kept.
 #[test]
 fn gc_counts_overlay_copies_apart_from_snapshots() {
-    let (dir, db) = scratch("gc-overlays");
+    let (dir, db) = ruby_scratch("gc-overlays");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     let file = dir.join("widget.rb");
@@ -4630,7 +4394,7 @@ fn gc_counts_overlay_copies_apart_from_snapshots() {
 /// A file git does not track is read as one it does, edited or deleted.
 #[test]
 fn an_untracked_file_is_read_as_it_is_now() {
-    let (dir, db) = scratch("untracked");
+    let (dir, db) = ruby_scratch("untracked");
     repo(&dir);
     fs::write(dir.join("extra.rb"), "class Extra\n  def y\n  end\nend\n").unwrap();
     assert!(trekr(&db, &dir, &["--index"]).status.success());
@@ -4665,7 +4429,7 @@ fn an_untracked_file_is_read_as_it_is_now() {
 /// so — but the file asked about is still read.
 #[test]
 fn past_the_bulk_limit_the_file_asked_about_is_still_read() {
-    let (dir, db) = scratch("bulk");
+    let (dir, db) = ruby_scratch("bulk");
     repo(&dir);
     for i in 0..40 {
         fs::write(dir.join(format!("w{i}.rb")), format!("class W{i}\nend\n")).unwrap();
@@ -4708,7 +4472,7 @@ fn past_the_bulk_limit_the_file_asked_about_is_still_read() {
 /// JSON's `stale` and `cause` do.
 #[test]
 fn past_the_bulk_limit_a_name_found_nowhere_says_what_was_not_read() {
-    let (dir, db) = scratch("bulk-nowhere");
+    let (dir, db) = ruby_scratch("bulk-nowhere");
     repo(&dir);
     for i in 0..40 {
         fs::write(dir.join(format!("w{i}.rb")), format!("class W{i}\nend\n")).unwrap();
@@ -4741,7 +4505,7 @@ fn past_the_bulk_limit_a_name_found_nowhere_says_what_was_not_read() {
 /// about.
 #[test]
 fn a_git_that_cannot_say_what_changed_is_disclosed() {
-    let (dir, db) = scratch("git-fails");
+    let (dir, db) = ruby_scratch("git-fails");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     let file = dir.join("widget.rb");
@@ -4786,7 +4550,7 @@ fn a_git_that_cannot_say_what_changed_is_disclosed() {
 /// would compete with it.
 #[test]
 fn a_git_given_up_on_does_not_outlive_the_query() {
-    let (dir, db) = scratch("git-killed");
+    let (dir, db) = ruby_scratch("git-killed");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     let (bin, _) = support::scratch("git-killed-bin");
@@ -4831,7 +4595,7 @@ fn a_git_given_up_on_does_not_outlive_the_query() {
 /// `trekr <input>` dispatches on shape (DEC-036), and every shape speaks JSON.
 #[test]
 fn the_bare_grammar_dispatches_on_shape() {
-    let (dir, db) = scratch("grammar");
+    let (dir, db) = ruby_scratch("grammar");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
 
@@ -4888,7 +4652,7 @@ fn the_bare_grammar_dispatches_on_shape() {
 /// `--dead` tiers candidates by what evidence was found, and never says "dead".
 #[test]
 fn dead_candidates_are_tiered_by_the_evidence_found() {
-    let (dir, db) = scratch("dead");
+    let (dir, db) = ruby_scratch("dead");
     repo(&dir);
     fs::write(
         dir.join("thing.rb"),
@@ -4899,19 +4663,7 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
     )
     .unwrap();
     fs::write(dir.join("caller.rb"), "something.maybe\n").unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "add",
-        ],
-    );
+    commit_all(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
 
     let out = trekr(&db, &dir, &["--dead", "thing.rb", "--json"]);
@@ -4985,19 +4737,7 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
          class_eval \"def #{NAME * 2}; end\"\nend\n",
     )
     .unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "dyn",
-        ],
-    );
+    commit_all(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     let out = trekr(&db, &dir, &["--dead", "dyn.rb", "--json"]);
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -5019,7 +4759,7 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
 /// so the answer turned on argument order.
 #[test]
 fn dead_weighs_each_scope_against_its_own_checkout() {
-    let (base, db) = scratch("dead-two");
+    let (base, db) = ruby_scratch("dead-two");
     let (one, two) = (base.join("one"), base.join("two"));
     let widget = "class Widget\n  def self.build\n  end\nend\n";
     for (dir, calls) in [(&one, 1), (&two, 3)] {
@@ -5032,19 +4772,7 @@ fn dead_weighs_each_scope_against_its_own_checkout() {
             format!("class Main\n  def go\n{body}  end\nend\n"),
         )
         .unwrap();
-        git(dir, &["add", "-A"]);
-        git(
-            dir,
-            &[
-                "-c",
-                "user.email=t@e.st",
-                "-c",
-                "user.name=test",
-                "commit",
-                "-qm",
-                "init",
-            ],
-        );
+        commit_all(dir);
         assert!(trekr(&db, dir, &["--index"]).status.success());
     }
     let (one_scope, two_scope) = (
@@ -5095,7 +4823,7 @@ fn dead_weighs_each_scope_against_its_own_checkout() {
 /// assemble, the one the LSP starts in the background and one someone runs.
 #[test]
 fn an_index_prepares_the_tree() {
-    let (dir, db) = scratch("prebuild");
+    let (dir, db) = ruby_scratch("prebuild");
     repo(&dir);
     let trees = db.with_extension("trees");
     let files = || fs::read_dir(&trees).map_or(0, |d| d.count());
@@ -5145,7 +4873,7 @@ fn an_index_prepares_the_tree() {
 /// methods keeps it, and the query after still finds the new method (DEC-194).
 #[test]
 fn a_method_edit_keeps_the_tree_snapshot() {
-    let (dir, db) = scratch("method-edit");
+    let (dir, db) = ruby_scratch("method-edit");
     repo(&dir);
     let trees = db.with_extension("trees");
     let names = || -> Vec<String> {
@@ -5188,7 +4916,7 @@ fn a_method_edit_keeps_the_tree_snapshot() {
 /// any more — and never the current one.
 #[test]
 fn gc_removes_tree_snapshots_no_checkouts_index_names() {
-    let (dir, db) = scratch("gc-trees");
+    let (dir, db) = ruby_scratch("gc-trees");
     repo(&dir);
     let trees = db.with_extension("trees");
     let files = || fs::read_dir(&trees).map_or(0, |d| d.count());
@@ -5275,7 +5003,7 @@ fn stale_snapshot(db: &Path) -> u64 {
 /// pass, by a process nothing waits for — and never by a query (DEC-650).
 #[test]
 fn an_index_pass_compacts_the_store_in_the_background_and_a_query_does_not() {
-    let (dir, db) = scratch("cleanup");
+    let (dir, db) = ruby_scratch("cleanup");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
     bloat(&db, 40);
@@ -5347,7 +5075,7 @@ fn live_and_free(db: &Path) -> (i64, i64) {
 /// cannot open (DEC-650).
 #[test]
 fn the_background_cleanup_cleans_the_side_store_its_index_wrote() {
-    let (dir, db) = scratch("cleanup-side");
+    let (dir, db) = ruby_scratch("cleanup-side");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
     rusqlite::Connection::open(&db)
@@ -5376,7 +5104,7 @@ fn the_background_cleanup_cleans_the_side_store_its_index_wrote() {
 /// A cleanup that cannot open its store says so in the log.
 #[test]
 fn a_cleanup_that_cannot_open_its_store_logs_why() {
-    let (dir, db) = scratch("cleanup-fail");
+    let (dir, db) = ruby_scratch("cleanup-fail");
     let log = dir.join("log.ndjson");
     let bogus = dir.join("not-a-store.db");
     let ran = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
@@ -5397,7 +5125,7 @@ fn a_cleanup_that_cannot_open_its_store_logs_why() {
 /// `--gc`, dry run included — no data goes — and `--gc` says so.
 #[test]
 fn gc_says_which_index_it_added_even_on_a_dry_run() {
-    let (dir, db) = scratch("gc-index");
+    let (dir, db) = ruby_scratch("gc-index");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
     rusqlite::Connection::open(&db)
@@ -5425,7 +5153,7 @@ fn gc_says_which_index_it_added_even_on_a_dry_run() {
 /// file's own shrink once vacuumed — apart from the pages it freed inside.
 #[test]
 fn gc_reports_the_bytes_it_returned_to_the_disk() {
-    let (dir, db) = scratch("gc-bytes");
+    let (dir, db) = ruby_scratch("gc-bytes");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
     bloat(&db, 40);
@@ -5452,7 +5180,7 @@ fn gc_reports_the_bytes_it_returned_to_the_disk() {
 /// in use.
 #[test]
 fn status_lists_and_gc_removes_what_is_kept_beside_the_store() {
-    let (dir, db) = scratch("gc-kept");
+    let (dir, db) = ruby_scratch("gc-kept");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
     let stem = db.file_stem().unwrap().to_str().unwrap();
@@ -5509,8 +5237,8 @@ fn status_lists_and_gc_removes_what_is_kept_beside_the_store() {
 /// it again.
 #[test]
 fn gc_collects_a_gem_version_no_bundle_names_and_an_index_brings_it_back() {
-    let (app, db) = scratch("gc-app");
-    let (gems, _) = scratch("gc-gems");
+    let (app, db) = ruby_scratch("gc-app");
+    let (gems, _) = ruby_scratch("gc-gems");
     repo(&app);
     let shared = "module Shared\n  def helpers\n  end\nend\n";
     for (gem, own) in [("widget-1.0.0", "Old"), ("widget-2.0.0", "New")] {
@@ -5718,9 +5446,9 @@ fn old_store(db: &Path) {
 /// beside it — but only a `core/` trekr wrote (DEC-274).
 #[test]
 fn an_upgrade_removes_the_core_files_earlier_builds_left() {
-    let (dir, _) = scratch("core-upgrade");
+    let (dir, _) = ruby_scratch("core-upgrade");
     repo(&dir);
-    let (store, _) = scratch("core-upgrade-store");
+    let (store, _) = ruby_scratch("core-upgrade-store");
     let db = store.join("trekr.db");
     let rspec = include_str!("../src/tree/rspec.rb");
     let legacy = store.join("core");
@@ -5737,7 +5465,7 @@ fn an_upgrade_removes_the_core_files_earlier_builds_left() {
     fs::create_dir_all(stale.parent().unwrap()).unwrap();
     fs::write(&stale, "class String\nend\n").unwrap();
     // Someone else's `core/`, beside a store of its own: never trekr's.
-    let (other, _) = scratch("core-upgrade-other");
+    let (other, _) = ruby_scratch("core-upgrade-other");
     let theirs = other.join("core/String.rb");
     fs::create_dir_all(theirs.parent().unwrap()).unwrap();
     fs::write(&theirs, "class String\nend\n").unwrap();
@@ -5759,10 +5487,10 @@ fn an_upgrade_removes_the_core_files_earlier_builds_left() {
 /// files no signatures in the store are served from (DEC-274).
 #[test]
 fn gc_collects_a_rubys_signatures_and_core_files() {
-    let (dir, db) = scratch("gc-core");
+    let (dir, db) = ruby_scratch("gc-core");
     repo(&dir);
     fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
-    let (home, _) = scratch("gc-core-home");
+    let (home, _) = ruby_scratch("gc-core-home");
     fake_ruby(&home, "9.8.7", &[], &[]);
     fake_ruby(&home, "9.7.1", &[], &[]);
     let env = [("HOME", home.to_str().unwrap())];
@@ -5823,10 +5551,10 @@ fn gc_collects_a_rubys_signatures_and_core_files() {
 
 #[test]
 fn processes_opening_an_old_store_at_once_rebuild_it_once() {
-    let (dir, db) = scratch("old-race");
+    let (dir, db) = ruby_scratch("old-race");
     repo(&dir);
     // What a complete rebuild leaves, to hold each raced one to.
-    let (_, reference) = scratch("old-race-ref");
+    let (_, reference) = ruby_scratch("old-race-ref");
     trekr(&reference, &dir, &["--status"]);
     let objects = "SELECT COUNT(*) FROM sqlite_master";
     for round in 0..6 {
@@ -5862,7 +5590,7 @@ fn processes_opening_an_old_store_at_once_rebuild_it_once() {
 
 #[test]
 fn a_checkout_missing_after_an_upgrade_says_so() {
-    let (dir, db) = scratch("upgraded");
+    let (dir, db) = ruby_scratch("upgraded");
     repo(&dir);
     old_store(&db);
     let out = trekr(
@@ -5882,7 +5610,7 @@ fn a_checkout_missing_after_an_upgrade_says_so() {
     assert!(reason.contains("v1"), "{reason}");
 
     // Once anything is indexed again, "not indexed" is about the checkout.
-    let (other, _) = scratch("upgraded-other");
+    let (other, _) = ruby_scratch("upgraded-other");
     repo(&other);
     assert!(trekr(&db, &other, &["--index"]).status.success());
     let answer = json(&trekr(
@@ -5905,9 +5633,9 @@ fn a_checkout_missing_after_an_upgrade_says_so() {
 /// nobody indexed is `not_indexed`, exit 2 — never another checkout's row.
 #[test]
 fn status_in_an_unindexed_checkout_says_so_rather_than_showing_another() {
-    let (dir, db) = scratch("status-here");
+    let (dir, db) = ruby_scratch("status-here");
     repo(&dir);
-    let (other, _) = scratch("status-here-other");
+    let (other, _) = ruby_scratch("status-here-other");
     repo(&other);
     assert!(trekr(&db, &other, &["--index"]).status.success());
 
@@ -5946,7 +5674,7 @@ fn status_in_an_unindexed_checkout_says_so_rather_than_showing_another() {
     assert_eq!(missing.status.code(), Some(66));
 
     // Outside any checkout there is no "this checkout": the repos are listed.
-    let (nowhere, _) = scratch("status-nowhere");
+    let (nowhere, _) = ruby_scratch("status-nowhere");
     let listed = trekr(&db, &nowhere, &["--status", "--json"]);
     assert_eq!(listed.status.code(), Some(0));
     assert_eq!(json(&listed)["checkouts"], from_there["checkouts"]);
@@ -5959,7 +5687,7 @@ fn status_in_an_unindexed_checkout_says_so_rather_than_showing_another() {
 /// silently, and a JSON caller still gets only its one answer on stdout.
 #[test]
 fn a_queued_index_says_what_it_is_waiting_for() {
-    let (dir, db) = scratch("queued");
+    let (dir, db) = ruby_scratch("queued");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     fs::write(dir.join("gadget.rb"), "class Gadget\nend\n").unwrap();
@@ -5991,7 +5719,7 @@ fn cut_short_behind_a_lock(label: &str) -> (PathBuf, PathBuf, rusqlite::Connecti
 
 /// The same, with the mark naming `pid` as its writer.
 fn marked_behind_a_lock(label: &str, pid: u32) -> (PathBuf, PathBuf, rusqlite::Connection) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     repo(&dir);
     let indexed = trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
     let root = json(&indexed)["repo"].as_str().unwrap().to_string();
@@ -6098,7 +5826,7 @@ fn an_index_stopped_with_its_reader_gone_dies_quietly() {
 
 #[test]
 fn concurrent_index_runs_over_shared_content_both_land() {
-    let (dir, db) = scratch("index-race");
+    let (dir, db) = ruby_scratch("index-race");
     repo(&dir);
     for i in 0..20 {
         fs::write(
@@ -6107,19 +5835,7 @@ fn concurrent_index_runs_over_shared_content_both_land() {
         )
         .unwrap();
     }
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "parts",
-        ],
-    );
+    commit_all(&dir);
     let clone = dir.with_extension("clone");
     let _ = fs::remove_dir_all(&clone);
     git(&dir, &["clone", "-q", ".", clone.to_str().unwrap()]);
@@ -6156,7 +5872,7 @@ fn concurrent_index_runs_over_shared_content_both_land() {
 
 #[test]
 fn drop_forgets_the_checkouts_tree_snapshots() {
-    let (dir, db) = scratch("drop-trees");
+    let (dir, db) = ruby_scratch("drop-trees");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
     trekr(&db, &dir, &["--ancestors", "Widget"]);
@@ -6263,8 +5979,8 @@ fn definition_roots(answer: &serde_json::Value) -> Vec<String> {
 /// checkout of its own, with its tooling left out (DEC-180).
 #[test]
 fn the_stdlib_of_the_apps_ruby_answers_its_calls() {
-    let (dir, db) = scratch("stdlib");
-    let (home, _) = scratch("stdlib-home");
+    let (dir, db) = ruby_scratch("stdlib");
+    let (home, _) = ruby_scratch("stdlib-home");
     let stdlib = fake_ruby(
         &home,
         "9.8.7",
@@ -6308,9 +6024,9 @@ fn the_stdlib_of_the_apps_ruby_answers_its_calls() {
 /// app that does not sees the stdlib's — whichever indexed last (DEC-180).
 #[test]
 fn a_bundled_default_gem_hides_the_stdlibs_copy_for_that_app_only() {
-    let (plain, db) = scratch("stdlib-plain");
-    let (bundling, _) = scratch("stdlib-bundling");
-    let (home, _) = scratch("stdlib-shadow-home");
+    let (plain, db) = ruby_scratch("stdlib-plain");
+    let (bundling, _) = ruby_scratch("stdlib-bundling");
+    let (home, _) = ruby_scratch("stdlib-shadow-home");
     let jsonish = "module Jsonish\n  def self.parse(text)\n  end\nend\n";
     let stdlib = fake_ruby(
         &home,
@@ -6362,7 +6078,7 @@ fn a_bundled_default_gem_hides_the_stdlibs_copy_for_that_app_only() {
 /// too (DEC-240).
 #[test]
 fn core_comes_from_the_rubys_rbs_and_a_ruby_without_one_has_none() {
-    let (dir, db) = scratch("rbs-core");
+    let (dir, db) = ruby_scratch("rbs-core");
     repo(&dir);
     fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
     let index = json(&trekr(&db, &dir, &["--index", "--json"]));
@@ -6391,10 +6107,10 @@ fn core_comes_from_the_rubys_rbs_and_a_ruby_without_one_has_none() {
     assert_eq!(json(&upcase)["owner"], "String");
 
     // The same checkout on a Ruby that carries no rbs gem.
-    let (bare, bare_db) = scratch("rbs-none");
+    let (bare, bare_db) = ruby_scratch("rbs-none");
     repo(&bare);
     fs::write(bare.join("use.rb"), "\"a\".upcase\n").unwrap();
-    let (home, _) = scratch("rbs-none-home");
+    let (home, _) = ruby_scratch("rbs-none-home");
     let lib = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby");
     fs::create_dir_all(lib.join("9.8.0")).unwrap();
     fs::create_dir_all(lib.join("gems/9.8.0/specifications/default")).unwrap();
@@ -6420,11 +6136,11 @@ fn core_comes_from_the_rubys_rbs_and_a_ruby_without_one_has_none() {
 /// them, nothing is known of core (DEC-242).
 #[test]
 fn a_checkout_naming_no_ruby_runs_on_the_one_it_finds() {
-    let (dir, db) = scratch("rbs-unnamed");
+    let (dir, db) = ruby_scratch("rbs-unnamed");
     fs::remove_file(dir.join(".ruby-version")).unwrap();
     repo(&dir);
     fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
-    let (empty, _) = scratch("rbs-unnamed-home");
+    let (empty, _) = ruby_scratch("rbs-unnamed-home");
 
     // No Ruby named, none on `PATH`, none installed: none.
     let none = [("HOME", empty.to_str().unwrap())];
@@ -6436,7 +6152,7 @@ fn a_checkout_naming_no_ruby_runs_on_the_one_it_finds() {
     assert_eq!(json(&upcase)["status"], "residue");
 
     // The `ruby` on `PATH`, resolved to its prefix.
-    let (prefix, _) = scratch("rbs-unnamed-prefix");
+    let (prefix, _) = ruby_scratch("rbs-unnamed-prefix");
     let lib = prefix.join("lib/ruby");
     fs::create_dir_all(lib.join("9.7.0")).unwrap();
     fs::create_dir_all(lib.join("gems/9.7.0/specifications/default")).unwrap();
@@ -6482,7 +6198,7 @@ fn a_checkout_naming_no_ruby_runs_on_the_one_it_finds() {
 /// says it is a fallback (DEC-610).
 #[test]
 fn a_checkout_naming_no_ruby_falls_back_to_one_with_signatures() {
-    let (parent, store) = scratch("ruby-fallback");
+    let (parent, store) = ruby_scratch("ruby-fallback");
     fs::remove_file(parent.join(".ruby-version")).unwrap();
     let dir = parent.join("app");
     fs::create_dir_all(&dir).unwrap();
@@ -6494,13 +6210,13 @@ fn a_checkout_naming_no_ruby_falls_back_to_one_with_signatures() {
          s.required_ruby_version = \">= 9.5\"\nend\n",
     )
     .unwrap();
-    let (home, _) = scratch("ruby-fallback-home");
+    let (home, _) = ruby_scratch("ruby-fallback-home");
     let versions = home.join(".rbenv/versions");
     let low = fake_ruby_at(&versions.join("9.6.1"), "9.6.1", &[], &[]);
     let high = fake_ruby_at(&versions.join("9.7.1"), "9.7.1", &[], &[]);
     let old = fake_ruby_at(&versions.join("9.4.2"), "9.4.2", &[], &[]);
     // The `ruby` on `PATH` is a system Ruby with no rbs, as macOS's is.
-    let (system, _) = scratch("ruby-fallback-system");
+    let (system, _) = ruby_scratch("ruby-fallback-system");
     let lib = system.join("lib/ruby");
     fs::create_dir_all(lib.join("9.5.0")).unwrap();
     fs::create_dir_all(lib.join("gems/9.5.0/specifications/default")).unwrap();
@@ -6628,10 +6344,10 @@ fn a_checkout_naming_no_ruby_falls_back_to_one_with_signatures() {
 /// meets moves it too (DEC-610).
 #[test]
 fn the_checkouts_lockfile_and_requirement_move_a_kept_ruby() {
-    let (dir, db) = scratch("ruby-kept-moves");
+    let (dir, db) = ruby_scratch("ruby-kept-moves");
     fs::remove_file(dir.join(".ruby-version")).unwrap();
     repo(&dir);
-    let (home, _) = scratch("ruby-kept-moves-home");
+    let (home, _) = ruby_scratch("ruby-kept-moves-home");
     fs::remove_file(home.join(".ruby-version")).unwrap();
     let versions = home.join(".rbenv/versions");
     let old = fake_ruby_at(&versions.join("9.4.2"), "9.4.2", &[], &[]);
@@ -6704,7 +6420,7 @@ fn the_checkouts_lockfile_and_requirement_move_a_kept_ruby() {
 /// of one version passed over are said once (DEC-610).
 #[test]
 fn a_kept_ruby_meeting_the_requirement_is_not_unmet() {
-    let (dir, db) = scratch("ruby-kept-met");
+    let (dir, db) = ruby_scratch("ruby-kept-met");
     fs::remove_file(dir.join(".ruby-version")).unwrap();
     repo(&dir);
     fs::write(
@@ -6712,7 +6428,7 @@ fn a_kept_ruby_meeting_the_requirement_is_not_unmet() {
         "Gem::Specification.new do |s|\n  s.required_ruby_version = \">= 9.7\"\nend\n",
     )
     .unwrap();
-    let (home, _) = scratch("ruby-kept-met-home");
+    let (home, _) = ruby_scratch("ruby-kept-met-home");
     fs::remove_file(home.join(".ruby-version")).unwrap();
     let high = fake_ruby_at(&home.join(".rbenv/versions/9.7.1"), "9.7.1", &[], &[]);
     // One version twice, each reached before the highest: chruby's current
@@ -6733,7 +6449,7 @@ fn a_kept_ruby_meeting_the_requirement_is_not_unmet() {
     assert!(!said.contains("those installed"), "{said}");
 
     // An editor launched from the Dock: no Rubies found, the kept one meets.
-    let (poor, _) = scratch("ruby-kept-met-poor");
+    let (poor, _) = ruby_scratch("ruby-kept-met-poor");
     let poor = [("HOME", poor.to_str().unwrap())];
     let out = json(&trekr_env(&db, &dir, &["--index", "--json"], &poor));
     assert_eq!(out["ruby"]["root"], high.as_str(), "{out}");
@@ -6756,16 +6472,16 @@ fn a_kept_ruby_meeting_the_requirement_is_not_unmet() {
 /// (DEC-610).
 #[test]
 fn a_ruby_fallback_says_what_it_could_not_take() {
-    let (dir, db) = scratch("ruby-unmet");
+    let (dir, db) = ruby_scratch("ruby-unmet");
     fs::remove_file(dir.join(".ruby-version")).unwrap();
     repo(&dir);
-    let (home, _) = scratch("ruby-unmet-home");
+    let (home, _) = ruby_scratch("ruby-unmet-home");
     fs::remove_file(home.join(".ruby-version")).unwrap();
     let versions = home.join(".rbenv/versions");
     let low = fake_ruby_at(&versions.join("9.6.1"), "9.6.1", &[], &[]);
     let high = fake_ruby_at(&versions.join("9.7.1"), "9.7.1", &[], &[]);
     // rvm's gemset suffix, and an install rbenv reaches through a link.
-    let (elsewhere, _) = scratch("ruby-unmet-elsewhere");
+    let (elsewhere, _) = ruby_scratch("ruby-unmet-elsewhere");
     let linked = fake_ruby_at(&elsewhere.join("9.5.4"), "9.5.4", &[], &[]);
     std::os::unix::fs::symlink(elsewhere.join("9.5.4"), versions.join("9.5.4")).unwrap();
     let env = [("HOME", home.to_str().unwrap())];
@@ -6860,10 +6576,10 @@ fn a_ruby_fallback_says_what_it_could_not_take() {
 /// instead (DEC-270).
 #[test]
 fn a_named_ruby_is_found_wherever_a_version_manager_put_it() {
-    let (dir, db) = scratch("ruby-managers");
+    let (dir, db) = ruby_scratch("ruby-managers");
     repo(&dir);
-    let (home, _) = scratch("ruby-managers-home");
-    let (system, _) = scratch("ruby-managers-system");
+    let (home, _) = ruby_scratch("ruby-managers-home");
+    let (system, _) = ruby_scratch("ruby-managers-system");
     let installs = [
         ("9.6.1", home.join(".rubies/ruby-9.6.1")),
         ("9.5.2", home.join(".local/share/mise/installs/ruby/9.5.2")),
@@ -6928,11 +6644,11 @@ fn a_named_ruby_is_found_wherever_a_version_manager_put_it() {
 /// last one chose; only the checkout naming another Ruby moves them (DEC-271).
 #[test]
 fn a_reindex_in_a_poorer_environment_keeps_the_rubys_core() {
-    let (dir, db) = scratch("ruby-kept");
+    let (dir, db) = ruby_scratch("ruby-kept");
     fs::remove_file(dir.join(".ruby-version")).unwrap();
     repo(&dir);
     fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
-    let (home, _) = scratch("ruby-kept-home");
+    let (home, _) = ruby_scratch("ruby-kept-home");
     // Not a `~/.ruby-version` (DEC-610).
     fs::remove_file(home.join(".ruby-version")).unwrap();
     let first = fake_ruby(&home, "9.7.1", &[], &[]);
@@ -6973,9 +6689,9 @@ fn a_reindex_in_a_poorer_environment_keeps_the_rubys_core() {
     );
 
     // Signatures found only through one `$HOME` are kept under another.
-    let (system, _) = scratch("ruby-kept-system");
-    let (rbs_home, _) = scratch("ruby-kept-rbs-home");
-    let (empty, _) = scratch("ruby-kept-empty");
+    let (system, _) = ruby_scratch("ruby-kept-system");
+    let (rbs_home, _) = ruby_scratch("ruby-kept-rbs-home");
+    let (empty, _) = ruby_scratch("ruby-kept-empty");
     let prefix = system.join("opt/rubies/ruby-9.6.1");
     let lib = prefix.join("lib/ruby");
     fs::create_dir_all(lib.join("9.6.0")).unwrap();
@@ -7019,9 +6735,9 @@ fn a_reindex_in_a_poorer_environment_keeps_the_rubys_core() {
 /// pristine rbs` rewrites the gem's own (DEC-272).
 #[test]
 fn the_bundled_rbs_survives_gem_maintenance() {
-    let (dir, db) = scratch("rbs-maintenance");
+    let (dir, db) = ruby_scratch("rbs-maintenance");
     repo(&dir);
-    let (home, _) = scratch("rbs-maintenance-home");
+    let (home, _) = ruby_scratch("rbs-maintenance-home");
     fake_ruby(&home, "9.8.7", &[], &[]);
     let base = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby/gems/9.8.0");
     let touch = |path: &Path, secs: u64| {
@@ -7098,11 +6814,11 @@ fn the_bundled_rbs_survives_gem_maintenance() {
 /// than claiming core lacks it.
 #[test]
 fn a_miss_without_core_says_core_is_not_indexed() {
-    let (dir, db) = scratch("no-core-reason");
+    let (dir, db) = ruby_scratch("no-core-reason");
     fs::remove_file(dir.join(".ruby-version")).unwrap();
     repo(&dir);
     fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
-    let (empty, _) = scratch("no-core-reason-home");
+    let (empty, _) = ruby_scratch("no-core-reason-home");
     let none = [("HOME", empty.to_str().unwrap())];
     trekr_env(&db, &dir, &["--index"], &none);
     let upcase = json(&trekr_env(
@@ -7125,8 +6841,8 @@ fn a_miss_without_core_says_core_is_not_indexed() {
 /// stdlib's copy: found, not missing (DEC-180).
 #[test]
 fn a_default_gem_at_the_rubys_own_version_is_found_in_the_stdlib() {
-    let (dir, db) = scratch("stdlib-default");
-    let (home, _) = scratch("stdlib-default-home");
+    let (dir, db) = ruby_scratch("stdlib-default");
+    let (home, _) = ruby_scratch("stdlib-default-home");
     fake_ruby(
         &home,
         "9.8.7",
@@ -7149,8 +6865,8 @@ fn a_default_gem_at_the_rubys_own_version_is_found_in_the_stdlib() {
 /// copy is taken only for a gem it lacks, which is said (DEC-291).
 #[test]
 fn gems_come_from_the_checkouts_ruby_before_the_shells() {
-    let (dir, db) = scratch("gems-ruby");
-    let (home, _) = scratch("gems-ruby-home");
+    let (dir, db) = ruby_scratch("gems-ruby");
+    let (home, _) = ruby_scratch("gems-ruby-home");
     let prefix = home.join(".rbenv/versions/9.7.1");
     let stdlib = fake_ruby_at(
         &prefix,
@@ -7247,9 +6963,9 @@ end
 /// (DEC-292).
 #[test]
 fn the_rubys_choice_is_structured_in_index_and_status() {
-    let (dir, db) = scratch("ruby-object");
+    let (dir, db) = ruby_scratch("ruby-object");
     repo(&dir);
-    let (home, _) = scratch("ruby-object-home");
+    let (home, _) = ruby_scratch("ruby-object-home");
     // Not a `~/.ruby-version` (DEC-610).
     fs::remove_file(home.join(".ruby-version")).unwrap();
     let first = fake_ruby(&home, "9.8.7", &[], &[]);
@@ -7300,9 +7016,9 @@ fn the_rubys_choice_is_structured_in_index_and_status() {
 /// `bundler/gems`; one with several or none is said, never dropped (DEC-293).
 #[test]
 fn without_a_lockfile_a_git_gem_is_its_one_checkout_or_said() {
-    let (dir, db) = scratch("declared-git");
+    let (dir, db) = ruby_scratch("declared-git");
     repo(&dir);
-    let (home, _) = scratch("declared-git-home");
+    let (home, _) = ruby_scratch("declared-git-home");
     let prefix = home.join(".rvm/rubies/ruby-9.8.7");
     fake_ruby_at(&prefix, "9.8.7", &[], &[]);
     let checkouts = prefix.join("lib/ruby/gems/9.8.0/bundler/gems");
@@ -7388,8 +7104,8 @@ fn without_a_lockfile_a_git_gem_is_its_one_checkout_or_said() {
 /// `Set#size` is real source in a Ruby where `Set` is not core (DEC-182).
 #[test]
 fn a_stdlib_method_the_core_stub_types_keeps_its_return() {
-    let (dir, db) = scratch("stdlib-sig");
-    let (home, _) = scratch("stdlib-sig-home");
+    let (dir, db) = ruby_scratch("stdlib-sig");
+    let (home, _) = ruby_scratch("stdlib-sig-home");
     fake_ruby(
         &home,
         "9.8.7",
@@ -7437,8 +7153,8 @@ fn a_stdlib_method_the_core_stub_types_keeps_its_return() {
 /// even when the stdlib was indexed after the gem (DEC-180).
 #[test]
 fn a_gem_reopening_the_stdlib_answers_over_it_whatever_the_index_order() {
-    let (dir, db) = scratch("stdlib-layer");
-    let (home, _) = scratch("stdlib-layer-home");
+    let (dir, db) = ruby_scratch("stdlib-layer");
+    let (home, _) = ruby_scratch("stdlib-layer-home");
     fake_ruby(
         &home,
         "9.8.7",
@@ -7457,7 +7173,7 @@ fn a_gem_reopening_the_stdlib_answers_over_it_whatever_the_index_order() {
     );
     // No Ruby to be found yet: the gem is indexed first.
     fs::remove_file(dir.join(".ruby-version")).unwrap();
-    let (nowhere, _) = scratch("stdlib-layer-nowhere");
+    let (nowhere, _) = ruby_scratch("stdlib-layer-nowhere");
     trekr_env(
         &db,
         &dir,
@@ -7485,7 +7201,7 @@ fn a_gem_reopening_the_stdlib_answers_over_it_whatever_the_index_order() {
 /// by insert order let the gem's win.
 #[test]
 fn the_apps_reopen_answers_over_a_gems() {
-    let (dir, db) = scratch("gem-layer");
+    let (dir, db) = ruby_scratch("gem-layer");
     ruby_app(
         &dir,
         "9.8.7",
@@ -7529,8 +7245,8 @@ fn the_apps_reopen_answers_over_a_gems() {
 /// a class that is all Ruby (DEC-181).
 #[test]
 fn a_stdlib_class_backed_by_a_compiled_extension_hedges_what_its_ruby_lacks() {
-    let (dir, db) = scratch("stdlib-compiled");
-    let (home, _) = scratch("stdlib-compiled-home");
+    let (dir, db) = ruby_scratch("stdlib-compiled");
+    let (home, _) = ruby_scratch("stdlib-compiled-home");
     fake_ruby(
         &home,
         "9.8.7",
@@ -7574,8 +7290,8 @@ fn a_stdlib_class_backed_by_a_compiled_extension_hedges_what_its_ruby_lacks() {
 /// the example (DEC-180).
 #[test]
 fn a_block_handed_to_a_stdlib_method_runs_on_the_example() {
-    let (dir, db) = scratch("stdlib-block");
-    let (home, _) = scratch("stdlib-block-home");
+    let (dir, db) = ruby_scratch("stdlib-block");
+    let (home, _) = ruby_scratch("stdlib-block-home");
     fake_ruby(
         &home,
         "9.8.7",
@@ -7638,7 +7354,7 @@ fn mark_warming(db: &Path, dir: &Path, pid: u32, read: u64, of: u64) {
 /// dead code. Exit 2 is "no answer yet" for a miss, as for `not_indexed`.
 #[test]
 fn a_partial_index_says_so_and_claims_nothing_certain() {
-    let (dir, db) = scratch("warming");
+    let (dir, db) = ruby_scratch("warming");
     repo(&dir);
     fs::write(
         dir.join("user.rb"),
@@ -7757,7 +7473,7 @@ fn a_partial_index_says_so_and_claims_nothing_certain() {
 #[test]
 fn a_first_index_told_what_is_open_ends_where_one_told_nothing_does() {
     use std::io::Write;
-    let (dir, db) = scratch("hinted");
+    let (dir, db) = ruby_scratch("hinted");
     repo(&dir);
     fs::create_dir_all(dir.join("app/models")).unwrap();
     fs::write(
@@ -7768,7 +7484,7 @@ fn a_first_index_told_what_is_open_ends_where_one_told_nothing_does() {
     git(&dir, &["add", "-A"]);
     let plain = json(&trekr(&db, &dir, &["--index", "--json"]));
 
-    let (_, hinted_db) = scratch("hinted-told");
+    let (_, hinted_db) = ruby_scratch("hinted-told");
     let mut child = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
         .args(["--index", "--json"])
         .current_dir(&dir)
@@ -7801,8 +7517,8 @@ fn a_first_index_told_what_is_open_ends_where_one_told_nothing_does() {
 /// here rather than in the testbed.
 #[test]
 fn dead_says_a_gem_in_the_bundle_calls_the_name() {
-    let (app, db) = scratch("dead-bundle-app");
-    let (gems, _) = scratch("dead-bundle-gems");
+    let (app, db) = ruby_scratch("dead-bundle-app");
+    let (gems, _) = ruby_scratch("dead-bundle-gems");
     let lib = gems.join("gems/former-1.0.0/lib");
     fs::create_dir_all(&lib).unwrap();
     fs::write(
@@ -7826,19 +7542,7 @@ fn dead_says_a_gem_in_the_bundle_calls_the_name() {
          \nPLATFORMS\n  ruby\n\nDEPENDENCIES\n  former\n",
     )
     .unwrap();
-    git(&app, &["add", "-A"]);
-    git(
-        &app,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&app);
     let out = trekr_env(
         &db,
         &app,
@@ -7876,7 +7580,7 @@ fn dead_says_a_gem_in_the_bundle_calls_the_name() {
 /// Run over the testbed's example group cases, staged as one checkout.
 #[test]
 fn dead_and_refs_agree_on_an_example_groups_members() {
-    let (dir, db) = scratch("members-agree");
+    let (dir, db) = ruby_scratch("members-agree");
     git(&dir, &["init", "-q"]);
     let testbed = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testbed");
     let mut cases = 0;
@@ -7899,19 +7603,7 @@ fn dead_and_refs_agree_on_an_example_groups_members() {
         cases += 1;
     }
     assert!(cases >= 5, "the testbed's example group cases were staged");
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
 
     let dead = json(&trekr(&db, &dir, &["--dead", ".", "--json"]));
@@ -7989,7 +7681,7 @@ fn dead_and_refs_agree_on_an_example_groups_members() {
 
 #[test]
 fn a_store_that_cannot_be_opened_is_named_in_the_error() {
-    let (dir, _) = scratch("unopenable");
+    let (dir, _) = ruby_scratch("unopenable");
     // A regular file where the store's directory would be made.
     let blocker = dir.join("blocker");
     fs::write(&blocker, "").unwrap();
@@ -8020,7 +7712,7 @@ fn a_store_that_cannot_be_opened_is_named_in_the_error() {
 /// be kept by foo, whose name its gemspec computes from the file's.
 #[test]
 fn a_gem_line_two_manifests_reach_is_graded_once() {
-    let (dir, db) = scratch("gems-twice");
+    let (dir, db) = ruby_scratch("gems-twice");
     repo(&dir);
     fs::write(
         dir.join("Gemfile"),

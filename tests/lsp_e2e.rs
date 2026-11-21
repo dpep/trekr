@@ -15,15 +15,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 mod support;
 
-use support::{fixture_home, git};
-
-/// A scratch repo and database for one test (see `support::scratch`), whose
-/// checkout runs on the fixture's Ruby.
-fn scratch(label: &str) -> (PathBuf, PathBuf) {
-    let (dir, db) = support::scratch(label);
-    fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
-    (dir, db)
-}
+use support::{commit_all, fixture_home, git, ruby_scratch};
 
 /// `program`, run as `support::neutral` says, on the fixture's Ruby.
 fn isolated(program: &str) -> Command {
@@ -75,19 +67,7 @@ fn repo(dir: &Path) -> String {
     );
     git(dir, &["init", "-q"]);
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(dir, &["add", "-A"]);
-    git(
-        dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(dir);
     source.to_string()
 }
 
@@ -243,7 +223,7 @@ fn log_lines(db: &Path) -> Vec<serde_json::Value> {
 
 #[test]
 fn the_server_announces_only_what_it_answers() {
-    let (dir, db) = scratch("caps");
+    let (dir, db) = ruby_scratch("caps");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     let result = session.initialize(&dir);
@@ -293,7 +273,7 @@ fn the_server_announces_only_what_it_answers() {
 
 #[test]
 fn go_to_definition_answers_from_the_resolved_receiver() {
-    let (dir, db) = scratch("def");
+    let (dir, db) = ruby_scratch("def");
     let source = repo(&dir);
     // The index has to exist; the server reads it, it does not build it.
     let indexed = trekr()
@@ -337,7 +317,7 @@ fn go_to_definition_answers_from_the_resolved_receiver() {
 /// superclass decides the call, as `--def` decides it.
 #[test]
 fn a_file_opened_before_any_index_read_it_answers_from_its_own_class() {
-    let (dir, db) = scratch("def-unindexed");
+    let (dir, db) = ruby_scratch("def-unindexed");
     repo(&dir);
     fs::write(
         dir.join("base.rb"),
@@ -389,7 +369,7 @@ fn a_file_opened_before_any_index_read_it_answers_from_its_own_class() {
 /// does not put it in the checkout's map: its definitions stay unanswered.
 #[test]
 fn an_ignored_file_opened_and_saved_stays_out_of_the_index() {
-    let (dir, db) = scratch("def-ignored");
+    let (dir, db) = ruby_scratch("def-ignored");
     repo(&dir);
     fs::write(dir.join(".gitignore"), "ignored/\n").unwrap();
     let indexed = trekr()
@@ -485,23 +465,11 @@ fn opened_behind_slow_git_with(
     gitignore: &str,
     env: &[(&str, &str)],
 ) -> (PathBuf, PathBuf, Session) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     git(&dir, &["init", "-q"]);
     fs::write(dir.join("use.rb"), "Fresh.new\nQuick.new\n").unwrap();
     fs::write(dir.join(".gitignore"), gitignore).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     let indexed = trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -724,25 +692,13 @@ fn an_ignored_file_behind_a_slow_git_stays_out_of_the_index() {
 #[cfg(target_os = "macos")]
 #[test]
 fn saving_a_decomposed_name_refreshes_the_file_the_index_mapped() {
-    let (dir, db) = scratch("save-nfd");
+    let (dir, db) = ruby_scratch("save-nfd");
     let name = "nai\u{308}ve.rb";
     let caller = "class Job\n  def run\n    Naive.new.old\n  end\nend\n";
     git(&dir, &["init", "-q"]);
     fs::write(dir.join("app.rb"), caller).unwrap();
     fs::write(dir.join(name), "class Naive\n  def old\n  end\nend\n").unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     let indexed = trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -778,7 +734,7 @@ fn saving_a_decomposed_name_refreshes_the_file_the_index_mapped() {
 
 #[test]
 fn a_click_that_finds_nothing_is_logged_where_usage_misses_reads_it() {
-    let (dir, db) = scratch("misses");
+    let (dir, db) = ruby_scratch("misses");
     let source = repo(&dir);
     let indexed = trekr()
         .args(["--index"])
@@ -839,7 +795,7 @@ fn a_click_that_finds_nothing_is_logged_where_usage_misses_reads_it() {
 /// character, not the operator after it.
 #[test]
 fn a_miss_logs_the_character_its_caret_read() {
-    let (dir, db) = scratch("miss-caret");
+    let (dir, db) = ruby_scratch("miss-caret");
     let source = "class Miss\n  def go\n    @nope+1\n  end\nend\n";
     ruby_repo(&dir, &db, source);
     let mut session = Session::start(&db, &dir);
@@ -877,7 +833,7 @@ fn a_miss_logs_the_character_its_caret_read() {
 
 #[test]
 fn references_narrow_to_the_method_asked_about_not_the_name() {
-    let (dir, db) = scratch("refs");
+    let (dir, db) = ruby_scratch("refs");
     git(&dir, &["init", "-q"]);
     // Two classes with a `save`, and one call site of each.
     let source = concat!(
@@ -899,19 +855,7 @@ fn references_narrow_to_the_method_asked_about_not_the_name() {
         "end\n",                // 16
     );
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -958,7 +902,7 @@ fn references_narrow_to_the_method_asked_about_not_the_name() {
 /// range on the `new` it writes, and none of a class with its own (DEC-541).
 #[test]
 fn references_on_initialize_are_the_news_that_run_it() {
-    let (dir, db) = scratch("refs-initialize");
+    let (dir, db) = ruby_scratch("refs-initialize");
     git(&dir, &["init", "-q"]);
     let source = concat!(
         "class Widget\n",          // 1
@@ -974,19 +918,7 @@ fn references_on_initialize_are_the_news_that_run_it() {
         "x = Widget.new(2).dup\n", // 11
     );
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -1051,22 +983,10 @@ fn the_unresolved_setting_decides_which_guesses_reach_the_editor() {
         "  end\n",                       // 10
         "end\n",                         // 11
     );
-    let (dir, db) = scratch("unresolved-modes");
+    let (dir, db) = ruby_scratch("unresolved-modes");
     git(&dir, &["init", "-q"]);
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -1150,7 +1070,7 @@ fn the_unresolved_setting_decides_which_guesses_reach_the_editor() {
 
 #[test]
 fn definition_on_an_unresolved_receiver_offers_ranked_guesses() {
-    let (dir, db) = scratch("guesses");
+    let (dir, db) = ruby_scratch("guesses");
     git(&dir, &["init", "-q"]);
     // `thing.save` — a call receiver, so untyped. Two classes define `save`;
     // Job inherits from Near, so Near's should rank first.
@@ -1170,19 +1090,7 @@ fn definition_on_an_unresolved_receiver_offers_ranked_guesses() {
         "end\n",              // 13
     );
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -1267,23 +1175,11 @@ fn definition_on_an_unresolved_receiver_offers_ranked_guesses() {
 
 #[test]
 fn a_core_method_lands_on_a_readable_stub_rather_than_nothing() {
-    let (dir, db) = scratch("core");
+    let (dir, db) = ruby_scratch("core");
     git(&dir, &["init", "-q"]);
     let source = "class W\n  def go\n    puts 1\n  end\nend\n";
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -1333,7 +1229,7 @@ fn a_core_method_lands_on_a_readable_stub_rather_than_nothing() {
 /// the core stub types resolves instead of offering every owner of the name.
 #[test]
 fn core_targets_read_as_their_owners_signatures() {
-    let (dir, db) = scratch("core-peek");
+    let (dir, db) = ruby_scratch("core-peek");
     git(&dir, &["init", "-q"]);
     let source =
         "class W\n  def go(x)\n    x.downcase\n    x.gsub(/a/, \"\").downcase\n  end\nend\n";
@@ -1500,7 +1396,7 @@ fn assert_no_internals(text: &str) {
 }
 
 fn documented_session(label: &str) -> (PathBuf, Session) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     let source = documented_repo(&dir);
     trekr()
         .args(["--index"])
@@ -1622,7 +1518,7 @@ fn hover_on_a_guess_says_so_in_plain_words() {
 /// root, and answered nothing at all.
 #[test]
 fn navigation_keeps_working_inside_a_gem_file() {
-    let (dir, db) = scratch("inside-gem");
+    let (dir, db) = ruby_scratch("inside-gem");
     let gem_home = PathBuf::from(format!("{}-gems", dir.display()));
     let _ = fs::remove_dir_all(&gem_home);
     let lib = gem_home.join("gems/shelf-1.0.0/lib");
@@ -1720,8 +1616,8 @@ fn navigation_keeps_working_inside_a_gem_file() {
 /// app's callers, and the session cached the pick.
 #[test]
 fn a_gem_file_is_answered_from_the_workspaces_own_app() {
-    let (mine, db) = scratch("gem-app-b");
-    let (other, _) = scratch("gem-app-a");
+    let (mine, db) = ruby_scratch("gem-app-b");
+    let (other, _) = ruby_scratch("gem-app-a");
     let gem_home = PathBuf::from(format!("{}-gems", mine.display()));
     let _ = fs::remove_dir_all(&gem_home);
     let lib = gem_home.join("gems/shelf-1.0.0/lib");
@@ -1794,7 +1690,7 @@ fn a_gem_file_is_answered_from_the_workspaces_own_app() {
 /// the app (DEC-150).
 #[test]
 fn a_git_gem_file_is_answered_from_the_app() {
-    let (app, db) = scratch("gitgem-app");
+    let (app, db) = ruby_scratch("gitgem-app");
     let gem_home = PathBuf::from(format!("{}-gems", app.display()));
     let _ = fs::remove_dir_all(&gem_home);
     let checkout = gem_home.join("bundler/gems/shelf-abc123def456");
@@ -1880,7 +1776,7 @@ fn a_git_gem_file_is_answered_from_the_app() {
 /// gem wrote, and says which gem.
 #[test]
 fn hover_on_a_gem_method_shows_the_gems_doc() {
-    let (dir, db) = scratch("hover-gem");
+    let (dir, db) = ruby_scratch("hover-gem");
     git(&dir, &["init", "-q"]);
     let gem = dir.join("vendor/bundle/ruby/3.3.0/gems/shelf-1.0.0/lib");
     fs::create_dir_all(&gem).unwrap();
@@ -2043,7 +1939,7 @@ fn completion_resolves_a_chosen_items_doc() {
 
 #[test]
 fn a_syntax_error_is_published_as_a_diagnostic_and_cleared_when_fixed() {
-    let (dir, db) = scratch("diag");
+    let (dir, db) = ruby_scratch("diag");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -2086,7 +1982,7 @@ fn a_syntax_error_is_published_as_a_diagnostic_and_cleared_when_fixed() {
 /// no way to tell whether the requests even arrived.
 #[test]
 fn the_log_records_each_request_and_how_much_came_back() {
-    let (dir, db) = scratch("log");
+    let (dir, db) = ruby_scratch("log");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -2146,7 +2042,7 @@ fn the_log_records_each_request_and_how_much_came_back() {
 #[cfg(debug_assertions)]
 #[test]
 fn a_handler_that_panics_answers_an_error_and_the_session_survives() {
-    let (dir, db) = scratch("panic");
+    let (dir, db) = ruby_scratch("panic");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -2183,7 +2079,7 @@ fn a_handler_that_panics_answers_an_error_and_the_session_survives() {
 /// the command line — not 70, which says trekr has a bug.
 #[test]
 fn a_store_the_server_cannot_open_exits_as_a_store_failure() {
-    let (dir, db) = scratch("lsp-unopenable");
+    let (dir, db) = ruby_scratch("lsp-unopenable");
     repo(&dir);
     fs::create_dir_all(&db).unwrap();
     let mut session = Session::start(&db, &dir);
@@ -2203,7 +2099,7 @@ fn a_store_the_server_cannot_open_exits_as_a_store_failure() {
 /// at all — `/dev/zero` would never end. Each answers, and the session goes on.
 #[test]
 fn a_uri_that_names_no_readable_file_answers_and_the_session_survives() {
-    let (dir, db) = scratch("bad-uri");
+    let (dir, db) = ruby_scratch("bad-uri");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -2247,7 +2143,7 @@ fn a_uri_that_names_no_readable_file_answers_and_the_session_survives() {
 
 #[test]
 fn document_symbol_outlines_the_open_buffer_not_the_index() {
-    let (dir, db) = scratch("symbols");
+    let (dir, db) = ruby_scratch("symbols");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -2283,19 +2179,7 @@ fn document_symbol_outlines_the_open_buffer_not_the_index() {
 fn ruby_repo(dir: &Path, db: &Path, source: &str) {
     git(dir, &["init", "-q"]);
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(dir, &["add", "-A"]);
-    git(
-        dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(dir);
     trekr()
         .args(["--index"])
         .current_dir(dir)
@@ -2313,12 +2197,12 @@ fn ruby_repo(dir: &Path, db: &Path, source: &str) {
 /// enclosing checkout is what has to answer (DEC-024).
 #[test]
 fn a_file_outside_the_clients_root_is_still_answered() {
-    let (root, db) = scratch("elsewhere-root");
+    let (root, db) = ruby_scratch("elsewhere-root");
     // The client's workspace: a repo with no Ruby in it at all.
     git(&root, &["init", "-q"]);
     fs::write(root.join("README.md"), "not ruby\n").unwrap();
 
-    let (other, _) = scratch("elsewhere-code");
+    let (other, _) = ruby_scratch("elsewhere-code");
     ruby_repo(
         &other,
         &db,
@@ -2398,7 +2282,7 @@ fn a_file_outside_the_clients_root_is_still_answered() {
 /// that operation needs no resolution at all.
 #[test]
 fn an_outline_needs_no_index_and_no_repository() {
-    let (root, db) = scratch("outline-root");
+    let (root, db) = ruby_scratch("outline-root");
     git(&root, &["init", "-q"]);
     let loose = support::fresh("loose");
     fs::write(loose.join("app.rb"), "module Loose\n  def go\n  end\nend\n").unwrap();
@@ -2421,9 +2305,9 @@ fn an_outline_needs_no_index_and_no_repository() {
 /// every checkout is the only answer that is of any use to an agent.
 #[test]
 fn workspace_symbol_widens_when_the_clients_root_is_not_a_checkout() {
-    let (root, db) = scratch("wsym-root");
+    let (root, db) = ruby_scratch("wsym-root");
     git(&root, &["init", "-q"]);
-    let (other, _) = scratch("wsym-code");
+    let (other, _) = ruby_scratch("wsym-code");
     ruby_repo(&other, &db, "class Sprocket\nend\n");
 
     let mut session = Session::start(&db, &root);
@@ -2448,7 +2332,7 @@ fn workspace_symbol_widens_when_the_clients_root_is_not_a_checkout() {
 /// class's own.
 #[test]
 fn a_singleton_class_constant_is_contained_by_its_class() {
-    let (dir, db) = scratch("wsym-singleton");
+    let (dir, db) = ruby_scratch("wsym-singleton");
     ruby_repo(
         &dir,
         &db,
@@ -2473,7 +2357,7 @@ fn a_singleton_class_constant_is_contained_by_its_class() {
 /// files went on answering from the old version's tree.
 #[test]
 fn a_bundle_moving_to_another_gem_version_is_not_served_stale() {
-    let (dir, db) = scratch("gem-moved");
+    let (dir, db) = ruby_scratch("gem-moved");
     git(&dir, &["init", "-q"]);
     for (version, class) in [("1.0.0", "Old"), ("2.0.0", "New")] {
         let lib = dir.join(format!("vendor/bundle/ruby/3.3.0/gems/shelf-{version}/lib"));
@@ -2545,24 +2429,12 @@ fn a_bundle_moving_to_another_gem_version_is_not_served_stale() {
 /// edit. Adding a file happened to work, which is what hid this.
 #[test]
 fn an_edit_reindexed_underneath_the_session_is_not_served_stale() {
-    let (dir, db) = scratch("stale");
+    let (dir, db) = ruby_scratch("stale");
     git(&dir, &["init", "-q"]);
     fs::write(dir.join("app.rb"), "class Widget\nend\n").unwrap();
     let caller = "class Job\n  def run\n    Gadget\n  end\nend\n";
     fs::write(dir.join("other.rb"), caller).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     let index = || {
         trekr()
             .args(["--index"])
@@ -2607,7 +2479,7 @@ fn an_edit_reindexed_underneath_the_session_is_not_served_stale() {
 /// overrides this". Standing on an abstract method returned nothing.
 #[test]
 fn implementation_on_an_abstract_method_finds_its_overrides() {
-    let (dir, db) = scratch("impl");
+    let (dir, db) = ruby_scratch("impl");
     git(&dir, &["init", "-q"]);
     let source = concat!(
         "class Adapter\n",            // 1
@@ -2631,19 +2503,7 @@ fn implementation_on_an_abstract_method_finds_its_overrides() {
         "end\n",                      // 19
     );
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -2691,7 +2551,7 @@ fn implementation_on_an_abstract_method_finds_its_overrides() {
 /// not, which is why the question has to be asked of the classes.
 #[test]
 fn implementation_finds_an_override_that_lives_in_a_sibling_module() {
-    let (dir, db) = scratch("implmod");
+    let (dir, db) = ruby_scratch("implmod");
     git(&dir, &["init", "-q"]);
     let source = concat!(
         "module Statements\n",           // 1
@@ -2710,19 +2570,7 @@ fn implementation_finds_an_override_that_lives_in_a_sibling_module() {
         "end\n",                         // 14
     );
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -2761,7 +2609,7 @@ fn implementation_finds_an_override_that_lives_in_a_sibling_module() {
 /// owner made every row identical and told a reader nothing.
 #[test]
 fn incoming_calls_name_the_method_each_call_sits_in() {
-    let (dir, db) = scratch("incoming");
+    let (dir, db) = ruby_scratch("incoming");
     git(&dir, &["init", "-q"]);
     let source = concat!(
         "class Widget\n",       // 1
@@ -2780,19 +2628,7 @@ fn incoming_calls_name_the_method_each_call_sits_in() {
         "end\n",                // 14
     );
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -2875,7 +2711,7 @@ fn incoming_calls_name_the_method_each_call_sits_in() {
 /// makes one, and asking who calls `initialize` all agree.
 #[test]
 fn call_hierarchy_reads_a_new_as_its_initialize() {
-    let (dir, db) = scratch("hierarchy-new");
+    let (dir, db) = ruby_scratch("hierarchy-new");
     git(&dir, &["init", "-q"]);
     let source = concat!(
         "class Widget\n",     // 1
@@ -2889,19 +2725,7 @@ fn call_hierarchy_reads_a_new_as_its_initialize() {
         "end\n",              // 9
     );
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -3001,7 +2825,7 @@ fn the_binary() -> Vec<u8> {
     fs::read(env!("CARGO_BIN_EXE_trekr")).unwrap()
 }
 
-/// The database `scratch(label)` hands out, for a helper that kept it.
+/// The database `ruby_scratch(label)` hands out, for a helper that kept it.
 fn scratch_db(label: &str) -> PathBuf {
     support::root()
         .join(format!("{label}.store"))
@@ -3042,7 +2866,7 @@ const UNSAVED: &str = concat!(
 /// A session with `app.rb` open and edited but not saved, served from a copy
 /// of the binary at `binary`.
 fn edited_session(label: &str, binary: &Path) -> (PathBuf, PathBuf, Session) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     ruby_repo(&dir, &db, SAVED);
     let mut session = start_from(binary, &db, &dir);
     session.initialize(&dir);
@@ -3091,7 +2915,7 @@ fn bin_dir(dir: &Path) -> PathBuf {
 /// without being told again.
 #[test]
 fn a_replaced_binary_takes_over_the_session_in_place() {
-    let (_, scratch_db) = scratch("reload-bin");
+    let (_, scratch_db) = ruby_scratch("reload-bin");
     let bin = bin_dir(&scratch_db);
     let binary = bin.join("trekr");
     install(&binary, &the_binary(), 0o755);
@@ -3159,7 +2983,7 @@ fn a_replaced_binary_takes_over_the_session_in_place() {
 /// obstacle.
 #[test]
 fn a_relinked_symlink_is_an_upgrade_too() {
-    let (_, scratch_db) = scratch("relink-bin");
+    let (_, scratch_db) = ruby_scratch("relink-bin");
     let bin = bin_dir(&scratch_db);
     for version in ["v1", "v2"] {
         fs::create_dir_all(bin.join(version)).unwrap();
@@ -3188,7 +3012,7 @@ fn a_relinked_symlink_is_an_upgrade_too() {
 /// the same file is picked up.
 #[test]
 fn a_binary_that_cannot_run_is_not_reloaded_into() {
-    let (_, scratch_db) = scratch("broken-bin");
+    let (_, scratch_db) = ruby_scratch("broken-bin");
     let bin = bin_dir(&scratch_db);
     let binary = bin.join("trekr");
     install(&binary, &the_binary(), 0o755);
@@ -3217,7 +3041,7 @@ fn a_binary_that_cannot_run_is_not_reloaded_into() {
 /// that restarts servers (VS Code's does) starts the new build afresh.
 #[test]
 fn a_build_that_cannot_resume_the_session_is_retired_to() {
-    let (_, scratch_db) = scratch("retire-bin");
+    let (_, scratch_db) = ruby_scratch("retire-bin");
     let bin = bin_dir(&scratch_db);
     let binary = bin.join("trekr");
     install(&binary, &the_binary(), 0o755);
@@ -3262,11 +3086,11 @@ fn a_build_that_cannot_resume_the_session_is_retired_to() {
 /// for the version bump; both leave the new build an empty store.
 #[test]
 fn a_resumed_build_with_an_empty_store_indexes_in_the_background() {
-    let (_, scratch_db) = scratch("rebuild-bin");
+    let (_, scratch_db) = ruby_scratch("rebuild-bin");
     let bin = bin_dir(&scratch_db);
     let binary = bin.join("trekr");
     install(&binary, &the_binary(), 0o755);
-    let (dir, db) = scratch("rebuild");
+    let (dir, db) = ruby_scratch("rebuild");
     fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
     ruby_repo(
         &dir,
@@ -3318,7 +3142,7 @@ fn a_resumed_build_with_an_empty_store_indexes_in_the_background() {
 /// answer here", and not an InternalError that reads as a crash.
 #[test]
 fn an_unsupported_method_and_a_malformed_request_get_their_own_error_codes() {
-    let (dir, db) = scratch("errors");
+    let (dir, db) = ruby_scratch("errors");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -3348,7 +3172,7 @@ fn an_unsupported_method_and_a_malformed_request_get_their_own_error_codes() {
 /// is still being answered is seen the same way.
 #[test]
 fn a_cancelled_request_is_not_answered_with_a_result() {
-    let (dir, db) = scratch("cancel");
+    let (dir, db) = ruby_scratch("cancel");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -3375,7 +3199,7 @@ fn a_cancelled_request_is_not_answered_with_a_result() {
 
 #[test]
 fn closing_a_file_clears_its_diagnostics() {
-    let (dir, db) = scratch("close");
+    let (dir, db) = ruby_scratch("close");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -3416,7 +3240,7 @@ fn closing_a_file_clears_its_diagnostics() {
 /// mistaken for the whole document.
 #[test]
 fn a_ranged_change_is_applied_rather_than_replacing_the_document() {
-    let (dir, db) = scratch("ranged");
+    let (dir, db) = ruby_scratch("ranged");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -3458,7 +3282,7 @@ fn a_ranged_change_is_applied_rather_than_replacing_the_document() {
 /// from the first read served it the file as it was before its own edit.
 #[test]
 fn a_file_read_from_disk_is_reread_after_it_changes() {
-    let (dir, db) = scratch("reread");
+    let (dir, db) = ruby_scratch("reread");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -3485,7 +3309,7 @@ fn a_file_read_from_disk_is_reread_after_it_changes() {
 /// that skips it must not leave a server behind.
 #[test]
 fn exit_without_shutdown_still_stops_the_server() {
-    let (dir, db) = scratch("exit");
+    let (dir, db) = ruby_scratch("exit");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -3505,7 +3329,7 @@ fn exit_without_shutdown_still_stops_the_server() {
 /// Index `source` as `app.rb` in a fresh repo, and open a session on it with
 /// the file open in the editor.
 fn indexed_session(label: &str, source: &str) -> (PathBuf, PathBuf, Session) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     ruby_repo(&dir, &db, source);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -3669,28 +3493,12 @@ fn definition_eventually(
     }
 }
 
-fn commit_all(dir: &Path) {
-    git(dir, &["add", "-A"]);
-    git(
-        dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "change",
-        ],
-    );
-}
-
 /// A save moves the index. A method added and saved in one file is found from
 /// another straight away — the tree is assembled from the index, so without
 /// this the new method did not exist until someone ran `--index`.
 #[test]
 fn a_saved_file_is_reindexed_so_other_files_see_its_new_methods() {
-    let (dir, db) = scratch("save");
+    let (dir, db) = ruby_scratch("save");
     ruby_repo(&dir, &db, "class Widget\n  def save\n  end\nend\n");
     fs::write(dir.join("job.rb"), "w = Widget.new\nw.polish\n").unwrap();
     commit_all(&dir);
@@ -3738,7 +3546,7 @@ fn a_saved_file_is_reindexed_so_other_files_see_its_new_methods() {
 /// its own write would not carry the edit.
 #[test]
 fn a_save_during_someone_elses_write_lands_once_the_lock_is_free() {
-    let (dir, db) = scratch("save-busy");
+    let (dir, db) = ruby_scratch("save-busy");
     ruby_repo(&dir, &db, "class Widget\n  def save\n  end\nend\n");
     fs::write(dir.join("job.rb"), "w = Widget.new\nw.polish\n").unwrap();
     commit_all(&dir);
@@ -3787,7 +3595,7 @@ fn a_save_during_someone_elses_write_lands_once_the_lock_is_free() {
 /// `replace`. It must keep answering, say so once, and refill a store of its
 /// own (DEC-300) — not stop answering, and not exit into a restart loop.
 fn a_server_recovers_when(label: &str, replace: impl FnOnce(&Path)) -> (PathBuf, PathBuf) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     ruby_repo(&dir, &db, "class Widget\n  def save\n  end\nend\n");
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -3878,7 +3686,7 @@ fn a_server_whose_store_a_newer_trekr_rebuilt_keeps_its_own() {
 /// answers from a store of its own beside it, which it fills itself.
 #[test]
 fn a_server_started_on_a_newer_trekrs_store_keeps_its_own() {
-    let (dir, db) = scratch("store-newer-at-start");
+    let (dir, db) = ruby_scratch("store-newer-at-start");
     fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
     ruby_repo(
         &dir,
@@ -3955,7 +3763,7 @@ fn progress_until_end(
 /// A Ruby project's checkout, committed, that the store does not hold, and a
 /// store that exists — holding another checkout — for a test to lock.
 fn unindexed_beside_a_store(label: &str) -> (PathBuf, PathBuf, PathBuf) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     let other = dir.with_extension("other");
     let _ = fs::remove_dir_all(&other);
     fs::create_dir_all(&other).unwrap();
@@ -4025,7 +3833,7 @@ fn a_background_index_that_outwaits_the_lock_runs_again_once_it_is_free() {
 /// far the store got (DEC-400) — in the counts every other surface uses.
 #[test]
 fn a_background_index_cut_short_says_how_far_it_got() {
-    let (dir, db) = scratch("outwaited");
+    let (dir, db) = ruby_scratch("outwaited");
     // A Ruby project: what the server indexes unasked.
     fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
     ruby_repo(&dir, &db, "class Widget\nend\n");
@@ -4066,7 +3874,7 @@ fn a_background_index_cut_short_says_how_far_it_got() {
 /// running `trekr --index`.
 #[test]
 fn an_unindexed_project_is_indexed_in_the_background_with_progress() {
-    let (dir, db) = scratch("cold");
+    let (dir, db) = ruby_scratch("cold");
     git(&dir, &["init", "-q"]);
     fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
     fs::write(
@@ -4119,7 +3927,7 @@ fn an_unindexed_project_is_indexed_in_the_background_with_progress() {
 /// each answer reading as "nothing trekr has indexed defines" (DEC-275).
 #[test]
 fn a_hover_while_the_index_refills_after_an_upgrade_says_so() {
-    let (dir, db) = scratch("upgrade-window");
+    let (dir, db) = ruby_scratch("upgrade-window");
     git(&dir, &["init", "-q"]);
     fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
     fs::write(
@@ -4194,7 +4002,7 @@ fn a_hover_while_the_index_refills_after_an_upgrade_says_so() {
 /// priority — and a `trekr --index` run by hand does not.
 #[test]
 fn the_background_index_runs_at_lowered_priority_and_a_hand_run_does_not() {
-    let (dir, db) = scratch("niced");
+    let (dir, db) = ruby_scratch("niced");
     git(&dir, &["init", "-q"]);
     fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
     fs::write(dir.join("app.rb"), "class Widget\nend\n").unwrap();
@@ -4239,7 +4047,7 @@ fn the_background_index_runs_at_lowered_priority_and_a_hand_run_does_not() {
 /// replace it but not remove it.
 #[test]
 fn a_deleted_file_reported_by_the_watcher_leaves_the_index() {
-    let (dir, db) = scratch("deleted");
+    let (dir, db) = ruby_scratch("deleted");
     ruby_repo(&dir, &db, "class Widget\n  def save\n  end\nend\n");
     fs::write(dir.join("gadget.rb"), "class Gadget\nend\n").unwrap();
     commit_all(&dir);
@@ -4283,7 +4091,7 @@ fn a_deleted_file_reported_by_the_watcher_leaves_the_index() {
 /// hover, which reads the dump as it is.
 #[test]
 fn a_rewritten_structure_sql_reported_by_the_watcher_retypes_its_columns() {
-    let (dir, db) = scratch("structure-sql");
+    let (dir, db) = ruby_scratch("structure-sql");
     fs::create_dir_all(dir.join("db")).unwrap();
     fs::write(
         dir.join("stubs.rb"),
@@ -4700,7 +4508,7 @@ fn completion_after_a_chain_lists_what_the_chain_returns() {
 /// fails, every landing in core answers nothing, and the log says why.
 #[test]
 fn a_core_directory_that_cannot_be_written_is_logged() {
-    let (dir, _) = scratch("core-unwritable");
+    let (dir, _) = ruby_scratch("core-unwritable");
     // A store of its own: the core directory is beside it, and a file in its
     // place is what makes the write fail.
     let home = dir.with_extension("store");
@@ -4734,7 +4542,7 @@ fn locations_come_back_in_the_spelling_the_client_used() {
         "w = Widget.new\n", // 5
         "w.save\n",         // 6
     );
-    let (dir, db) = scratch("spelling");
+    let (dir, db) = ruby_scratch("spelling");
     ruby_repo(&dir, &db, source);
     let link = dir.with_extension("link");
     let _ = fs::remove_file(&link);
@@ -4831,7 +4639,7 @@ fn definition_at(
 }
 
 fn require_session(label: &str, capabilities: serde_json::Value) -> (PathBuf, Session) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     require_repo(&dir, &db);
     let mut session = Session::start(&db, &dir);
     session.initialize_with(&dir, capabilities);
@@ -4956,26 +4764,14 @@ fn hover_on_a_require_names_the_file_and_its_gem() {
 /// A checkout of many files, indexed, and a session on it whose client set
 /// `referenceLimit`. `files` maps a relative path to its source.
 fn many_file_session(label: &str, files: &[(String, String)], limit: u64) -> (PathBuf, Session) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     git(&dir, &["init", "-q"]);
     for (path, source) in files {
         let path = dir.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, source).unwrap();
     }
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -5258,7 +5054,7 @@ fn a_bare_name_reads_only_as_far_as_the_limit() {
 /// rest, and a method trekr does not serve as the error it was.
 #[test]
 fn requests_are_counted_by_operation_caller_and_outcome() {
-    let (dir, db) = scratch("usage");
+    let (dir, db) = ruby_scratch("usage");
     let source = repo(&dir);
     let indexed = trekr()
         .args(["--index"])
@@ -5350,7 +5146,7 @@ fn requests_are_counted_by_operation_caller_and_outcome() {
 /// row: the child it runs records no CLI `index` row of its own.
 #[test]
 fn the_index_the_server_spawns_is_counted_once() {
-    let (dir, db) = scratch("usage-spawned");
+    let (dir, db) = ruby_scratch("usage-spawned");
     let source = repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -5390,7 +5186,7 @@ fn the_index_the_server_spawns_is_counted_once() {
 /// A checkout of several files, committed and indexed, with `open` open in the
 /// session.
 fn files_session(label: &str, files: &[(&str, &str)], open: &str) -> (PathBuf, Session) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     git(&dir, &["init", "-q"]);
     for (name, source) in files {
         let path = dir.join(name);
@@ -5814,24 +5610,12 @@ fn an_ivar_in_a_module_mixed_into_several_classes_goes_nowhere() {
 /// `app.rb`'s `Widget` is answered from the early store. The checkout, the
 /// store, the early store's directory, and the session.
 fn early_session(label: &str, writer: u32) -> (PathBuf, PathBuf, PathBuf, Session) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     git(&dir, &["init", "-q"]);
     let source = "class Job\n  def run\n    Widget.new\n  end\nend\n";
     fs::write(dir.join("app.rb"), source).unwrap();
     let commit = |dir: &Path| {
-        git(dir, &["add", "-A"]);
-        git(
-            dir,
-            &[
-                "-c",
-                "user.email=t@e.st",
-                "-c",
-                "user.name=test",
-                "commit",
-                "-qm",
-                "c",
-            ],
-        );
+        commit_all(dir);
     };
     let index = |db: &Path| {
         trekr()
@@ -6018,7 +5802,7 @@ fn an_early_store_whose_index_died_is_left_and_the_index_finished() {
 /// as the server's own index would have been told it (DEC-512).
 #[test]
 fn a_file_opened_behind_anothers_first_index_is_handed_to_it() {
-    let (dir, db) = scratch("handed");
+    let (dir, db) = ruby_scratch("handed");
     let source = repo(&dir);
     trekr()
         .args(["--index"])
@@ -6062,7 +5846,7 @@ fn a_file_opened_behind_anothers_first_index_is_handed_to_it() {
 
 #[test]
 fn answers_from_a_partial_index_say_so_and_references_wait_for_the_whole() {
-    let (dir, db) = scratch("warming");
+    let (dir, db) = ruby_scratch("warming");
     git(&dir, &["init", "-q"]);
     let source = concat!(
         "class Widget\n",       // 1
@@ -6083,19 +5867,7 @@ fn answers_from_a_partial_index_say_so_and_references_wait_for_the_whole() {
         "end\n",                // 16
     );
     fs::write(dir.join("app.rb"), source).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -6224,7 +5996,7 @@ fn answers_from_a_partial_index_say_so_and_references_wait_for_the_whole() {
 /// (DEC-490).
 #[test]
 fn a_let_and_a_shared_groups_read_of_it_find_each_other() {
-    let (dir, db) = scratch("let-refs");
+    let (dir, db) = ruby_scratch("let-refs");
     git(&dir, &["init", "-q"]);
     let shared = concat!(
         "RSpec.shared_examples \"a named thing\" do\n", // 1
@@ -6250,19 +6022,7 @@ fn a_let_and_a_shared_groups_read_of_it_find_each_other() {
     fs::write(dir.join("spec/support/shared.rb"), shared).unwrap();
     fs::write(dir.join("spec/alpha_spec.rb"), alpha).unwrap();
     fs::write(dir.join("spec/beta_spec.rb"), beta).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -6332,7 +6092,7 @@ fn a_let_and_a_shared_groups_read_of_it_find_each_other() {
 /// position, past a multibyte character in the markup (DEC-520, DEC-521).
 #[test]
 fn a_document_that_is_neither_ruby_nor_a_template_gets_no_diagnostics() {
-    let (dir, db) = scratch("not-ruby");
+    let (dir, db) = ruby_scratch("not-ruby");
     repo(&dir);
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
@@ -6364,7 +6124,7 @@ fn a_document_that_is_neither_ruby_nor_a_template_gets_no_diagnostics() {
 
 #[test]
 fn an_erb_template_is_answered_at_its_own_positions() {
-    let (dir, db) = scratch("erb");
+    let (dir, db) = ruby_scratch("erb");
     git(&dir, &["init", "-q"]);
     fs::create_dir_all(dir.join("app/helpers")).unwrap();
     fs::create_dir_all(dir.join("app/views/widgets")).unwrap();
@@ -6393,19 +6153,7 @@ fn an_erb_template_is_answered_at_its_own_positions() {
     )
     .unwrap();
     fs::write(dir.join("app/views/widgets/show.html.erb"), template).unwrap();
-    git(&dir, &["add", "-A"]);
-    git(
-        &dir,
-        &[
-            "-c",
-            "user.email=t@e.st",
-            "-c",
-            "user.name=test",
-            "commit",
-            "-qm",
-            "init",
-        ],
-    );
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -6635,7 +6383,7 @@ fn gated_git(dir: &Path) -> (PathBuf, PathBuf) {
 /// A never-indexed Ruby project (it has a Gemfile, so the server indexes it
 /// at start) behind `gated_git`, with `app.rb` open.
 fn unindexed_session(label: &str, env: &[(&str, &str)]) -> (PathBuf, PathBuf, Session) {
-    let (dir, db) = scratch(label);
+    let (dir, db) = ruby_scratch(label);
     let source = repo(&dir);
     fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
     let (shim, gate) = gated_git(&dir);
@@ -6772,7 +6520,7 @@ fn a_request_the_index_outlasts_is_refused_saying_why() {
 /// from a checkout nobody indexed is refused at once, saying how to index it.
 #[test]
 fn with_indexing_off_an_unindexed_checkout_is_refused_not_answered_empty() {
-    let (dir, db) = scratch("wait-off");
+    let (dir, db) = ruby_scratch("wait-off");
     repo(&dir);
     fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
     let mut session = Session::start(&db, &dir);
