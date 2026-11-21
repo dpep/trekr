@@ -158,6 +158,7 @@ pub(super) fn cmd_dead_gems(
     }
     let mut store = open_store()?;
     let mut graded = Vec::new();
+    let mut seen = HashSet::new();
     for path in paths {
         if !path.is_file() {
             return Err(Failure::NotFound.error(format!("no such file: {}", path.display())));
@@ -173,6 +174,10 @@ pub(super) fn cmd_dead_gems(
         let manifest = dir.join(path.file_name().unwrap_or_default());
         if dir != canonical(&root) && !is_engine_gemspec(&root, &manifest) {
             return Err(Failure::Usage.error(subdirectory_refusal(&root, path)));
+        }
+        // One manifest named twice is graded once.
+        if !seen.insert(manifest.clone()) {
+            continue;
         }
         if let Some(code) = autoindex::ensure(out, &store, &root, Need::Whole)? {
             return Ok(code);
@@ -733,6 +738,17 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
     // A default gem counts too: rubocop declares ostruct for YARD, which
     // requires it and a newer Ruby no longer ships it.
     let soft = required_by_bundle(store, &layers, &installed, &lock, &unused)?;
+    // The gem each gemspec declaring rows is: its dependencies are what it
+    // needs, not another gem's need that keeps them in the bundle.
+    let declaring: HashMap<&String, Option<String>> = declared
+        .iter()
+        .map(|(_, file)| file)
+        .filter(|file| file.ends_with(".gemspec"))
+        .map(|file| {
+            let raw = crate::scan::read_source(root.join(file)).ok();
+            (file, raw.and_then(|raw| gemfile::gemspec_name(&raw)))
+        })
+        .collect();
     let mut rows = Vec::new();
     let mut referenced = Vec::new();
     for (declaration, file) in &declared {
@@ -772,6 +788,11 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
                 .needed_by(name)
                 .into_iter()
                 .filter(|by| installed.contains_key(by) || lock.needs.contains_key(by))
+                .filter(|by| {
+                    declaring
+                        .get(file)
+                        .is_none_or(|own| own.as_deref() != Some(by))
+                })
                 .collect(),
             executables: spec.executables.clone(),
             test_refs: found.map_or(0, |u| u.tests),
@@ -2100,11 +2121,15 @@ impl Texts {
 }
 
 /// Whether `word` is in `line` with no name character either side; `-`
-/// counts as one, so `rubocop` is not in `rubocop-rails`.
+/// counts as one, so `rubocop` is not in `rubocop-rails`, and so does a
+/// `.` before it: `.yardoc` is a directory, not yard.
 fn has_word(line: &str, word: &str) -> bool {
     let named = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
     line.match_indices(word).any(|(at, _)| {
-        !line[..at].chars().next_back().is_some_and(named)
+        !line[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| named(c) || c == '.')
             && !line[at + word.len()..].chars().next().is_some_and(named)
     })
 }
@@ -2468,6 +2493,8 @@ mod tests {
         assert!(!has_word("require: rubocop-rails", "rubocop"));
         assert!(!has_word("adapter: postgresql_x", "postgresql"));
         assert!(has_word("  adapter: postgresql", "postgresql"));
+        assert!(!has_word("rm -rf .yardoc doc", "yardoc"));
+        assert!(!has_word("cache: .yard", "yard"));
     }
 
     #[test]

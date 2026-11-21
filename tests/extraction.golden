@@ -1118,6 +1118,11 @@ ruby tests/testbed/887-a-slim-views-prose-names-no-gem/vendor/bundle/ruby/9.8.0/
 ruby tests/testbed/887-a-slim-views-prose-names-no-gem/vendor/bundle/ruby/9.8.0/gems/note_kit-1.0/lib/note_kit.rb d13d2261765a39b1
 ruby tests/testbed/887-a-slim-views-prose-names-no-gem/vendor/bundle/ruby/9.8.0/gems/out_kit-1.0/lib/out_kit.rb 1fd862790e72948f
 ruby tests/testbed/887-a-slim-views-prose-names-no-gem/vendor/bundle/ruby/9.8.0/gems/prose_kit-1.0/lib/prose_kit.rb b74ee64eba18f4cb
+ruby tests/testbed/888-a-dot-before-a-gems-name-is-a-paths/Gemfile 786d24c8898ddf2e
+ruby tests/testbed/888-a-dot-before-a-gems-name-is-a-paths/Rakefile 653419fdd17757c4
+ruby tests/testbed/888-a-dot-before-a-gems-name-is-a-paths/app/widget.rb 1c9072ea29be5edf
+ruby tests/testbed/888-a-dot-before-a-gems-name-is-a-paths/vendor/bundle/ruby/9.8.0/gems/doc_kit-1.0/lib/doc_kit.rb d8da5ca23fc6e6d5
+ruby tests/testbed/888-a-dot-before-a-gems-name-is-a-paths/vendor/bundle/ruby/9.8.0/specifications/doc_kit-1.0.gemspec b8bfa5a4ccf0743b
 ruby tests/testbed/900-a-callback-symbol-of-a-commit-job-or-test-hook-is-a-reference/app/jobs/widget_job.rb fc8ed93b7bcf1238
 ruby tests/testbed/900-a-callback-symbol-of-a-commit-job-or-test-hook-is-a-reference/app/models/application_record.rb b65a4f3559a513a8
 ruby tests/testbed/900-a-callback-symbol-of-a-commit-job-or-test-hook-is-a-reference/app/models/gadget.rb 519acee51761e427

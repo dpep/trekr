@@ -1,0 +1,3 @@
+task :clobber do
+  rm_rf ".dockit"
+end

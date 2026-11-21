@@ -718,7 +718,8 @@ The rows, from least evidence to most:
   plugs into (`provider :saml`); `config`, a config, CI file, Procfile or
   a Ruby string in `config/` names it, an adapter `database.yml` names
   (`postgresql` for pg), or a file in `config/` is named for it
-  (`config/puma.rb`); `command`, a line runs one of its commands.
+  (`config/puma.rb`); `command`, a line runs one of its commands. A name
+  after a `.` is a path's, not the gem's (`.yardoc` names no yard).
 
 Each is `clear`, or `lower` with a `caveat` naming what may use it with
 nothing naming it, and what would settle it: not installed (its files
@@ -737,7 +738,7 @@ gem it brings that the app uses, which others bring too.
 Per row: `version` and `gem_dir` (`null` when not installed), `groups`,
 `bundler_require` (`name`, `paths`, or `off` for `require: false`),
 `needed_by` (gems that depend on it, so removing the line keeps it in the
-bundle), `executables`, `test_refs`. `summary` counts `declared`,
+bundle; not the gem whose gemspec declares it), `executables`, `test_refs`. `summary` counts `declared`,
 `referenced` (gems found in use that are not rows: a `test-only` row is
 not one), `transitive`, the rows per tier and per confidence; text lists
 `referenced` with `--explain`.

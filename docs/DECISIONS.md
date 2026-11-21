@@ -17694,3 +17694,24 @@ read, line for line: what follows `-`, `=` or `==`; a tag's `=` output
 is still not parsed — a line is split by its leading character and a
 tag's attributes — so this reads less than before, never more.
 Testbed 887; unit test `a_slim_views_ruby_is_its_code_not_its_text`.
+
+## DEC-809 — Three `--dead Gemfile` paper cuts
+
+**Decided** (hunt 2):
+
+- **A gemspec's own gem is not in its rows' `needed_by`.** With `gemspec
+  path: "engines/core"`, core.gemspec's dependency optimist said "core
+  needs it too, so the bundle keeps it": core needs it *because* that
+  line declares it. The gem a declaring gemspec names (its `name =`) is
+  left out of each of its rows' `needed_by` (gspath).
+- **A manifest named twice is graded once.** `--dead Gemfile Gemfile`
+  listed every row twice and counted 4 of 4 declared for a 2-gem bundle.
+- **A `.` before a gem's name or command is no word boundary.** yard,
+  whose command is `yardoc`, was `convention-only` by rspec-core's
+  Rakefile `rm_rf '.yardoc'`, a directory (also rspec-mocks,
+  rspec-expectations). A name in a config or command line now needs a
+  non-name, non-`.` character before it.
+
+Testbed 888 (the dot). The other two are not testbed-shaped — the harness
+asserts no `needed_by` and passes one target — and were checked on hunt
+2's gspath and dualboot checkouts against the build before.

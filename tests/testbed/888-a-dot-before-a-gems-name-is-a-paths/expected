@@ -1,0 +1,5 @@
+# A gem's name or command in a config or command line counted with a `.`
+# before it, a word boundary: yard, whose command is `yardoc`, was
+# `convention-only` by a Rakefile's `rm_rf ".yardoc"`, a directory. A `.`
+# before the name is no boundary now.
+dead Gemfile doc_kit=unreferenced~command
