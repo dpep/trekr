@@ -19,6 +19,7 @@
 
 use super::handlers;
 use super::state::Session;
+use crate::core::text::trailing_run;
 use crate::core::{Facts, RecvShape};
 use crate::query::position::{self, Under};
 use crate::tree::Tree;
@@ -359,25 +360,15 @@ fn context(text: &str, offset: usize) -> Option<(usize, String, Context)> {
     if in_comment_or_string(&before[line_start..]) {
         return None;
     }
-    let start = before
-        .char_indices()
-        .rev()
-        .take_while(|(_, c)| c.is_alphanumeric() || *c == '_')
-        .last()
-        .map_or(offset, |(i, _)| i);
-    let prefix = before[start..].to_string();
+    let prefix = trailing_run(before, |c| c.is_alphanumeric() || c == '_').to_string();
+    let start = offset - prefix.len();
     if prefix.starts_with(|c: char| c.is_ascii_digit()) {
         return None;
     }
     let lead = &before[..start];
     let context = if let Some(rest) = lead.strip_suffix("::") {
-        let path_start = rest
-            .char_indices()
-            .rev()
-            .take_while(|(_, c)| c.is_alphanumeric() || *c == '_' || *c == ':')
-            .last()
-            .map_or(rest.len(), |(i, _)| i);
-        Context::Scope(rest[path_start..].trim_start_matches("::").to_string())
+        let path = trailing_run(rest, |c| c.is_alphanumeric() || c == '_' || c == ':');
+        Context::Scope(path.trim_start_matches("::").to_string())
     } else if let Some(receiver) = lead.strip_suffix('.') {
         // `1.` is a float being typed, and `..` a range.
         if receiver.ends_with(|c: char| c == '.' || c.is_ascii_digit()) {

@@ -459,11 +459,10 @@ fn listings(line: &str) -> Vec<(String, String)> {
 
 /// The constant path that ends `text`, if it ends in one: `Mailers::Notifier`.
 fn constant_before(text: &str) -> Option<String> {
-    let start = text
-        .char_indices()
-        .rfind(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_' || *c == ':'))
-        .map_or(0, |(at, c)| at + c.len_utf8());
-    let written = text[start..].trim_start_matches("::");
+    let written = crate::core::text::trailing_run(text, |c| {
+        c.is_ascii_alphanumeric() || c == '_' || c == ':'
+    })
+    .trim_start_matches("::");
     written
         .split("::")
         .all(|part| part.starts_with(|c: char| c.is_ascii_uppercase()))

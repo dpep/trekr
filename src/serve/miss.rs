@@ -10,6 +10,7 @@
 //! Written after the answer is on the wire, never ahead of it: the token is
 //! read then, from the document the request already loaded.
 
+use crate::core::text::{leading_run, trailing_run};
 use std::cell::RefCell;
 use std::path::PathBuf;
 
@@ -75,16 +76,8 @@ pub(crate) fn token_at(text: &str, position: lsp_types::Position) -> String {
     let line = &text[line_start..line_end];
     let at = offset - line_start;
     let part = |c: char| c.is_alphanumeric() || matches!(c, '_' | ':' | '@' | '$');
-    let start = line[..at]
-        .char_indices()
-        .rev()
-        .take_while(|(_, c)| part(*c))
-        .last()
-        .map_or(at, |(i, _)| i);
-    let mut end = line[at..]
-        .char_indices()
-        .find(|(_, c)| !part(*c))
-        .map_or(line.len(), |(i, _)| at + i);
+    let start = at - trailing_run(&line[..at], part).len();
+    let mut end = at + leading_run(&line[at..], part).len();
     if line[end..].starts_with(['?', '!']) {
         end += 1;
     }

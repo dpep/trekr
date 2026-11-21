@@ -1311,6 +1311,8 @@ pub(crate) fn split_nesting(s: &str) -> Vec<String> {
 /// nested in it, so it never leaves its file.
 pub(crate) mod ruby;
 
+pub(crate) mod text;
+
 pub(crate) mod rspec {
     /// What every example group subclasses.
     pub(crate) const EXAMPLE_GROUP: &str = "RSpec::Core::ExampleGroup";
