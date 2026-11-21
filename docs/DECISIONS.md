@@ -17601,3 +17601,14 @@ not:
   them requires. hchain_c is `convention-only`, by hchain_b.
 
 Testbed 882.
+
+## DEC-803 — `--dead Gemfile` reads the files the index reads, untracked too
+
+**Decided.** The files `--dead Gemfile` reads beside the index (scripts,
+Thor files, Slim views, configs, CI) are listed as the index lists its
+own: `git ls-files -c -o --exclude-standard`, tracked and untracked but
+not ignored. They were listed by `git ls-files` alone, so a new,
+uncommitted `Dangerfile` naming public_suffix left it `unreferenced`,
+`clear`, while the index read every untracked `.rb` (hunt 2's kinds).
+Unit test `the_files_read_are_the_ones_the_index_reads`; the testbed
+commits every case's files, so it cannot stage an untracked one.

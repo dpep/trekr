@@ -1510,7 +1510,7 @@ impl Scripts {
             files: Vec::new(),
             words: Vec::new(),
         };
-        for path in tracked(root) {
+        for path in listed(root) {
             let name = path.rsplit('/').next().unwrap_or(&path);
             let plain = PLAIN_RUBY.iter().any(|ext| name.ends_with(ext))
                 || PLAIN_RUBY_NAMES.contains(&name);
@@ -1640,21 +1640,26 @@ fn words(text: &str) -> Vec<(u32, String)> {
     found
 }
 
-/// The checkout's files as git lists them, relative.
-fn tracked(root: &Path) -> Vec<String> {
+/// The checkout's files the index would read, relative and sorted: those
+/// git tracks and those it has not seen but does not ignore.
+fn listed(root: &Path) -> Vec<String> {
     let Ok(out) = std::process::Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["ls-files", "-z"])
+        .args(["ls-files", "-c", "-o", "--exclude-standard", "-z"])
         .output()
     else {
         return Vec::new();
     };
-    out.stdout
+    let mut paths: Vec<String> = out
+        .stdout
         .split(|b| *b == 0)
         .filter(|p| !p.is_empty())
         .map(|p| String::from_utf8_lossy(p).into_owned())
-        .collect()
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 /// The files outside Ruby that load a gem by name: config, the commands a
@@ -1790,7 +1795,7 @@ impl Texts {
                 true => DIRS.iter().any(|dir| path.starts_with(dir)),
             }
         };
-        let files = tracked(root)
+        let files = listed(root)
             .into_iter()
             .filter(|path| wanted(path))
             .filter_map(|path| {
@@ -2217,6 +2222,33 @@ mod tests {
         assert!(!has_word("require: rubocop-rails", "rubocop"));
         assert!(!has_word("adapter: postgresql_x", "postgresql"));
         assert!(has_word("  adapter: postgresql", "postgresql"));
+    }
+
+    #[test]
+    fn the_files_read_are_the_ones_the_index_reads() {
+        let dir = std::env::temp_dir().join(format!("trekr-listed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        for (name, text) in [
+            ("Gemfile", "gem 'x'\n"),
+            ("Dangerfile", "warn 'x'\n"),
+            ("skip.log", "x\n"),
+            (".gitignore", "*.log\n"),
+        ] {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        git(&["add", "Gemfile", ".gitignore"]);
+        assert_eq!(listed(&dir), [".gitignore", "Dangerfile", "Gemfile"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

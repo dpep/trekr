@@ -671,7 +671,8 @@ A gem is used — not listed, and in `referenced` with the first evidence
 requires one of its files, calls a method a module of its own (or a class
 it reopens) defines that no more than three gems and neither the checkout
 nor Ruby define, reopens a class it owns, or uses a gem only it brings.
-The checkout here is what the index reads, plus the Ruby it does not
+The checkout here is what the index reads — tracked files and untracked
+ones git does not ignore (DEC-803) — plus the Ruby it does not
 (DEC-770): extensionless scripts, Builder, Arbre, Jb, axlsx and Prawn
 views, Thor files, `Dangerfile`, `Thorfile`, `.irbrc` and `.pryrc`,
 parsed; and Slim views, whose words are read — a constant path, a method
