@@ -1,0 +1,6 @@
+# Found by a hunt: a def's end is known by line only, so a call written
+# after a def's `end` on that line was put in that def and freed by it:
+# register runs as the class loads, not in boot; footer is in the live
+# run, not helper; launch follows start's multi-line `end`. A call on the
+# line a def ends names no caller (DEC-751).
+dead app Report#footer=single-caller^ Report#register=single-caller^ Report#launch=single-caller^ Report#helper=unreferenced^ Report#boot=unreferenced^ Report#start=unreferenced^

@@ -358,7 +358,8 @@ From least evidence of use to most:
 A method whose only caller is itself a candidate stays `single-caller`, and
 its `reason` says the caller is a candidate — unless the innermost `def`
 around the call is not a candidate, or two `def`s on the call's line may
-each hold it, when it names none. When that caller is a `clear`
+each hold it, or a `def` around it ends on the call's line (the call may
+follow its `end`), when it names none. When that caller is a `clear`
 `unreferenced` or `test-only` method and the row is `clear` too, with no
 `super_refs` or `symbol_refs` besides, deleting
 the caller leaves this one unreferenced (or reached only by tests): the

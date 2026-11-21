@@ -1568,13 +1568,17 @@ fn note_candidate_callers(rows: &mut [DeadRow], defs: &[WrittenDef]) {
         // is gone: the one call must be the only way in.
         let only_way_in = *super_refs == 0 && *symbol_refs == 0;
         // The innermost: a call in a `def` nested in another is the inner's.
-        // A def's end has no column, so two that tie may each hold the call.
+        // A def's end has no column, so two that tie may each hold the call,
+        // and one on the line a def ends may follow its `end` (DEC-751).
         let around: Vec<&Span> = spans
             .get(caller.path.as_str())
             .into_iter()
             .flatten()
             .filter(|s| s.start <= (caller.line, caller.col) && caller.line <= s.end)
             .collect();
+        if around.iter().any(|s| s.end == caller.line) {
+            continue;
+        }
         let Some(narrowest) = around.iter().map(|s| s.end - s.start.0).min() else {
             continue;
         };

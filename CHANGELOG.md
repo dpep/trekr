@@ -90,7 +90,10 @@
   `def` on its line now names no caller, since either may hold it. Nor
   does a call held by a method that is no candidate: one in a live `def`
   nested in a candidate, or beside one on its line, was put in the
-  candidate.
+  candidate. Nor a call on the line a `def` ends, which may follow its
+  `end`: `def self.boot; 1; end; register` in a class body put
+  `register` in `boot`, though it runs as the class loads. A call inside
+  a one-line `def` names no caller either.
 - **`--dead` reads `class << io` as `def io.x`**: a method defined in the
   singleton class of a local's object was filed as the class's own
   (`Printer.write`), `unreferenced`, `clear`, and named as what frees the

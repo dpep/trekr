@@ -17408,9 +17408,27 @@ header; end; def run; footer; end` the call `footer` is inside `run`, and
 `def outer; def inner; end; footer; end` puts the same call inside
 `outer`: no rule over lines and starts tells those apart, and picking the
 later start (or, as before, the first listed) is a guess that, once
-cascaded, claims the wrong deletion. `header`, before `run` starts, is
-still `build`'s. Testbed 816. A def's end column, an extraction change,
-would settle the tie.
+cascaded, claims the wrong deletion. Testbed 816. A def's end column, an
+extraction change, would settle the tie.
+
+**A call on the line a def ends names no caller.** The same missing
+column put a call written after a def's `end` on that line inside the
+def: `def self.boot; 1; end; register` in a class body credited `register`
+to `boot`, though it runs as the class loads; `def helper; 1; end; footer`
+on a line of a live `run` credited `footer` to the candidate `helper`; and
+`end; launch` after a multi-line `start` credited `launch` to `start`.
+Each, cascaded, claimed the wrong deletion. The rule: when any def around
+the call ends on the call's line, the row names no caller and carries no
+`cascaded_from`. It has no exception, and so is blunt: a call inside a
+one-line def (`header` in `def build; header; end`, which 816 had as
+`build`'s) names none either. The narrower rule, a call before any `end`
+on its line, reads the source text and still misses the endless `def
+boot = 1; register`, which has no `end` to find. Testbed 967. Moved no
+discourse row (`app lib plugins`, byte-identical output); the testbed,
+whose cases favour one-line defs, lost the caller from 20 rows' reasons
+in 9 cases and two cascades (816's `header`, 807's `Literal#used`), all
+a call inside a one-line def. A def's end
+column, an extraction change, would settle every case here; deferred.
 
 **Every def is a contender, not only the candidates.** The innermost def
 is sought among every literal `def` in scope, candidate or live: a live

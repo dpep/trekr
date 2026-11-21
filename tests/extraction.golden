@@ -1204,6 +1204,7 @@ ruby tests/testbed/965-a-concern-through-a-constant-alias/app/main.rb 99db035173
 ruby tests/testbed/965-a-concern-through-a-constant-alias/app/pretend.rb cfd42b7813dc96fe
 ruby tests/testbed/965-a-concern-through-a-constant-alias/app/widget.rb 2cbaad4b3d00232f
 ruby tests/testbed/966-t-unsafe-of-a-constant-lists-its-subclasses/app/models/kinds.rb 5b16656f032e4379
+ruby tests/testbed/967-a-call-after-a-defs-end-on-its-line-is-not-its/app/report.rb 9318399c224f661f
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
