@@ -1210,6 +1210,7 @@ ruby tests/testbed/965-a-concern-through-a-constant-alias/app/pretend.rb cfd42b7
 ruby tests/testbed/965-a-concern-through-a-constant-alias/app/widget.rb 2cbaad4b3d00232f
 ruby tests/testbed/966-t-unsafe-of-a-constant-lists-its-subclasses/app/models/kinds.rb 5b16656f032e4379
 ruby tests/testbed/967-a-call-after-a-defs-end-on-its-line-is-not-its/app/report.rb 9318399c224f661f
+ruby tests/testbed/989-a-doc-comment-indented-with-unicode-whitespace/app.rb 142a7eb509deb4f2
 ruby tests/testbed/990-a-slim-views-multibyte-ruby-is-read-whole/Gemfile 27724c23569d7044
 ruby tests/testbed/990-a-slim-views-multibyte-ruby-is-read-whole/vendor/bundle/ruby/9.8.0/gems/idle_kit-1.0/lib/idle_kit.rb 3c0cbdc0d83d959e
 ruby tests/testbed/990-a-slim-views-multibyte-ruby-is-read-whole/vendor/bundle/ruby/9.8.0/gems/used_kit-1.0/lib/used_kit.rb 94f2bce36e2e2447

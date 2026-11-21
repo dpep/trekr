@@ -91,8 +91,17 @@ fn opener(lines: &[&str], close: usize, indent: usize) -> Option<usize> {
     None
 }
 
+/// In characters: what `trim_start` takes includes NBSP and U+3000, so a
+/// byte count would dedent into the middle of one.
 fn indent_of(line: &str) -> usize {
-    line.len() - line.trim_start().len()
+    line.chars().take_while(|c| c.is_whitespace()).count()
+}
+
+/// `line` less its first `n` characters.
+fn dedent(line: &str, n: usize) -> &str {
+    let mut chars = line.chars();
+    chars.by_ref().take(n).for_each(drop);
+    chars.as_str()
 }
 
 /// The comment lines ending directly above `start`, markers stripped, top to
@@ -270,7 +279,7 @@ fn first_paragraph(prose: &[&str]) -> String {
         .take_while(|l| !l.trim().is_empty())
         .collect();
     let indent = body.iter().map(|l| indent_of(l)).min().unwrap_or(0);
-    let lines: Vec<&str> = body.iter().map(|l| &l[indent..]).collect();
+    let lines: Vec<&str> = body.iter().map(|l| dedent(l, indent)).collect();
     let cut = lines.len() > SUMMARY_LINES;
     let joined = lines[..lines.len().min(SUMMARY_LINES)].join("\n");
     let capped = cap(joined.trim_end(), SUMMARY_CHARS);
@@ -643,6 +652,14 @@ mod tests {
     fn a_blank_line_separates_a_comment_from_the_definition() {
         let source = "# About the section below.\n\ndef resize\n";
         assert_eq!(doc(source), None);
+    }
+
+    #[test]
+    fn a_comment_indented_with_unicode_whitespace_is_dedented_by_characters() {
+        let source = "#  one\n# \u{3000}two\n#  \u{a0}three\ndef foo; end\n";
+        assert_eq!(summary(source), "one\ntwo\n\u{a0}three");
+        let source = "# \u{3000}one\n# \u{3000}two\ndef foo; end\n";
+        assert_eq!(summary(source), "one\ntwo");
     }
 
     #[test]

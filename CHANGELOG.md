@@ -183,6 +183,10 @@
   `año.const_get(name)` or `T.unsafe(año).descendants` in the checkout's
   Ruby panicked ("not a char boundary"). The receiver is read whole, so a
   caveat names `año.const_get`.
+- **Hover no longer fails on a doc comment indented with NBSP or U+3000**:
+  a line indented with a space beside one indented with U+3000 made every
+  hover on that method an internal error. The comment is dedented by
+  characters.
 
 ## 0.10.2 — 2026-11-20
 

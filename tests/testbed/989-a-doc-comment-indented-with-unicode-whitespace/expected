@@ -1,0 +1,5 @@
+# A doc comment whose lines are indented with U+3000 (or NBSP) beside one
+# indented with a space: hover dedented by a byte count, sliced inside
+# the character, and answered with an internal error.
+hover app.rb:5:1 Resizes the widget,
+hover app.rb:5:1 keeping its aspect.
