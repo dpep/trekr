@@ -57,7 +57,9 @@
 - **`--dead` reads a class's own `descendants` as a listing of its
   subclasses**: `descendants` in a class method, or
   `T.unsafe(self).subclasses`, makes each subclass `convention-only` by
-  `subclasses`, as `Base.subclasses` does; they were `unreferenced`.
+  `subclasses`, as `Base.subclasses` does; they were `unreferenced`. A
+  module's class side lists nothing: a class that includes it is no
+  subclass.
 
 ## 0.10.2 — 2026-11-20
 

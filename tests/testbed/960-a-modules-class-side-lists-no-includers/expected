@@ -1,0 +1,6 @@
+# Found by a hunt: a module's class side sending `descendants` lists no
+# subclasses, as only a class has them, so a class that includes it is not
+# listed. A concern's `included do` runs on the includer, where `subclasses`
+# is the includer's own; that is not read yet, so it lists nothing either
+# (DEC-760).
+dead app/models Widget=unreferenced~ Gadget=unreferenced~

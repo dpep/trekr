@@ -17001,6 +17001,23 @@ No store change.
 **Not an instance method's.** There `descendants` is the instance's, and
 `T.unsafe(self)` an instance: neither lists the class's subclasses.
 
+## DEC-760 — A module's class side lists no subclasses
+
+**Decided.** DEC-721's self listing counts only where its nesting is a
+class. A module has no subclasses: `descendants` on its class side is a
+method it defines, and the classes that include it are not what it
+returns. Each was a `convention-only` row, "a subclass of Registry, whose
+subclasses are listed", because the listing walk climbs every ancestor,
+included modules too. Testbed 960.
+
+**Not read: `included do … subclasses end`.** The extractor records a
+concern's `included` block as the module's class side, but the block runs
+on each includer, where `subclasses` lists that includer's subclasses.
+Reading it would need the block told apart from `def self.` in the
+module, then every class that includes the concern, directly or through
+another concern. Left conservative: it lists nothing, so a subclass it
+does reach stays a candidate, as before DEC-721.
+
 
 ## DEC-670 — `--dead Gemfile`: a bundle's gems graded, never called unused
 

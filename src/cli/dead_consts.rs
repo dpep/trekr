@@ -458,8 +458,12 @@ pub(super) fn dead_constants(
         }
     }
     let mut named = Named::read(texts);
+    // Only a class has subclasses: a module's class side is its own (a
+    // concern's `included do` runs on the includer, which is not modelled).
     for (nesting, at) in std::mem::take(&mut named.self_listed) {
-        if let Some(class) = tree.scope_fqn(&nesting) {
+        if let Some(class) = tree.scope_fqn(&nesting)
+            && tree.kind_of(&class) == Some("class")
+        {
             named.listed.entry(class).or_insert(at);
         }
     }
