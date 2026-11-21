@@ -17,3 +17,7 @@ dead lib Helped#helped_value=test-only& Configured#configured_value=test-only&
 # body may read none: `Formats::MONEY.call(…)` ran a live lambda in its
 # only test. Spec code reads no checkout constant but the method's class.
 dead lib Konst#konst_value=test-only&
+# `change(c, :count)` calls `count` before and after the block, with no
+# call written: the live `Counter#count` lost its only test. It is weighed
+# as a name sent.
+dead lib Counter#bump!=test-only&

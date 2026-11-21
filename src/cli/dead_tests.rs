@@ -1251,6 +1251,12 @@ impl Shape {
                         Some(first) if first.as_array_node().is_some() => self.imply(at, b"[]"),
                         _ => {}
                     },
+                    // `change(counter, :count)` calls `count` before and after.
+                    "change" => {
+                        if let Some(symbol) = args.get(1).and_then(|a| a.as_symbol_node()) {
+                            self.imply(at, symbol.unescaped());
+                        }
+                    }
                     _ => {
                         // RSpec's `be_visible` asks `visible?` (or `visibles?`),
                         // `have_key` asks `has_key?`.
