@@ -1,0 +1,21 @@
+PATH
+  remote: engines/widget
+  specs:
+    widget (0.1.0)
+      dropped_dep
+      inflect
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    dropped_dep (1.0)
+    inflect (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  widget!
+
+BUNDLED WITH
+   2.6.9

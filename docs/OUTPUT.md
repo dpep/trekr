@@ -661,9 +661,14 @@ declares instead (DEC-670), one row per `gem` line (`kind: gem`, `path`
 and `line` the declaration). A Gemfile's `gemspec` adds the gemspecs'
 dependencies, from the directory its `path:` names. A gem only the
 lockfile names is not the app's to remove: it is never a row, and
-`summary.transitive` counts them. A lockfile, or a manifest in a
-subdirectory (whose own bundle the index did not locate), is a usage
-error, exit 64 (DEC-771).
+`summary.transitive` counts them. A lockfile, a second bundle's manifest
+or lock beside the root's (`Gemfile.next`, Appraisal's
+`gemfiles/*.gemfile`; DEC-806), or a manifest in a subdirectory (whose own
+bundle the index did not locate) is a usage error, exit 64 (DEC-771) —
+except a gemspec in the directory of a path gem the root's lockfile
+names (rails' `activesupport/activesupport.gemspec`), which is graded
+against the root bundle and the whole checkout (DEC-807). A root
+`Gemfile` that links elsewhere is the root's.
 
 A gem is used — not listed, and in `referenced` with the first evidence
 (`by`: `constant`, `require`, `method`, `declaration`, `dependency`;

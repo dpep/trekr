@@ -1,0 +1,7 @@
+# An engine's gemspec in a subdirectory, where it is a path gem of the
+# root's lockfile (rails' `activesupport/activesupport.gemspec`), was
+# refused as a subdirectory's bundle; its gems are the root bundle's,
+# which the index located, so it is graded. A gemspec no root path gem
+# is (engines/other) is still refused.
+dead engines/widget/widget.gemspec inflect=none dropped_dep=unreferenced~
+dead engines/other/other.gemspec exit=64

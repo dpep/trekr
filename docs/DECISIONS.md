@@ -17642,3 +17642,40 @@ one literal `s.executables = [...]`; written any other way — `<<`,
 and the gem's `exe/` or `bin/` says what it installs. `s.executables <<
 "check-style"` read as no command, so a path gem CI runs by that command
 was `unreferenced`, `clear` (hunt 2's exes). Testbed 884.
+
+## DEC-806 — A second bundle's manifest is refused, not graded as code
+
+**Decided.** `--dead Gemfile.next`, `--dead gemfiles/rails_7.gemfile`
+(Appraisal) and their `.lock`s are usage errors, exit 64, naming the
+root's Gemfile: any file named `Gemfile.*` or `*.gemfile`(`.lock`) that
+is not the root's manifest or lock. They were not recognised as bundle
+files, so `--dead` graded them as code, found nothing and exited 1 —
+"no candidates", as though the bundle were clean (hunt 2's dualboot).
+Grading one against its own lock was the other option: the index locates
+only the root bundle's gems (`gems::bundle_files`), so a dual boot's
+newer versions were never indexed, and every answer would come from the
+wrong gems — DEC-771's reason for refusing a subdirectory's. Testbed 885.
+
+## DEC-807 — A subdirectory's manifest: an engine's gemspec is graded; refusals say why
+
+**Decided.** Three corrections to DEC-771's refusal (hunt 2):
+
+- **An engine's gemspec is the root bundle's.** A gemspec whose directory
+  is a path gem the root's lockfile names (rails'
+  `activesupport/activesupport.gemspec`) is graded: its gems were located
+  with the root bundle. Its evidence is the whole checkout, as for the
+  root's manifest, so a dependency only another engine uses is used — a
+  row lost, never a `clear` gained.
+- **A root `Gemfile` that is a link** (to `gemfiles/Gemfile.rails7`) was
+  refused, its directory taken from where it points. The directory is
+  where the path is written: `canonicalize(parent(path))`, and the
+  manifest keeps its own name.
+- **The messages.** They ended mid-thought ("…whose bundle it did not")
+  and said the root bundle was located when there was none (a polyglot
+  repo with the app in `backend/`). Each now says what the index located,
+  or that the root has no bundle, and names what was passed.
+
+Testbed 886 (engine gemspec; a gemspec no root path gem is stays
+refused). The link and the messages are not testbed-shaped (the harness
+copies a link as a file and asserts no message): checked by hand on hunt
+2's symlink and mono checkouts.

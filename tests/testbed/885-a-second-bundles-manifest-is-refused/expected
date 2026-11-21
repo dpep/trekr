@@ -1,0 +1,8 @@
+# A second bundle beside the root's — a dual boot's `Gemfile.next`,
+# Appraisal's `gemfiles/*.gemfile`, and their locks — was graded as code
+# and found nothing, exit 1. Its gems are not the ones the index located,
+# so it is refused as a lockfile is, exit 64.
+dead Gemfile.next exit=64
+dead Gemfile.next.lock exit=64
+dead gemfiles/rails_7.gemfile exit=64
+dead gemfiles/rails_7.gemfile.lock exit=64

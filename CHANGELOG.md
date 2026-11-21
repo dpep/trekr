@@ -19,7 +19,9 @@
   `require` loads it by name. A Railtie, a method defined on a class it
   does not own, a command it installs, a plugin's name or the development
   group grade it `lower`. A gem only the lockfile names is never a row. A
-  lockfile, or a Gemfile in a subdirectory, is refused with exit 64.
+  lockfile, a second bundle (`Gemfile.next`, `gemfiles/*.gemfile`), or a
+  Gemfile in a subdirectory is refused with exit 64; an engine's gemspec
+  that is a path gem of the root bundle is graded.
   `--explain` lists each gem found in use and the first evidence;
   `--json` carries it as `referenced`.
 
