@@ -7,6 +7,7 @@
 //! never a resolved reference.
 
 use super::super::built::{TEMPLATES, Texts};
+use crate::core::RecvShape;
 use rayon::prelude::*;
 use std::collections::HashMap;
 
@@ -36,6 +37,10 @@ pub(super) struct Named {
     pub(super) route_strings: HashMap<String, At>,
     /// A constant whose subclasses are listed at runtime.
     pub(super) listed: HashMap<String, At>,
+    /// A class side that lists its own subclasses (`descendants` in a class
+    /// method, `T.unsafe(self).subclasses`), by the nesting it is written
+    /// in: the tree places it in `listed`.
+    pub(super) self_listed: Vec<(Vec<String>, At)>,
     /// A constant whose own constants are listed at runtime (`X.constants`),
     /// or looked up by a name computed at runtime (`X.const_get(region)`).
     pub(super) constants_listed: HashMap<String, (String, At)>,
@@ -116,6 +121,7 @@ impl Named {
                     }
                 } else {
                     part.read_ruby(path, text);
+                    part.read_self_listings(path, text);
                     if let Some(line) = part.computed.take() {
                         part.computed_in.insert(path.clone(), line);
                     }
@@ -159,6 +165,7 @@ impl Named {
         for (key, at) in part.listed {
             self.listed.entry(key).or_insert(at);
         }
+        self.self_listed.extend(part.self_listed);
         for (key, at) in part.constants_listed {
             self.constants_listed.entry(key).or_insert(at);
         }
@@ -234,6 +241,32 @@ impl Named {
                 self.dynamic
                     .entry(word_at(arg, 0).to_string())
                     .or_insert_with(|| (path.to_string(), line_no));
+            }
+        }
+    }
+
+    /// `descendants` or `subclasses` sent to a class side's self, bare or
+    /// through `T.unsafe(self)`, an identity Sorbet does not check. A parse,
+    /// as the text cannot say which side a line is written on.
+    fn read_self_listings(&mut self, path: &str, text: &str) {
+        const LISTINGS: [&str; 2] = ["descendants", "subclasses"];
+        if !LISTINGS.iter().any(|call| text.contains(call)) {
+            return;
+        }
+        let lines: Vec<&str> = text.lines().collect();
+        for call in crate::extract::extract(text.as_bytes()).calls {
+            if !call.singleton || !LISTINGS.contains(&call.name.as_str()) {
+                continue;
+            }
+            let line = lines.get(call.pos.line as usize - 1).copied().unwrap_or("");
+            let on_self = match call.recv {
+                RecvShape::Implicit | RecvShape::SelfRecv => true,
+                RecvShape::Other => line.contains(&format!("T.unsafe(self).{}", call.name)),
+                _ => false,
+            };
+            if on_self {
+                self.self_listed
+                    .push((call.nesting, (path.to_string(), call.pos.line)));
             }
         }
     }
@@ -893,6 +926,23 @@ mod tests {
         let mut named = Named::default();
         named.read_ruby(path, text);
         named
+    }
+
+    #[test]
+    fn a_class_side_listing_its_own_subclasses_is_read_by_its_nesting() {
+        let mut named = Named::default();
+        named.read_self_listings(
+            "a.rb",
+            "class A\n  ALL = descendants\n  def self.all = T.unsafe(self).subclasses\n  \
+             def mine = descendants\n  def theirs = T.unsafe(self).subclasses\nend\n",
+        );
+        let lines: Vec<(&[String], u32)> = named
+            .self_listed
+            .iter()
+            .map(|(nesting, (_, line))| (nesting.as_slice(), *line))
+            .collect();
+        let a = ["A".to_string()];
+        assert_eq!(lines, [(&a[..], 2), (&a[..], 3)]);
     }
 
     #[test]

@@ -11402,7 +11402,7 @@ it, with `convention: {by, path?, line?}` in JSON as for a method:
 | `constantize` | a name `"Jobs::#{type.camelize}".constantize` builds, whose built part a symbol outside its own file spells (`Jobs.enqueue(:send_digest)`) |
 | `association` | a model an association names by convention (`has_many :line_items`) |
 | `test runner` | a class in a test directory that inherits a test case, or in a `test_*.rb`/`*_test.rb`/`*_spec.rb` file |
-| `subclasses` | a subclass of a checkout class whose subclasses a line lists (`Scorable.subclasses`) |
+| `subclasses` | a subclass of a checkout class whose subclasses a line lists (`Scorable.subclasses`), or its own class side does (`descendants`, `T.unsafe(self).subclasses`, DEC-721) |
 | `registration` | an ancestor's `inherited` or `included` hook, written in the checkout, that keeps what it is handed (`<<`, `push`, `add`, `register`); a body that hands the class to another's method as it loads (`HTTP::Options.register_feature(:x, self)`) |
 | `gem namespace` | a class the checkout adds to a gem's namespace whose name a symbol spells (`OmniAuth::Strategies::Patreon`, `:patreon`) |
 | `string` | a whole string spelling it — any string with `::`, a one-word string only where a class is looked up (`class_name:`, `constantize`, …) and only when no other constant of the checkout ends so — or a YAML scalar (`class: Scheduler::Vacuum`, `enum: "LevelSetting"`) |
@@ -16981,4 +16981,23 @@ needed ActiveSupport indexed: without it, the module was `unreferenced`.
 Concern is reached only if something extends it (`base.extend(ClassMethods)`
 in an `included` hook is a reference), so it stays a candidate (424's
 `Plain::ClassMethods`).
+
+## DEC-721 — A class side's own `descendants` lists its subclasses
+
+**Decided.** `descendants` or `subclasses` sent to self where self is the
+class — a class method, `class << self`, the class body — bare, as
+`self.descendants`, or through `T.unsafe(self)`, lists that class's
+subclasses as `Base.subclasses` does (DEC-421's `subclasses` convention).
+Testbed 904.
+
+**How.** The text pass cannot tell which side a line is written on, so a
+file that spells either name is parsed, and each call of it the extractor
+marks singleton with an implicit or `self` receiver is kept by its
+nesting; the tree places that nesting as the class it opens.
+`T.unsafe(x)` is Sorbet's identity, which the extractor does not model, so
+it is matched as written on the call's line, `T.unsafe(self).subclasses`.
+No store change.
+
+**Not an instance method's.** There `descendants` is the instance's, and
+`T.unsafe(self)` an instance: neither lists the class's subclasses.
 

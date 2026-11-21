@@ -458,6 +458,11 @@ pub(super) fn dead_constants(
         }
     }
     let mut named = Named::read(texts);
+    for (nesting, at) in std::mem::take(&mut named.self_listed) {
+        if let Some(class) = tree.scope_fqn(&nesting) {
+            named.listed.entry(class).or_insert(at);
+        }
+    }
     // A YAML value spells a constant as a whole string does.
     for (constant, (path, line)) in config.constants() {
         named

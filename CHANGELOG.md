@@ -34,6 +34,10 @@
   candidate (it was `convention-only`, or `unreferenced` without
   ActiveSupport indexed). Its methods still are, and a `ClassMethods` in a
   module that extends no Concern still is.
+- **`--dead` reads a class's own `descendants` as a listing of its
+  subclasses**: `descendants` in a class method, or
+  `T.unsafe(self).subclasses`, makes each subclass `convention-only` by
+  `subclasses`, as `Base.subclasses` does; they were `unreferenced`.
 
 ## 0.10.2 — 2026-11-20
 
