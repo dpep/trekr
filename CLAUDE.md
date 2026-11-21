@@ -57,7 +57,9 @@ Rust, single crate until there's a concrete reason to split. `cargo` is keg-only
 `script/check.sh` — `cargo fmt --check`, `cargo clippy --all-targets -- -D
 warnings`, `cargo test`, `cargo doc` with warnings denied, then the VS Code
 extension's unit tests (`npm test` in
-`editors/vscode`, installing its deps on first run).
+`editors/vscode`, installing its deps on first run). Under load, cli_e2e's
+`a_git_*` tests and testbed case 494 can fail on timing alone: re-run them
+alone before calling the gate red, and say that you did.
 
 **Every file is read through `scan::read_source` or `scan::read_text`**:
 bounded, regular files only, because a checkout's file may be a pipe or a
@@ -110,6 +112,11 @@ brew unlink trekr   # …verify…   then:   brew link trekr
   `UPDATE_GOLDEN=1 cargo test --test testbed` — and update
   [docs/OUTPUT.md](docs/OUTPUT.md), the field reference, in the same commit;
   `every_golden_field_is_documented` fails on a field it never names.
+- **`tests/dead.golden` pins `--dead . --json`**, hashed, on every testbed
+  case that asserts `--dead`; a change of behaviour names the cases it
+  moved. Same regeneration as the JSON shapes.
+- **Every golden at once:** `UPDATE_GOLDEN=1 cargo test --lib --test testbed`
+  (after the store bump, when one is due), then read the diff.
 - Fixture repos under `tests/fixtures/`, generic names (`Widget`, `HandlerA`) —
   public repo, nothing employer-identifying.
 - Verify through `cargo test`, not hand-run binaries; e2e drives the built binary
