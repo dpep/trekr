@@ -17919,3 +17919,26 @@ it is pinned by unit test only. A multi-byte character before a word
 in a view's Ruby panicked the word reader (hunt 3's utf8); it compares
 bytes now (testbed 990). Testbed 991; unit test
 `a_slim_line_is_split_as_slim_5_splits_it`.
+
+## DEC-816 — A gem with a source of its own is no `path` block's
+
+**Decided.** Two corrections to DEC-801 (hunt 3's pathgit, with and
+without a lock):
+
+- **A source overrides the block.** `gem "x", git: …` (or `github:`,
+  `gist:`, `bitbucket:`, a name the Gemfile's `git_source` adds, or
+  `source:`) inside `path "components" do` is not a path gem, as Bundler
+  reads it: the option is the gem's source. `Reader::declaration` drops
+  the block's path for it. Alone in the block, such a gem was found by
+  the block's one gemspec directory — another gem's — so the two shared
+  it and the gem the app used was a row (testbed 993).
+- **A directory several gems share is no one gem's.** A block's gem no
+  gemspec there names fell back to the block's directory, "installed"
+  there with its files unread, `clear` (testbed 992). The fallback now
+  holds only for a source of one gem, whose spec Bundler makes up when it
+  has no gemspec (`gems::path_gem_dir`); the lockfile's `PATH` sources
+  read the same way. Such a gem is a local one not found: `lower`.
+
+The no-lock resolver (`declared.rs`) still skips a block's gems whole,
+so a `source:` gem inside one is "not installed" there: `lower`, never
+`clear`. Unit test `a_gem_line_keeps_its_place_its_groups_and_how_it_loads`.

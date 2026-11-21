@@ -1,0 +1,5 @@
+# In a `path "components" do` block, a gem no gemspec there names fell
+# back to the block's directory: "installed" at components/, its files
+# unread, `clear`. A directory several gems share is no one gem's:
+# ghost_kit is `lower`, its files unread.
+dead Gemfile billing=none ghost_kit=unreferenced~checkout

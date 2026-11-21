@@ -1,0 +1,5 @@
+source "https://rubygems.org"
+gem "billing", path: "components/billing"
+path "components" do
+  gem "remote_kit", git: "https://example.com/remote_kit.git"
+end

@@ -816,6 +816,16 @@ pub(crate) fn gemspec_dir(source: &Path, name: &str, sole: bool) -> Option<PathB
     }
 }
 
+/// A path source's directory for `name`: its gemspec's (`gemspec_dir`), or
+/// the source itself when it is the only gem's — Bundler makes up a spec
+/// for a lone `path:` with none. A source several gems share is no gem's.
+pub(crate) fn path_gem_dir(source: PathBuf, name: &str, sole: bool) -> Option<PathBuf> {
+    match gemspec_dir(&source, name, sole) {
+        Some(dir) => Some(dir),
+        None => sole.then_some(source),
+    }
+}
+
 /// Each path gem the lockfile names whose directory is inside the checkout
 /// but is not the checkout itself (a monorepo's engine, `vendor/local_gem`),
 /// with that directory, canonical: the gem is indexed as the checkout's.
@@ -829,7 +839,7 @@ pub(crate) fn path_gems_in(repo: &Path, lockfile: &str) -> Vec<(String, PathBuf)
                 return None;
             };
             let source = std::fs::canonicalize(checkout.join(remote)).ok()?;
-            let dir = gemspec_dir(&source, &gem.name, sole(&gem.source)).unwrap_or(source);
+            let dir = path_gem_dir(source, &gem.name, sole(&gem.source))?;
             (dir.starts_with(&checkout) && dir != checkout).then(|| (gem.name.clone(), dir))
         })
         .collect()

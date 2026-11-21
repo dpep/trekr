@@ -655,7 +655,9 @@ gemspec is the one in the source whose `name` is the gem's, as Bundler
 picks it (`billing_engine.gemspec` for billing-engine), else the file
 named for the gem when the name is computed (DEC-800). Two gems found in
 one directory are told apart from neither: each is a row, `lower`, "it
-is found in DIR with …".
+is found in DIR with …". A gem in a `path` block with a source of its
+own (`git:`, `github:`, `source:`) is not a path gem, and a block's gem
+no gemspec there names is not found (DEC-816).
 
 The rows, from least evidence to most:
 

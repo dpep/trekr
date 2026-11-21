@@ -1112,7 +1112,9 @@ fn path_gem_dirs(
             .filter(|(d, _)| d.path.as_ref() == Some(path))
             .count()
             == 1;
-        let dir = crate::gems::gemspec_dir(&source, &declaration.name, sole).unwrap_or(source);
+        let Some(dir) = crate::gems::path_gem_dir(source, &declaration.name, sole) else {
+            continue;
+        };
         if dir.starts_with(&checkout) && dir != checkout {
             found.push((declaration.name.clone(), dir));
         }

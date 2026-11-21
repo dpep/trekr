@@ -233,6 +233,10 @@
 --index $.gems.stdlib.rbs.version: string
 --index $.gems.stdlib.root: string
 --index $.gems.stdlib.ruby: string
+--index $.gems.unlocated: array
+--index $.gems.unlocated[]: object
+--index $.gems.unlocated[].gem: string
+--index $.gems.unlocated[].why: string
 --index $.indexed: object
 --index $.indexed.blobs: int
 --index $.indexed.calls: int

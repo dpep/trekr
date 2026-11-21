@@ -1,0 +1,7 @@
+# A gem with a source of its own (`git:`) inside a `path` block was taken
+# for a path gem. Alone in the block, it was found by the block's one
+# gemspec directory, billing's: the two shared components/billing, so
+# billing, which the app uses, was a row. A git source overrides the
+# block's path: billing is used, and remote_kit, its checkout not on
+# disk, is `lower`.
+dead Gemfile billing=none remote_kit=unreferenced~checkout

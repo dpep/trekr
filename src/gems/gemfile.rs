@@ -55,6 +55,7 @@ pub(crate) fn declarations(source: &[u8]) -> Declared {
         groups: Vec::new(),
         platforms: Vec::new(),
         paths: Vec::new(),
+        git_sources: ["github", "gist", "bitbucket"].map(String::from).to_vec(),
         found: Declared::default(),
     };
     reader.visit(&parsed.node());
@@ -68,6 +69,9 @@ struct Reader<'s> {
     platforms: Vec<Vec<String>>,
     /// The `path "dir" do` blocks the reader is inside, innermost last.
     paths: Vec<String>,
+    /// The options naming a git repository: Bundler's own and each
+    /// `git_source(:name)` the Gemfile adds.
+    git_sources: Vec<String>,
     found: Declared,
 }
 
@@ -104,14 +108,23 @@ impl Reader<'_> {
             }
             for assoc in options.elements().iter().filter_map(|e| e.as_assoc_node()) {
                 let value = assoc.value();
-                match symbol(&assoc.key()).as_deref() {
+                let key = symbol(&assoc.key());
+                // A source of its own overrides an enclosing `path` block's.
+                if let Some(key) = key.as_deref()
+                    && (key == "git"
+                        || key == "source"
+                        || self.git_sources.iter().any(|g| g == key))
+                {
+                    local = key != "source";
+                    path = None;
+                }
+                match key.as_deref() {
                     Some("group" | "groups") => groups.extend(names(&value)),
                     Some("platform" | "platforms") => platforms.extend(names(&value)),
                     Some("path") => {
                         local = true;
                         path = string(&value);
                     }
-                    Some("git" | "github") => local = true,
                     Some("require") => {
                         require = if value.as_false_node().is_some() {
                             Require::Off
@@ -156,6 +169,15 @@ impl<'pr> Visit<'pr> for Reader<'_> {
             }
             self.paths.pop();
             return;
+        }
+        if name.as_slice() == b"git_source"
+            && node.receiver().is_none()
+            && let Some(source) = node
+                .arguments()
+                .and_then(|args| args.arguments().iter().next())
+                .and_then(|arg| symbol(&arg))
+        {
+            self.git_sources.push(source);
         }
         let scoped = match name.as_slice() {
             b"group" => Some(true),
@@ -449,8 +471,12 @@ group :development, :test do
 end
 gem "lograge", group: [:production]
 gem "local", path: "vendor/local"
+git_source(:forge) { |repo| "https://forge.example/#{repo}.git" }
 path "components" do
   gem "billing"
+  gem "remote", github: "acme/remote"
+  gem "forged", forge: "acme/forged"
+  gem "hosted", source: "https://gems.example.com"
 end
 gemspec
 gemspec path: "engines/widget"
@@ -475,6 +501,14 @@ gemspec path: "engines/widget"
         assert!(!by("rails").local);
         assert!(by("billing").local);
         assert_eq!(by("billing").path.as_deref(), Some("components"));
+        // A source of its own overrides the block's path.
+        for (name, local) in [("remote", true), ("forged", true), ("hosted", false)] {
+            assert_eq!(
+                (by(name).path.as_deref(), by(name).local),
+                (None, local),
+                "{name}"
+            );
+        }
     }
 
     #[test]
