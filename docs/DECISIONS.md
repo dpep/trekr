@@ -16822,3 +16822,54 @@ it; a macro in a concern's `included do` naming a method its includer
 defines is typed to the concern, where it finds none; a defining macro's
 symbol (`delegate :x`, a model's `has_many :x`) reads as running it, as
 DEC-312 has it for Active Model Serializers.
+
+## DEC-680 — `--dead` follows one step of cascade, from a clear root only
+
+**Decided.** A `single-caller` row whose one call is written in a `clear`
+`unreferenced` or `test-only` method, and which is `clear` itself, carries
+`cascaded_from` naming that method (its `name`, `path`, `line`, `tier`), and
+its reason says "its caller, build, is itself unreferenced" where it said
+"is itself a candidate". Its tier and grade do not move: it is still one
+call, and the claim added is only "deleting the root leaves this
+unreferenced", which is as good as the root's. On by default, since it adds
+a field and changes no row's tier. The caller named is now the innermost
+candidate around the call, where it was the first listed: a `def` inside
+another's `class << obj` is the inner one's (one discourse row moved).
+
+**Which roots free.** Only `clear` `unreferenced` and `test-only` methods. A
+`lower` root's caveat names a way in, which reaches the row through it; a
+`convention-only`, `override` or `super-only` root is reached by something;
+an entry point is `lower` by rule. A `test-only` root frees a row only
+tests reach, and `cascaded_from.tier` says so. The row must be `clear`,
+which already rules out a `possible` call (an untyped caller is `lower`).
+
+**One step, not a fixpoint.** sorbet-deadcode's `DeadCodeAnalyzer#cascade`
+(MIT) drops references from inside dead methods and recomputes until
+nothing moves, marking rows `cascaded`. Measured here, a strict chain (every
+row and the root `clear`) deeper than one step occurred **zero** times in
+three runs (discourse 2024-08 and 2025-08, `app lib plugins`; mastodon
+`app lib`), while each row of a deeper chain multiplies one more `clear`
+grade into the claim. A fixpoint would also free a method called only
+from two or more candidates, which `--dead` does not keep the call sites
+of, and cycles (mutual recursion with no outside caller: 0 found;
+self-calls were all a `possible` call on a same-named method). Not built:
+re-running `--dead` after deleting finds all of those, at full fidelity.
+
+**Measured** (BASELINE, "Cascaded `--dead` rows, against discourse's
+history"). Rows the rule frees: 21 of 8,985 candidates on discourse 2025-08
+and 20 of 5,849 on 2024-08. Deleted within the next year 7 of 41 (17 %)
+against a base rate of 45 of 800 random methods in scope (5.6 %), and 22
+of 329 (6.7 %) for the `clear` `unreferenced` rows that are their roots.
+The loose rule (a root or row of any grade) would add 127 rows at one
+step, and rows whose chain tops out at a `lower` `unreferenced` root were
+deleted 8 of 106 (7.5 %), near the base rate — hence `clear` only. Read by hand, 32 of the 41 not
+refuted. Three roots were wrong: a mailer action reached by `type:
+:chat_summary` (graded `test-only`, `clear`; three rows and two), a
+writer `IncomingLink.create(referer: …)` runs (two rows), and `msg_att`,
+a `def` in `class << imap.instance_variable_get("@parser")` that
+overrides Net::IMAP's parser (one row each run). Each is the root's
+error, copied to every row it frees: that is the cost of the rule.
+
+**Reverses if** a hand-read sample of cascaded rows on another app falls
+well below the `clear` `unreferenced` rate (DEC-372), or a corpus shows
+strict chains deeper than one step often enough to measure.

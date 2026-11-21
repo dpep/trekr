@@ -113,9 +113,10 @@ struct Cli {
     /// script or a gem names it, the checkout
     /// builds a name of its shape, an ancestor is not indexed, or it is an
     /// entry point reached from outside the repo (`entry_point`: a gem's
-    /// public API, a routed action, a job). One pass: a
-    /// method whose only caller is itself a candidate is `single-caller`, and
-    /// its reason says so.
+    /// public API, a routed action, a job). A method whose only caller is
+    /// itself a candidate is `single-caller`, and its reason says so; when
+    /// that caller is a clear `unreferenced` or `test-only` method,
+    /// `cascaded_from` names it, since deleting it frees this one.
     #[arg(long, value_name = "PATH", num_args = 1..)]
     dead: Vec<PathBuf>,
 

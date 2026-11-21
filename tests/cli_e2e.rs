@@ -4835,7 +4835,13 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
     assert_eq!(by_name["used_once"]["caller"]["tier"], "confirmed");
     assert_eq!(by_name["used_once"]["caller"]["line"], 14);
     let reason = by_name["used_once"]["reason"].as_str().unwrap();
-    assert!(reason.contains("run, is itself a candidate"), "{reason}");
+    assert!(reason.contains("run, is itself unreferenced"), "{reason}");
+    // Deleting its caller, which nothing calls, leaves it unreferenced too.
+    assert_eq!(by_name["used_once"]["cascaded_from"]["name"], "Thing#run");
+    assert_eq!(
+        by_name["used_once"]["cascaded_from"]["tier"],
+        "unreferenced"
+    );
     assert_eq!(by_name["maybe"]["caller"]["tier"], "possible");
     assert_eq!(by_name["maybe"]["confidence"], "lower");
     assert_eq!(by_name["maybe"]["caveat"], "untyped caller");

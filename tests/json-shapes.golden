@@ -29,6 +29,12 @@
 --dead $.candidates[].caller.path: string
 --dead $.candidates[].caller.root: string
 --dead $.candidates[].caller.tier: string {confirmed,possible}
+--dead $.candidates[].cascaded_from: object
+--dead $.candidates[].cascaded_from.line: int
+--dead $.candidates[].cascaded_from.name: string
+--dead $.candidates[].cascaded_from.path: string
+--dead $.candidates[].cascaded_from.root: string
+--dead $.candidates[].cascaded_from.tier: string {test-only,unreferenced}
 --dead $.candidates[].caveat: string
 --dead $.candidates[].col: int
 --dead $.candidates[].confidence: string

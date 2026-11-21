@@ -185,9 +185,11 @@ found; here is what was checked". Before deleting:
   tier; its callers are invisible to trekr, so don't delete it on trekr's
   word. Settle it with what the caveat names — the gem's dependents, request
   logs or APM, job metrics.
-- **One pass, no cascade.** A method whose only caller is itself a candidate
-  is `single-caller`, and its reason says so. Delete the caller, re-index, and
-  ask again.
+- **One step of cascade.** A method whose only caller is itself a candidate
+  is `single-caller`, and its reason says so. When that caller is a `clear`
+  `unreferenced` or `test-only` method, the row's `cascaded_from` names it:
+  delete the root first, then this. Anything deeper (a chain, two methods
+  calling only each other): delete, re-index, and ask again.
 - `--dead` lists nothing while `warming`.
 
 ## Gotchas

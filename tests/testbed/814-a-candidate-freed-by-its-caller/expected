@@ -1,0 +1,7 @@
+# A method whose one call is written in a clear candidate nothing calls,
+# or only tests do, is freed by deleting it: the row names that root
+# (Report#header, #footer, #digest). Not when the root is lower (Steps#go)
+# or reached by a macro (Steps#verify), nor when the call may be another
+# method's (Engine#start); and one step only, so neither a method freed
+# through another candidate (Report#title) nor a cycle (ping, pong) is.
+dead app Report#header=single-caller^Report#build Report#footer=single-caller^Report#build Report#digest=single-caller^Report#summary Report#title=single-caller^ Report#ping=single-caller^ Report#pong=single-caller^ Steps#go=single-caller^ Steps#verify=single-caller^ Engine#start=single-caller^ Motor#start=single-caller^ Report#build=unreferenced^ Report#summary=test-only^

@@ -983,6 +983,12 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
             },
             None => (want.clone(), None, false),
         };
+        // `tier^Owner#name`: the row's `cascaded_from` names that candidate,
+        // `tier^` that it has none (DEC-680).
+        let (want, from) = match want.split_once('^') {
+            Some((tier, from)) => (tier.to_string(), Some(from.to_string())),
+            None => (want, None),
+        };
         // `@LINE` is the example group member written at that line, which no
         // owner names (DEC-490).
         let at_line = method.strip_prefix('@').and_then(|n| n.parse::<u64>().ok());
@@ -1007,6 +1013,17 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
             failures.push(format!(
                 "{case}: {line}\n      {method}: expected `{want}`, got `{got}`"
             ));
+        }
+        if let Some(from) = &from {
+            let got = row
+                .and_then(|row| row["cascaded_from"]["name"].as_str())
+                .unwrap_or("");
+            if got != from {
+                failures.push(format!(
+                    "{case}: {line}
+      {method}: expected cascaded_from `{from}`, got `{got}`"
+                ));
+            }
         }
         let said = row.and_then(|row| row["caveat"].as_str()).unwrap_or("");
         let fits = match caveat.as_deref() {

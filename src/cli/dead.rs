@@ -58,6 +58,10 @@ pub(super) struct MethodDetail {
     pub(super) overridden_by: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) caller: Option<DeadCaller>,
+    /// The candidate its one call is written in, when deleting that leaves
+    /// this unreferenced too (DEC-680).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) cascaded_from: Option<Box<Cascade>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) route: Option<Site>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,6 +108,15 @@ pub(super) struct DeadCaller {
     pub(super) line: u32,
     pub(super) col: u32,
     pub(super) tier: refs::Tier,
+}
+
+/// The candidate a single caller's call is written in, as its own row has it.
+#[derive(Clone, Serialize)]
+pub(super) struct Cascade {
+    pub(super) name: String,
+    pub(super) path: String,
+    pub(super) line: u32,
+    pub(super) tier: DeadTier,
 }
 
 #[derive(Serialize)]
@@ -1431,6 +1444,7 @@ fn dead_in(
                 overrides,
                 overridden_by: shadowing,
                 caller,
+                cascaded_from: None,
                 route: route.cloned().map(|(path, line)| Site { path, line }),
                 convention: convention.as_ref().map(ConventionSite::of),
                 entry_point,
@@ -1515,35 +1529,67 @@ fn dead_in(
     Ok(files.len())
 }
 
-/// One pass does not cascade: a method whose only caller is itself a
-/// candidate is `single-caller`, not `unreferenced`. Say so on the row,
-/// where the next question is asked.
+/// A method whose only caller is itself a candidate is `single-caller`, and
+/// says so on the row, where the next question is asked. When that caller
+/// is `clear` and nothing calls it, or only tests do, and this row is
+/// `clear` too, deleting the caller leaves this one unreferenced:
+/// the row names it in `cascaded_from` (DEC-680). One step only, so a
+/// cycle, or a chain whose top is no such root, frees nothing.
 fn note_candidate_callers(rows: &mut [DeadRow]) {
-    let spans: Vec<(String, u32, u32, String)> = rows
+    struct Span {
+        path: String,
+        start: u32,
+        end: u32,
+        name: String,
+        root: Option<Cascade>,
+    }
+    let spans: Vec<Span> = rows
         .iter()
-        .map(|row| {
-            (
-                row.path.clone(),
-                row.line,
-                row.end_line().unwrap_or(0),
-                row.name.clone(),
-            )
+        .map(|row| Span {
+            path: row.path.clone(),
+            start: row.line,
+            end: row.end_line().unwrap_or(0),
+            name: row.name.clone(),
+            root: (matches!(row.detail, Detail::Method(_))
+                && matches!(row.tier, DeadTier::Unreferenced | DeadTier::TestOnly)
+                && row.confidence == Grade::Clear)
+                .then(|| Cascade {
+                    name: dead_name(row),
+                    path: row.path.clone(),
+                    line: row.line,
+                    tier: row.tier,
+                }),
         })
         .collect();
     for row in rows.iter_mut() {
+        let clear = row.confidence == Grade::Clear;
         let Detail::Method(MethodDetail {
             caller: Some(caller),
+            cascaded_from,
             ..
-        }) = &row.detail
+        }) = &mut row.detail
         else {
             continue;
         };
-        let within = spans
+        // The innermost: a call in a `def` nested in another is the inner's.
+        let Some(within) = spans
             .iter()
-            .find(|(p, start, end, _)| *p == caller.path && (*start..=*end).contains(&caller.line));
-        if let Some((_, _, _, name)) = within {
-            row.reason = format!("{}; its caller, {name}, is itself a candidate", row.reason);
-        }
+            .filter(|s| s.path == caller.path && (s.start..=s.end).contains(&caller.line))
+            .min_by_key(|s| s.end - s.start)
+        else {
+            continue;
+        };
+        // A `clear` row's one call certainly reaches it: a possible one is lower.
+        let root = within.root.as_ref().filter(|_| clear);
+        let what = match root {
+            Some(root) => root.tier.as_str(),
+            None => "a candidate",
+        };
+        *cascaded_from = root.cloned().map(Box::new);
+        row.reason = format!(
+            "{}; its caller, {}, is itself {what}",
+            row.reason, within.name
+        );
     }
 }
 

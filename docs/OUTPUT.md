@@ -352,9 +352,16 @@ From least evidence of use to most:
 - `single-caller` — one reference: an inlining candidate. `caller` says
   where, with its own `tier`: whether it certainly reaches the method.
 
-One pass, no cascade: a method whose only caller is itself a candidate is
-`single-caller`, and its `reason` says the caller is a candidate. An
-`initialize` is reported only when nothing constructs its class.
+A method whose only caller is itself a candidate stays `single-caller`, and
+its `reason` says the caller is a candidate. When that caller is a `clear`
+`unreferenced` or `test-only` method and the row is `clear` too, deleting
+the caller leaves this one unreferenced (or reached only by tests): the
+row carries `cascaded_from` (`name`, `path`, `line`, `tier`), naming it,
+and its reason says "its caller, build, is itself unreferenced". Delete the
+root first, then this. One step only: a method freed through another
+candidate, or two that call only each other, carry none — run `--dead`
+again after deleting (DEC-680). An `initialize` is reported only when
+nothing constructs its class.
 
 ### Confidence and caveats
 
@@ -566,7 +573,8 @@ of the time on three such batches before each was read. So every row is
 - `confidence`: `clear`, or `lower` with a `caveat`.
 - Per tier: `overridden_by` (`shadowed`), `overrides` (`override`),
   `super_from` (`super-only`), `convention.by` (`convention-only`),
-  `caller` with its own `tier` (`single-caller`).
+  `caller` with its own `tier` (`single-caller`), and `cascaded_from`
+  when deleting that caller frees it.
 - `visibility`, and `entry_point` when there is one.
 - The evidence counted: a method row's `confirmed`/`possible` callers,
   `symbol_refs` (its name as a symbol), `super_refs`, `mentions_by_name`

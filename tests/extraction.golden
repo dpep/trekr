@@ -967,6 +967,10 @@ ruby tests/testbed/813-a-macro-beside-one-call-is-said/app/other.rb b178afa2cdbd
 ruby tests/testbed/813-a-macro-beside-one-call-is-said/app/quiet.rb 474d12c8c60bbeb7
 ruby tests/testbed/813-a-macro-beside-one-call-is-said/app/signup.rb 58f6e0b5a409ac0f
 ruby tests/testbed/813-a-macro-beside-one-call-is-said/app/spread.rb 6a877b036358c5ca
+ruby tests/testbed/814-a-candidate-freed-by-its-caller/app/loose.rb a108f957584b993f
+ruby tests/testbed/814-a-candidate-freed-by-its-caller/app/report.rb 5cca7ccc8d61ec63
+ruby tests/testbed/814-a-candidate-freed-by-its-caller/app/steps.rb 228e3f39b2bdf9a8
+ruby tests/testbed/814-a-candidate-freed-by-its-caller/spec/report_spec.rb 8adb0918c808c754
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
