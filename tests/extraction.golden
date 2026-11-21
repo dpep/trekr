@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 75
+version 76
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -990,7 +990,7 @@ ruby tests/testbed/904-descendants-sent-to-self-lists-its-subclasses/app/models/
 ruby tests/testbed/904-descendants-sent-to-self-lists-its-subclasses/app/models/orphan.rb d39cf032b4680274
 ruby tests/testbed/904-descendants-sent-to-self-lists-its-subclasses/app/models/other_base.rb 9d4cc31981f09cc9
 ruby tests/testbed/904-descendants-sent-to-self-lists-its-subclasses/app/models/other_leaf.rb 8706c06d391e7740
-ruby tests/testbed/905-an-operator-assignment-calls-the-reader-and-the-writer/app/models/user.rb 52d6385afb66c7cc
+ruby tests/testbed/905-an-operator-assignment-calls-the-reader-and-the-writer/app/models/user.rb 09d1f075241e3e93
 ruby tests/testbed/905-an-operator-assignment-calls-the-reader-and-the-writer/app/models/widget.rb 4087fc1d4d1cbcd0
 ruby tests/testbed/906-a-guard-symbol-nested-in-an-option-is-a-reference/app/models/order.rb 43023978a74c388a
 ruby tests/testbed/906-a-guard-symbol-nested-in-an-option-is-a-reference/app/models/widget.rb 8fe0b4ffc512e76b

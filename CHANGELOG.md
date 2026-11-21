@@ -13,6 +13,14 @@
   two that call only each other, carry none; run `--dead` again after
   deleting.
 
+### Fixed
+
+- **`--dead` reads an operator assignment to a call as a call of its
+  reader and its writer**: `w.count ||= 0`, `w.total += 1` and
+  `w.label &&= x` left all six methods `unreferenced`, `clear`; each is
+  now called once. `--refs` counts them too. The store version moves, so
+  the next run re-indexes.
+
 ## 0.10.2 — 2026-11-20
 
 ### Fixed

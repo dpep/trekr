@@ -1,5 +1,8 @@
 # Ported from sorbet-deadcode (MIT) issue #48: `w.count ||= 0` calls
-# `count` and maybe `count=`, `w.total += 1` both, `w.label &&= x` both.
-# Not yet passing, so not asserted: all six are unreferenced, clear. The
-# spelled-out `w.size = w.size` is one call of each.
+# `count` and maybe `count=`, `w.total += 1` both, `w.label &&= x` both;
+# all six were unreferenced. The spelled-out `w.size = w.size` is one call
+# of each.
+dead app/models/widget.rb Widget#count=single-caller Widget#count==single-caller Widget#total=single-caller Widget#total==single-caller Widget#label=single-caller Widget#label==single-caller
 dead app/models/widget.rb Widget#size=single-caller Widget#size==single-caller
+refs Widget#total confirmed=1
+def app/models/user.rb:5:7 status=resolved owner=Widget name=total

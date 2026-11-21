@@ -16916,3 +16916,15 @@ matches `save` inside `save_draft`.
 features land in pieces behind flags, shows young candidates gaining
 callers at a rate whose interval clears the old ones'; `script/recency.py`
 is the measurement, and it takes any repo with history.
+
+## DEC-710 — An operator assignment to a call is a call of its reader and its writer
+
+**Decided.** `w.count ||= 0`, `w.total += 1` and `w.label &&= x` record two
+calls at the name: the reader (no argument), then the writer (one), on the
+receiver as written, so `--refs` and `--dead` count both. `||=` and `&&=`
+may skip the writer at runtime; it is still a caller, as a call under an
+`if` is. A safe-navigation form (`w&.count ||= 0`) is the same node, so
+the same handler reads it (not pinned by a case). **Not** the index forms (`h[k] ||= v`, `h[k] += 1`):
+they carry no message location, as a plain `h[k]` call does not reach
+`record_call` with one either, so `[]` and `[]=` stay unrecorded there.
+Ported from sorbet-deadcode issue #48 (testbed 905).

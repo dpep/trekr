@@ -1626,6 +1626,38 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         ruby_prism::visit_local_variable_operator_write_node(self, node);
     }
 
+    // `w.count ||= 0`, `w.total += 1`, `w.label &&= x`: a call of the reader
+    // and of the writer (`||=` and `&&=` may skip the writer; still a caller).
+    fn visit_call_operator_write_node(&mut self, node: &ruby_prism::CallOperatorWriteNode<'pr>) {
+        self.record_reader_and_writer(
+            node.receiver(),
+            node.read_name(),
+            node.write_name(),
+            node.message_loc(),
+        );
+        ruby_prism::visit_call_operator_write_node(self, node);
+    }
+
+    fn visit_call_or_write_node(&mut self, node: &ruby_prism::CallOrWriteNode<'pr>) {
+        self.record_reader_and_writer(
+            node.receiver(),
+            node.read_name(),
+            node.write_name(),
+            node.message_loc(),
+        );
+        ruby_prism::visit_call_or_write_node(self, node);
+    }
+
+    fn visit_call_and_write_node(&mut self, node: &ruby_prism::CallAndWriteNode<'pr>) {
+        self.record_reader_and_writer(
+            node.receiver(),
+            node.read_name(),
+            node.write_name(),
+            node.message_loc(),
+        );
+        ruby_prism::visit_call_and_write_node(self, node);
+    }
+
     fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
         self.spell_sends(node.unescaped(), node.content_loc().start_offset());
     }
@@ -5388,7 +5420,7 @@ impl<'pr> Extractor<'_> {
             });
         let fact = self.call_fact(
             name,
-            call.receiver(),
+            call.receiver().as_ref(),
             main,
             &message,
             argc,
@@ -5403,27 +5435,56 @@ impl<'pr> Extractor<'_> {
         self.record_body_call(call);
     }
 
+    /// An operator assignment to a call: its reader, then its writer, both
+    /// written at the one name.
+    fn record_reader_and_writer(
+        &mut self,
+        receiver: Option<Node<'pr>>,
+        read: ruby_prism::ConstantId<'pr>,
+        write: ruby_prism::ConstantId<'pr>,
+        message: Option<ruby_prism::Location<'pr>>,
+    ) {
+        let Some(message) = message else {
+            return;
+        };
+        for (name, argc) in [(read, 0), (write, 1)] {
+            let Ok(name) = String::from_utf8(name.as_slice().to_vec()) else {
+                return;
+            };
+            let fact = self.call_fact(
+                name,
+                receiver.as_ref(),
+                false,
+                &message,
+                Some(argc),
+                false,
+                None,
+            );
+            self.facts.calls.push(fact);
+        }
+    }
+
     /// The fact for a call of `name` on `receiver`, written at `message`.
     #[allow(clippy::too_many_arguments)]
     fn call_fact(
         &self,
         name: String,
-        receiver: Option<Node<'pr>>,
+        receiver: Option<&Node<'pr>>,
         main: bool,
         message: &ruby_prism::Location<'pr>,
         argc: Option<u32>,
         block: bool,
         stands_for: Option<Box<Call>>,
     ) -> Call {
-        let (recv, recv_text) = match &receiver {
+        let (recv, recv_text) = match receiver {
             None => (RecvShape::Implicit, None),
             Some(r) => receiver_shape(r),
         };
-        let recv_pos = match (&receiver, recv) {
+        let recv_pos = match (receiver, recv) {
             (Some(r), RecvShape::Local) => Some(self.pos(r.location().start_offset())),
             _ => None,
         };
-        let recv_value = match (recv, &receiver) {
+        let recv_value = match (recv, receiver) {
             (RecvShape::Other, Some(r)) => self.recv_value(r),
             (RecvShape::Implicit, None) if main => Some(RecvValue::Main),
             _ => None,
