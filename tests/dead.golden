@@ -180,7 +180,7 @@
 903-a-constant-written-inside-a-live-literal 4c01bf2c12b8d031
 904-descendants-sent-to-self-lists-its-subclasses 536cb87e74f61340
 905-an-operator-assignment-calls-the-reader-and-the-writer a2772998fd2c1b3d
-906-a-guard-symbol-nested-in-an-option-is-a-reference c1d9bfde4fa88f7b
+906-a-guard-symbol-nested-in-an-option-is-a-reference e417d3868203973f
 907-a-mailer-previews-methods-are-its-previews 0588e2cdca9988bb
 908-a-t-enum-value-or-a-sorbet-override-marker c420d23460ce5b60
 909-an-attr-reader-nothing-calls 80d0f468e74308e3

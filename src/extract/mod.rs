@@ -6118,34 +6118,34 @@ impl<'pr> Extractor<'_> {
         if !self.class_level(call) {
             return;
         }
-        for element in options.elements().iter() {
-            let Some(assoc) = element.as_assoc_node() else {
-                continue;
-            };
-            let Some(key) = assoc
-                .key()
-                .as_symbol_node()
-                .and_then(|k| String::from_utf8(k.unescaped().to_vec()).ok())
-            else {
-                continue;
-            };
-            if !names_a_method(&key) {
+        let macro_name = method_name(call).unwrap_or_default();
+        let to_self = Sent::to_self(self.in_singleton());
+        for (key, value) in symbol_keyed(options.elements().iter()) {
+            if names_a_method(&key) {
+                for symbol in symbols_of(&value) {
+                    self.record_symbol(&symbol, Some(to_self.clone()));
+                }
                 continue;
             }
-            let value = assoc.value();
-            let symbols: Vec<ruby_prism::SymbolNode<'pr>> = match value.as_array_node() {
-                Some(list) => list
-                    .elements()
-                    .iter()
-                    .filter_map(|e| e.as_symbol_node())
-                    .collect(),
-                None => value.as_symbol_node().into_iter().collect(),
-            };
-            for symbol in symbols {
-                let to = self
-                    .class_level(call)
-                    .then(|| Sent::to_self(self.in_singleton()));
-                self.record_symbol(&symbol, to);
+            // `validates :x, exclusion: { unless: :skip? }`: each validator's
+            // options take a guard, and numericality's bounds a method
+            // (DEC-711).
+            if macro_name == "validates" || macro_name.starts_with("validates_") {
+                let Some(hash) = value.as_hash_node() else {
+                    continue;
+                };
+                for (inner, value) in symbol_keyed(hash.elements().iter()) {
+                    let symbols = match inner.as_str() {
+                        "if" | "unless" => symbols_of(&value),
+                        bound if key == "numericality" && NUMERICALITY_BOUNDS.contains(&bound) => {
+                            value.as_symbol_node().into_iter().collect()
+                        }
+                        _ => continue,
+                    };
+                    for symbol in symbols {
+                        self.record_symbol(&symbol, Some(to_self.clone()));
+                    }
+                }
             }
         }
     }
@@ -6210,6 +6210,41 @@ fn push_local<'pr>(
         value: value_at(&assoc.value()),
     });
 }
+
+/// An option hash's entries keyed by a symbol, as (key, value).
+fn symbol_keyed<'pr>(
+    elements: impl Iterator<Item = Node<'pr>>,
+) -> impl Iterator<Item = (String, Node<'pr>)> {
+    elements.filter_map(|element| {
+        let assoc = element.as_assoc_node()?;
+        let key = assoc.key().as_symbol_node()?;
+        let key = String::from_utf8(key.unescaped().to_vec()).ok()?;
+        Some((key, assoc.value()))
+    })
+}
+
+/// The symbols an option's value names: itself, or each in a list.
+fn symbols_of<'pr>(value: &Node<'pr>) -> Vec<ruby_prism::SymbolNode<'pr>> {
+    match value.as_array_node() {
+        Some(list) => list
+            .elements()
+            .iter()
+            .filter_map(|e| e.as_symbol_node())
+            .collect(),
+        None => value.as_symbol_node().into_iter().collect(),
+    }
+}
+
+/// `numericality:`'s bounds, each of which Rails reads a symbol for as a
+/// method of the record.
+const NUMERICALITY_BOUNDS: [&str; 6] = [
+    "greater_than",
+    "greater_than_or_equal_to",
+    "less_than",
+    "less_than_or_equal_to",
+    "equal_to",
+    "other_than",
+];
 
 /// RABL's calls whose hash names a method by each key and the name it is
 /// written out under by each value (DEC-526).

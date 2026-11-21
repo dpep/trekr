@@ -20,6 +20,11 @@
   `w.label &&= x` left all six methods `unreferenced`, `clear`; each is
   now called once. `--refs` counts them too. The store version moves, so
   the next run re-indexes.
+- **`--dead` reads a guard nested in a validator's options**: under
+  `validates`, `exclusion: { unless: :skip_name? }` and
+  `numericality: { greater_than: :min_size, if: :sized? }` left `skip_name?`,
+  `min_size` and `sized?` `unreferenced`, "not read as a call"; they are
+  `convention-only`.
 
 ## 0.10.2 — 2026-11-20
 

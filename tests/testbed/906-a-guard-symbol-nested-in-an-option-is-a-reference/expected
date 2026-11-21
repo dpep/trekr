@@ -2,7 +2,8 @@
 # ActiveModel plugin: a guard nested in a validator's options (`exclusion:
 # { unless: :skip_name? }`, `numericality: { greater_than: :min_size }`),
 # and AASM's `event … after:` and `transitions … guard:, after:` written in
-# an `aasm do` block, name methods Rails or AASM call. Not yet passing, so
-# not asserted: each is unreferenced, lower, "is not read as a call".
-dead app/models/widget.rb Widget#lonely=unreferenced~
+# an `aasm do` block, name methods Rails or AASM call. The validator's were
+# unreferenced, lower, "is not read as a call". AASM's still are, so are
+# not asserted.
+dead app/models/widget.rb Widget#skip_name?=convention-only Widget#min_size=convention-only Widget#sized?=convention-only Widget#lonely=unreferenced~
 dead app/models/order.rb Order#lonely=unreferenced~

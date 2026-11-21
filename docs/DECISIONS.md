@@ -16928,3 +16928,20 @@ the same handler reads it (not pinned by a case). **Not** the index forms (`h[k]
 they carry no message location, as a plain `h[k]` call does not reach
 `record_call` with one either, so `[]` and `[]=` stay unrecorded there.
 Ported from sorbet-deadcode issue #48 (testbed 905).
+
+## DEC-711 — A validator's own options name a method by `if:`, `unless:` and numericality's bounds
+
+**Decided.** DEC-340 reads `if:`/`unless:` among a macro's options, not in
+the hash an option is handed. Rails merges each validator's hash into its
+options, so `validates :name, exclusion: { in: X, unless: :skip? }` guards
+the one validator by `skip?`, and `numericality: { greater_than: :min }`
+calls `min` on the record for the bound. One level down, then, under
+`validates` and `validates_*` only: a hash value's `if:`/`unless:` (a
+symbol or a list), and `numericality:`'s `greater_than`,
+`greater_than_or_equal_to`, `less_than`, `less_than_or_equal_to`,
+`equal_to` and `other_than` when the value is a symbol. Nowhere else does a
+nested `if:` name a method: a hash handed to any other macro is its own
+data. **Not yet**: `comparison:`'s bounds, which Rails also reads a
+symbol for, and `validates_numericality_of :n, greater_than: :min`, whose
+bounds are top-level; no case pins them. Ported from sorbet-deadcode issues #89, #94
+and #149 (testbed 906).

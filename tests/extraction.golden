@@ -993,7 +993,7 @@ ruby tests/testbed/904-descendants-sent-to-self-lists-its-subclasses/app/models/
 ruby tests/testbed/905-an-operator-assignment-calls-the-reader-and-the-writer/app/models/user.rb 09d1f075241e3e93
 ruby tests/testbed/905-an-operator-assignment-calls-the-reader-and-the-writer/app/models/widget.rb 4087fc1d4d1cbcd0
 ruby tests/testbed/906-a-guard-symbol-nested-in-an-option-is-a-reference/app/models/order.rb 43023978a74c388a
-ruby tests/testbed/906-a-guard-symbol-nested-in-an-option-is-a-reference/app/models/widget.rb 8fe0b4ffc512e76b
+ruby tests/testbed/906-a-guard-symbol-nested-in-an-option-is-a-reference/app/models/widget.rb 99b6a1e6e9fb10e0
 ruby tests/testbed/906-a-guard-symbol-nested-in-an-option-is-a-reference/lib/aasm.rb ab40c4ea2715d9b9
 ruby tests/testbed/906-a-guard-symbol-nested-in-an-option-is-a-reference/lib/active_model.rb 66cad22098c2af7c
 ruby tests/testbed/907-a-mailer-previews-methods-are-its-previews/lib/action_mailer/preview.rb 2c57df7b956badfb
