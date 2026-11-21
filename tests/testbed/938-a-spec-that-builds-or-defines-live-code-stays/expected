@@ -21,3 +21,8 @@ dead lib Konst#konst_value=test-only&
 # call written: the live `Counter#count` lost its only test. It is weighed
 # as a name sent.
 dead lib Counter#bump!=test-only&
+# A unit is deleted by its lines, and a class, a constant or an
+# `RSpec.shared_examples` written there is defined for every file:
+# runner_spec names all three, and stopped loading. A unit holding one is
+# none; the example beside it still goes.
+dead lib Clocked#clocked_value=test-only&spec/clocked_spec.rb:8 Doubled#doubled_value=test-only&spec/doubled_spec.rb:6 Limited#limited_value=test-only&spec/limited_spec.rb:4

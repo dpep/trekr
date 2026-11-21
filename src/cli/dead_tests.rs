@@ -427,6 +427,13 @@ impl Weigh<'_, '_> {
             end: span.end,
             nesting,
         };
+        // Deleting what another file may name breaks that file.
+        if let Some(at) = shape.globals.iter().find(|at| span.holds(**at)) {
+            return Err(format!(
+                "defines what other files may name, at line {}",
+                at.line
+            ));
+        }
         if let Some(hook) = shape
             .hooks_before(span)
             .find(|h| h.kind == SpanKind::Unseen)
@@ -1026,6 +1033,9 @@ struct Shape {
     /// The one group the file holds at its top level, when it holds nothing
     /// else but `require`s.
     sole: Option<Pos>,
+    /// What other files may name: a class or module body, a constant
+    /// written, a shared group defined.
+    globals: Vec<Pos>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1203,6 +1213,7 @@ impl Shape {
             lines: &'a LineIndex,
             spans: Vec<Span>,
             implied: Vec<(Pos, String)>,
+            globals: Vec<Pos>,
         }
         impl Walk<'_> {
             fn imply(&mut self, at: usize, name: &[u8]) {
@@ -1437,6 +1448,7 @@ impl Shape {
                 let name =
                     String::from_utf8_lossy(&self.source[at.start_offset()..at.end_offset()])
                         .into_owned();
+                self.globals.push(self.lines.pos(loc.start_offset()));
                 self.span(SpanKind::Scope, "", name, loc);
             }
         }
@@ -1447,6 +1459,10 @@ impl Shape {
                     self.implied_by(call, &name);
                 }
                 let on_rspec = self.on_rspec(call);
+                if SHARED[..3].contains(&name.as_str()) {
+                    self.globals
+                        .push(self.lines.pos(call.location().start_offset()));
+                }
                 let kind = if !on_rspec || call.block().and_then(|b| b.as_block_node()).is_none() {
                     None
                 } else if GROUPS.contains(&name.as_str()) {
@@ -1500,6 +1516,21 @@ impl Shape {
                 ruby_prism::visit_module_node(self, node);
             }
 
+            fn visit_constant_write_node(&mut self, node: &ruby_prism::ConstantWriteNode<'pr>) {
+                self.globals
+                    .push(self.lines.pos(node.location().start_offset()));
+                ruby_prism::visit_constant_write_node(self, node);
+            }
+
+            fn visit_constant_path_write_node(
+                &mut self,
+                node: &ruby_prism::ConstantPathWriteNode<'pr>,
+            ) {
+                self.globals
+                    .push(self.lines.pos(node.location().start_offset()));
+                ruby_prism::visit_constant_path_write_node(self, node);
+            }
+
             fn visit_def_node(&mut self, def: &ruby_prism::DefNode<'pr>) {
                 let name = String::from_utf8_lossy(def.name().as_slice()).into_owned();
                 if def.receiver().is_none() && name.starts_with("test_") {
@@ -1515,11 +1546,13 @@ impl Shape {
             lines: &lines,
             spans: Vec::new(),
             implied: Vec::new(),
+            globals: Vec::new(),
         };
         walk.visit(&parsed.node());
         let sole = sole_group(&parsed.node(), source, &lines);
         let spans = walk.spans;
         let implied = walk.implied;
+        let globals = walk.globals;
         let group_of = (0..spans.len())
             .map(|at| {
                 (0..spans.len())
@@ -1546,6 +1579,7 @@ impl Shape {
             implied,
             group_of,
             sole,
+            globals,
         }
     }
 
