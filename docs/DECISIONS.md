@@ -18323,3 +18323,39 @@ building the chain.
 whole stdout, timestamps erased), and `--def` at 200 random positions,
 `--ancestors` on 73 and 126 names and `--refs` on 30 names, on discourse
 and rails, against the base build.
+
+## DEC-841 — A class-side chain asks each module for its `ClassMethods` once
+
+**Decided.** `class_side` asks every ancestor of every superclass whether
+it is a concern with a nested `ClassMethods` (DEC-105). The answer is a
+fact of the module, so it is memoized per module (`class_methods`, dropped
+with the other memos when macro mixins are placed), and the ancestors are
+walked in place rather than cloned per level. The chain built is the same,
+in the same order.
+
+**Why.** After DEC-840 the rest of rails' macro-mixins phase was class-side
+chains: 394 test classes call `setup`, and DEC-840's check builds each
+one's chain. An instrumented build put 145 of the phase's 201 ms in that
+concern scan (load 250), each ancestor costing a `ClassMethods` name built
+and an `extends` list read, for every caller again.
+
+**Measured**, the DEC-840 build against this one, interleaved on their own
+stores, warm, best of 3 (5 for the LSP), `TREKR_PROFILE=1`, load 160–217:
+
+| | macro-mixins phase, DEC-840 → this | wall |
+|---|---:|---:|
+| rails `--def` (disable_joins_association_relation.rb) | 188 → 86 ms | |
+| rails `--def` (reloader.rb) | 175 → 51 ms | |
+| rails `--ancestors ActiveRecord::Base` | 223 → 24 ms | 246 → 48 ms |
+| rails LSP spawn → first definition | | 300 → 162 ms |
+| discourse `--ancestors Post` (7 runs) | 11 → 9 ms | |
+
+Against the build before DEC-840, rails' LSP first answer went 481 →
+133 ms in the same session.
+
+**Output identical**: every testbed case, and `--def` at 200 positions,
+`--ancestors` on 73 and 126 names and `--refs` on 30 names, on discourse
+and rails, against the build before DEC-840. Case 600 aside: which of its
+two controllers its helper's answer names first changes from run to run,
+on the base build as on this one (4 runs each), so its three lines are no
+evidence either way.

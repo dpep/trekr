@@ -52,6 +52,10 @@
 - **A query that builds the tree no longer loads every `initialize` to
   place class macros' mixins**: on discourse a tree-needing `--def` or
   `--ancestors` sheds most of its time.
+- **Building the tree is faster**: placing class macros' mixins no
+  longer loads every `initialize`, nor rescans each class's concerns, so
+  a `--def` or `--ancestors` that needs the tree, and the language
+  server's first answer, shed most of that build on a large app.
 
 ### Fixed
 

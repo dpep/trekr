@@ -400,6 +400,9 @@ pub(crate) struct Tree {
     /// walks the same one, and building it resolves each level's extends
     /// (DEC-203). An instance's chain is its memoized ancestry.
     singleton_chains: Memo<(String, bool), Pairs>,
+    /// `concern_class_methods`, per module: every class-side chain asks it
+    /// of each ancestor of each superclass.
+    class_methods: Memo<String, Option<String>>,
     /// Lookups by (fqn, singleton, name, as_self, placing), final once the
     /// name is loaded (DEC-203). A lookup made while placing does not look
     /// for string macros, so it is a different question.
@@ -1066,6 +1069,7 @@ impl Tree {
         self.macro_mixins = placed;
         self.ancestors = Memo::new();
         self.singleton_chains = Memo::new();
+        self.class_methods = Memo::new();
         self.lookups = Memo::new();
         self.includers = OnceLock::new();
         self.mixers = OnceLock::new();
@@ -1221,6 +1225,7 @@ impl Tree {
             base: HashMap::new(),
             defs: Once::new(),
             singleton_chains: Memo::new(),
+            class_methods: Memo::new(),
             lookups: Memo::new(),
             loader: None,
             carriers: HashMap::new(),
@@ -3625,12 +3630,11 @@ impl Tree {
             // the class that includes it are different blobs — and it is how
             // most Rails class methods come to exist. Not into a concern: it
             // defers its own and its dependencies' to its includer (DEC-105).
-            let deferred = !as_self && self.is_concern(&class);
-            for module_name in self.ancestors(&class).chain.clone() {
-                if deferred {
-                    break;
-                }
-                let Some(class_methods) = self.concern_class_methods(&module_name) else {
+            if !as_self && self.is_concern(&class) {
+                continue;
+            }
+            for module_name in &self.ancestors(&class).chain {
+                let Some(class_methods) = self.concern_class_methods(module_name) else {
                     continue;
                 };
                 for ancestor in &self.ancestors(&class_methods).chain {
@@ -3694,8 +3698,13 @@ impl Tree {
     /// plain module happening to contain a `ClassMethods` is not treated as
     /// one.
     fn concern_class_methods(&self, module_name: &str) -> Option<String> {
+        if let Some(found) = self.class_methods.get(module_name) {
+            return found;
+        }
         let nested = qualify(module_name, "ClassMethods");
-        (self.is_concern(module_name) && self.names.contains(&nested)).then_some(nested)
+        let found =
+            (self.is_concern(module_name) && self.names.contains(&nested)).then_some(nested);
+        self.class_methods.publish(module_name.to_string(), found)
     }
 
     /// Only the superclass links — no mixins. Class methods are inherited down
