@@ -10,7 +10,7 @@
 //! process's exit, never for this one's. The claim is made before the spawn,
 //! so a pass that fails is not started again by every index after it.
 
-use crate::store::{Held, Store};
+use crate::store::{Store, Uncompacted};
 use crate::tree::{Overlays, Swept};
 use std::path::Path;
 
@@ -385,8 +385,8 @@ fn record(store: &Store, now: i64, done: &Done) -> rusqlite::Result<()> {
         store.cleanup_ran(now, done.reclaimed_bytes)?;
     }
     store.cleanup_held(match done.compacted {
-        Compacted::NoRoom => Some(Held::NoRoom),
-        Compacted::Busy => Some(Held::Busy),
+        Compacted::NoRoom => Some(Uncompacted::NoRoom),
+        Compacted::Busy => Some(Uncompacted::Busy),
         Compacted::NotWorth | Compacted::Incremental | Compacted::Full => None,
     })
 }
@@ -809,7 +809,7 @@ mod tests {
             ..Done::default()
         };
         record(&store, NOW, &done).unwrap();
-        assert_eq!(store.cleanup().unwrap().skipped, Some(Held::NoRoom));
+        assert_eq!(store.cleanup().unwrap().skipped, Some(Uncompacted::NoRoom));
         done.compacted = Compacted::Incremental;
         done.reclaimed_bytes = 1;
         record(&store, NOW, &done).unwrap();

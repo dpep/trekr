@@ -125,7 +125,7 @@ struct Frame {
     /// (DEC-102).
     mixed: Option<Mixed>,
     /// The locals a method assigned an interpolated name (`sends`).
-    held: Vec<sends::Held>,
+    held: Vec<sends::HeldName>,
     /// A `class << io` body: the object its `def`s are defined on, as
     /// `def io.x` writes it (DEC-740).
     object: Option<crate::core::Unsettled>,
@@ -1295,10 +1295,10 @@ struct Definer<'pr> {
     name: String,
     /// Its arguments, after the name `send` is handed.
     args: Vec<Node<'pr>>,
-    on: DefinedOn,
+    on: DefinerTarget,
 }
 
-enum DefinedOn {
+enum DefinerTarget {
     /// `define_method(…)`, `self.send(:define_method, …)`.
     Own,
     /// `singleton_class.define_method(…)`.
@@ -1320,8 +1320,8 @@ fn definer<'pr>(call: &ruby_prism::CallNode<'pr>) -> Option<Definer<'pr>> {
         return None;
     }
     let on = match call.receiver() {
-        None => DefinedOn::Own,
-        Some(r) if r.as_self_node().is_some() => DefinedOn::Own,
+        None => DefinerTarget::Own,
+        Some(r) if r.as_self_node().is_some() => DefinerTarget::Own,
         Some(r)
             if r.as_call_node().is_some_and(|c| {
                 on_self(&c)
@@ -1329,9 +1329,9 @@ fn definer<'pr>(call: &ruby_prism::CallNode<'pr>) -> Option<Definer<'pr>> {
                     && c.arguments().is_none()
             }) =>
         {
-            DefinedOn::OwnSingleton
+            DefinerTarget::OwnSingleton
         }
-        Some(r) => DefinedOn::Constant(const_name(&r)?),
+        Some(r) => DefinerTarget::Constant(const_name(&r)?),
     };
     Some(Definer { name, args, on })
 }
@@ -3363,21 +3363,22 @@ impl<'pr> Extractor<'_> {
             return;
         };
         let singleton = match (name.as_str(), &on) {
-            ("define_singleton_method", _) | (_, DefinedOn::OwnSingleton) => true,
-            (_, DefinedOn::Constant(_)) => false,
+            ("define_singleton_method", _) | (_, DefinerTarget::OwnSingleton) => true,
+            (_, DefinerTarget::Constant(_)) => false,
             _ => self.in_singleton() || self.singleton_exec > 0,
         };
         let at = call.location().start_offset();
         // A block run on some other object — `mod.singleton_class.
         // instance_eval do` — defines on it, and this scope is not it.
-        if self.foreign_evals > 0 && matches!(on, DefinedOn::Own | DefinedOn::OwnSingleton) {
+        if self.foreign_evals > 0 && matches!(on, DefinerTarget::Own | DefinerTarget::OwnSingleton)
+        {
             return;
         }
         let Some(first) = args.first() else { return };
         let computed = self.computed_names(first);
         // Another class's methods are marked on it, never defined here,
         // since its own file is where they belong.
-        if let DefinedOn::Constant(written) = &on {
+        if let DefinerTarget::Constant(written) = &on {
             let owner = self.sent_owner(written);
             for shape in self.shapes(computed, first) {
                 let maker = Maker {
@@ -3460,7 +3461,7 @@ impl<'pr> Extractor<'_> {
         // as it does a `def`; one run later by a method, or defining on the
         // singleton, is public.
         let own_section =
-            name == "define_method" && matches!(on, DefinedOn::Own) && !self.in_method_body();
+            name == "define_method" && matches!(on, DefinerTarget::Own) && !self.in_method_body();
         let visibility = match own_section {
             true => self.visibility(),
             false => Visibility::Public,

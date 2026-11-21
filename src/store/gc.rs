@@ -76,29 +76,29 @@ pub(crate) struct Cleanup {
     /// The bytes that run returned to the disk.
     pub(crate) reclaimed_bytes: Option<i64>,
     /// Why the last pass left free pages it was meant to give back.
-    pub(crate) skipped: Option<Held>,
+    pub(crate) skipped: Option<Uncompacted>,
 }
 
 /// Why a pass that meant to compact the file did not.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Held {
+pub(crate) enum Uncompacted {
     /// A full rewrite would not fit on the disk.
     NoRoom,
     /// Another writer held the lock past the wait.
     Busy,
 }
 
-impl Held {
+impl Uncompacted {
     fn as_str(self) -> &'static str {
         match self {
-            Held::NoRoom => "no_room",
-            Held::Busy => "busy",
+            Uncompacted::NoRoom => "no_room",
+            Uncompacted::Busy => "busy",
         }
     }
 
-    fn parse(text: &str) -> Option<Held> {
-        [Held::NoRoom, Held::Busy]
+    fn parse(text: &str) -> Option<Uncompacted> {
+        [Uncompacted::NoRoom, Uncompacted::Busy]
             .into_iter()
             .find(|held| held.as_str() == text)
     }
@@ -320,12 +320,14 @@ impl Store {
             checked_at,
             ran_at: ran.next().and_then(|at| at.ok()),
             reclaimed_bytes: ran.next().and_then(|bytes| bytes.ok()),
-            skipped: read(CLEANUP_SKIPPED)?.as_deref().and_then(Held::parse),
+            skipped: read(CLEANUP_SKIPPED)?
+                .as_deref()
+                .and_then(Uncompacted::parse),
         })
     }
 
     /// Record why the last pass left the file as it was, or that it did not.
-    pub(crate) fn cleanup_held(&self, held: Option<Held>) -> Result<()> {
+    pub(crate) fn cleanup_held(&self, held: Option<Uncompacted>) -> Result<()> {
         match held {
             Some(held) => set_meta(&self.conn, CLEANUP_SKIPPED, held.as_str()),
             None => self

@@ -9,7 +9,7 @@ use crate::core::{Dispatch, RecvShape, SentName, SentTo};
 use ruby_prism::Node;
 
 /// A local a method last assigned, and the conditionals open around it.
-pub(super) struct Held {
+pub(super) struct HeldName {
     local: String,
     /// The shape of the interpolated name it holds, `None` once replaced.
     shape: Option<String>,
@@ -231,7 +231,7 @@ impl Extractor<'_> {
             h.nothing || conditional <= h.conditional || (unknown && h.shape.is_some())
         });
         if replaces {
-            held.push(Held {
+            held.push(HeldName {
                 local: local.to_string(),
                 shape,
                 beside: Vec::new(),
@@ -252,7 +252,7 @@ impl Extractor<'_> {
     pub(super) fn hold_params(&mut self, names: impl Iterator<Item = String>) {
         let conditional = self.uncertain();
         let held = &mut self.frame().held;
-        held.extend(names.map(|local| Held {
+        held.extend(names.map(|local| HeldName {
             local,
             shape: None,
             beside: Vec::new(),
@@ -277,7 +277,7 @@ impl Extractor<'_> {
             .collect();
         let held = &mut self.frame().held;
         let start = held.len();
-        held.extend(names.iter().map(|local| Held {
+        held.extend(names.iter().map(|local| HeldName {
             local: local.clone(),
             shape: None,
             beside: Vec::new(),
