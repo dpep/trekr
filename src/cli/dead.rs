@@ -1617,20 +1617,31 @@ fn note_candidate_callers(rows: &mut [DeadRow], defs: &[WrittenDef]) {
         .collect();
     // A live def may be the innermost around the call, or tie with a
     // candidate for it: either way no candidate certainly holds it.
-    for def in defs {
-        if !spans
-            .iter()
-            .any(|s| s.path == def.path && s.start == def.start)
-        {
-            spans.push(Span {
-                path: def.path.clone(),
-                start: def.start,
-                end: def.end,
-                name: None,
-                root: None,
-            });
-        }
-    }
+    let calling: HashSet<&str> = rows
+        .iter()
+        .filter_map(|row| match &row.detail {
+            Detail::Method(MethodDetail {
+                caller: Some(caller),
+                ..
+            }) => Some(caller.path.as_str()),
+            _ => None,
+        })
+        .collect();
+    let candidates: HashSet<(&str, (u32, u32))> =
+        spans.iter().map(|s| (s.path.as_str(), s.start)).collect();
+    let live: Vec<Span> = defs
+        .iter()
+        .filter(|def| calling.contains(def.path.as_str()))
+        .filter(|def| !candidates.contains(&(def.path.as_str(), def.start)))
+        .map(|def| Span {
+            path: def.path.clone(),
+            start: def.start,
+            end: def.end,
+            name: None,
+            root: None,
+        })
+        .collect();
+    spans.extend(live);
     for row in rows.iter_mut() {
         let clear = row.confidence == Grade::Clear;
         let Detail::Method(MethodDetail {
