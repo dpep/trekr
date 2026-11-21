@@ -18359,3 +18359,47 @@ and rails, against the build before DEC-840. Case 600 aside: which of its
 two controllers its helper's answer names first changes from run to run,
 on the base build as on this one (4 runs each), so its three lines are no
 evidence either way.
+
+## DEC-842 — `--dead`'s constants stay serial: the parallel version measured no gain
+
+**Not landed.** `dead_constants` runs on the main thread after DEC-665's
+parallel candidates, about 1 s of discourse's `--dead app lib plugins`
+on a quiet machine. A profile split it: `const_refs_named` 20–32 %,
+`resolve_from` 4–17 %, the reference sort 5–13 % (`in_tests` recomputed
+per comparison), `Ways::convention` and `caveats` most of the rest. The
+walk over references cannot itself be split: whether a reference still
+counts depends on what was settled before it.
+
+**Tried**, all inside `dead_consts.rs` and exact: the names' SQL split
+across reopened connections (disjoint parts, the rows sorted whole after),
+`in_tests` once per row with a parallel stable sort, and every
+`(name, nesting)` resolved up front in parallel. `--dead --json`
+byte-identical to the serial build in every run on discourse and rails'
+`activerecord`.
+
+**Measured**, `dead_constants`' own time from a timing probe in each
+build, interleaved, best of 3, load 59–180 with the machine's swap full:
+rails 1,156 → 1,116 ms, discourse 2,510 → 3,133 ms, run-to-run spread
+2–6×. Instructions for the whole run went up (rails 72.1 → 72.9 G): the
+up-front resolution does work the serial walk skips. No gain survived the
+noise, so it was not kept. Re-measure on a quiet machine before
+proposing it again; `Ways` (two `RefCell` caches) would have to become
+`Sync` to reach the larger serial share.
+
+## DEC-843 — `Tree::file_templates` keeps re-reading a file that lacks the word
+
+**Not changed.** A file asked for templates by a word its text lacks is
+read, scanned and not cached, so each new word reads it again
+(`src/tree/views.rs`). Caching it on a second read would bound the reads,
+but is not exact, as read from the code (not reproduced): a cached
+file's templates are returned whatever the word, and the caller's filter
+then judges them by the name's last segment alone, so a controller's
+`render :base` asked by `dir/base` would be skipped while uncached and
+kept once cached. Its cost is also small:
+under `file_templates`, `--refs Post#user` spends 68 % parsing files that
+do hold the word (cached already), and `--dead` 3 % of its CPU, most of it
+`open()`, on parallel workers.
+
+**Noted, not fixed here:** by the same reading, that order dependence
+exists today: whether a file's templates reach a `render` filter depends
+on whether an earlier call cached the file.
