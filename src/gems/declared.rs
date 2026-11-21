@@ -82,7 +82,7 @@ pub(super) fn resolve(
         }
         let mut files = vec![(path.clone(), source)];
         if is_gemfile {
-            files.extend(evaled(&path, &files[0].1));
+            files.extend(super::bundle::evaled(&path, &files[0].1));
         }
         for (path, source) in files {
             let file = path.strip_prefix(repo).unwrap_or(&path).to_string_lossy();
@@ -288,33 +288,6 @@ fn conflict(
             said.join("; ")
         )
     })
-}
-
-/// Each file a Gemfile evals (`eval_gemfile "Gemfile.tools"`), and each one
-/// those eval, in the order Bundler reads them, with its source: they
-/// declare the bundle's gems too (DEC-820). Which files a Gemfile evals is
-/// `gemfile::declarations`' to say.
-fn evaled(gemfile: &Path, source: &[u8]) -> Vec<(PathBuf, Vec<u8>)> {
-    let mut found = Vec::new();
-    let mut read_once: HashSet<PathBuf> = HashSet::new();
-    read_once.insert(std::fs::canonicalize(gemfile).unwrap_or_else(|_| gemfile.to_path_buf()));
-    let evals_of = |file: &Path, source: &[u8]| -> Vec<PathBuf> {
-        let dir = file.parent().unwrap_or(Path::new("."));
-        let evals = super::gemfile::declarations(source).evals;
-        evals.iter().rev().map(|e| dir.join(e)).collect()
-    };
-    let mut todo = evals_of(gemfile, source);
-    while let Some(file) = todo.pop() {
-        if !read_once.insert(std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone())) {
-            continue;
-        }
-        let Ok(source) = crate::scan::read_source(&file) else {
-            continue;
-        };
-        todo.extend(evals_of(&file, &source));
-        found.push((file, source));
-    }
-    found
 }
 
 /// Each installed copy's runtime dependencies, read once however often a
