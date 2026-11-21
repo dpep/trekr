@@ -820,7 +820,17 @@ impl Weigh<'_, '_> {
         if let Some((written, named)) = named {
             return match named {
                 Named::Here(def) => Reach::Body(vec![body(written, &def)]),
-                Named::Shared { site, line } => self.body_at(&site, line),
+                // A module the group includes may be live code.
+                Named::Shared { site, line } => {
+                    let relative = self.relative(&site);
+                    if relative == self.target.path && line == self.target.line {
+                        Reach::Target
+                    } else if self.tree.in_checkout(&site) && !in_tests(&relative) {
+                        Reach::Other(format!("{} ({relative}:{line})", read.name))
+                    } else {
+                        self.body_at(&site, line)
+                    }
+                }
             };
         }
         // An implicit `subject` is `described_class.new`: each builds the

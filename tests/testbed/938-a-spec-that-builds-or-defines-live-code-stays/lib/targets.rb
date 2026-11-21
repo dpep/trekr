@@ -45,3 +45,9 @@ class Limited
     2
   end
 end
+
+class Configured
+  def configured_value
+    2
+  end
+end

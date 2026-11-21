@@ -7,3 +7,9 @@ dead lib OwnSubject#own_value=test-only&spec/own_subject_spec.rb:1
 # build the described class now, so keep the unit only when that is the
 # method's own class, whose building is weighed.
 dead lib Described#described_value=test-only& Implicit#implicit_value=test-only&
+# A module the group `include`s answers its implicit calls, and its method
+# was weighed as a body of test code though it is live: `format_price` was
+# the live PriceHelper's, in its only test. A member a group's module
+# answers from outside the tests keeps the unit. Unincluded (as by
+# `config.include`), the residue's candidate already kept it.
+dead lib Helped#helped_value=test-only& Configured#configured_value=test-only&
