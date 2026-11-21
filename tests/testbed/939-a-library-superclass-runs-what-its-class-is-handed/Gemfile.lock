@@ -1,0 +1,13 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    ormkit (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  ormkit
+
+BUNDLED WITH
+   2.5.0

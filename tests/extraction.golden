@@ -1220,6 +1220,12 @@ ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/konst_
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/limited_spec.rb a32749c3f2895a60
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/own_subject_spec.rb ed2cb335e2918d77
 ruby tests/testbed/938-a-spec-that-builds-or-defines-live-code-stays/spec/runner_spec.rb b01c9ec6b4675b50
+ruby tests/testbed/939-a-library-superclass-runs-what-its-class-is-handed/Gemfile e61de8175cc045fb
+ruby tests/testbed/939-a-library-superclass-runs-what-its-class-is-handed/config.ru da690933bdf4b18c
+ruby tests/testbed/939-a-library-superclass-runs-what-its-class-is-handed/lib/gadget.rb 04bd23db4048ffec
+ruby tests/testbed/939-a-library-superclass-runs-what-its-class-is-handed/spec/gadget_spec.rb e03a60ba2ece328e
+ruby tests/testbed/939-a-library-superclass-runs-what-its-class-is-handed/spec/plain_spec.rb 31505e2aba7b5e81
+ruby tests/testbed/939-a-library-superclass-runs-what-its-class-is-handed/vendor/bundle/ruby/9.8.0/gems/ormkit-1.0/lib/ormkit.rb 3c978afc16b4ff25
 ruby tests/testbed/940-a-nested-guard-only-under-validates/app/models/widget.rb 4d9f40388568ca28
 ruby tests/testbed/940-a-nested-guard-only-under-validates/lib/active_model.rb 66cad22098c2af7c
 ruby tests/testbed/941-class-shift-onto-a-local/app/printer.rb 01e314442ce8b66b

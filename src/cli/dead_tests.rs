@@ -631,6 +631,18 @@ impl Weigh<'_, '_> {
             return Err(format!("made by {via}"));
         }
         self.live_body(&target.path, &def, &mut seen)?;
+        // A library ancestor may call back into the class by names it is
+        // never handed: an Active Record model's callbacks run on `new`.
+        for ancestor in self.tree.ancestors(&target.owner).chain.iter() {
+            let library = self.tree.sites(ancestor).iter().any(|site| {
+                !self.tree.in_checkout(&site.path)
+                    && !crate::tree::is_core(&site.path)
+                    && !self.tree.in_stdlib(&site.path)
+            });
+            if library {
+                return Err(format!("its class inherits {ancestor}, a library's"));
+            }
+        }
         for name in PROTOCOL.iter().filter(|name| **name != target.name) {
             for singleton in [false, true] {
                 let Some(found) = self.tree.lookup(&target.owner, singleton, name) else {
