@@ -17545,3 +17545,21 @@ an owner of `""`). Answering needs a decision on how that owner is written
 in a query and in `--json`'s `owner` (`""`, as `--dead` prints it, or
 `Object`, as `--def` does), and `cmd_refs` taking a query rather than its
 text.
+
+## DEC-800 — A path gem's gemspec is the one whose `name` is the gem's
+
+**Decided.** In a `path` or git source, a gem's gemspec is found as
+Bundler finds it: of the `{,*,*/*}.gemspec` files there (each level
+sorted), the one whose literal `name =` is the gem's; else, when a
+gemspec's name is computed, the file named for the gem; else, for a
+source of one gem, its one gemspec directory. Only the file name was
+read: with `path "components" do` naming two gems whose gemspecs are
+`billing_engine.gemspec` and `shipping_engine.gemspec`, both fell back to
+`components/`, and `Layers` broke the tie by HashMap order, so one gem
+owned every file and the other was `unreferenced`, `clear`, flipping
+between runs (hunt 2's cbra2, cbra3). When two gems are still found in
+one directory (`vendor/kits/a_kit.gemspec` beside `b_kit.gemspec`),
+neither owns its files: both are rows, lowered by "it is found in DIR
+with …", rather than one picked. `Owned`'s map is sorted and `Layers`
+breaks a tie by name, so no output order follows a HashMap's. The index
+locates a git monorepo's gems by the same lookup. Testbed 880.

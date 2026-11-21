@@ -1,0 +1,8 @@
+# Several gems in one `path` source, each gemspec named otherwise
+# (`billing_engine.gemspec` for billing-engine): the gemspec was looked up
+# by file name only, so both gems fell back to `components/`, and which one
+# owned its files was HashMap order — the other was a `clear` row, flipping
+# between runs. Bundler takes the gemspec whose `name` is the gem's, and so
+# does trekr. Two gems found in one directory (a_kit, b_kit) are told apart
+# from neither: both rows, lowered, rather than one picked.
+dead Gemfile billing-engine=none shipping-engine=none a_kit=unreferenced~told b_kit=unreferenced~told

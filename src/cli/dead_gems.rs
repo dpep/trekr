@@ -14,7 +14,7 @@ use super::dead_consts::in_tests;
 use super::*;
 use crate::gems::gemfile::{self, Declaration, Lock, Require};
 use serde::Serialize;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Whether `--dead` was handed a gem manifest: grade the bundle, not code.
 pub(super) fn is_manifest(path: &Path) -> bool {
@@ -320,7 +320,8 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
     let mut installed: HashMap<String, String> = store.gem_names(&root_str)?.into_iter().collect();
     let lock_text = crate::scan::read_text(crate::gems::bundle_files(root).1).ok();
     let mut in_checkout = HashSet::new();
-    for (name, dir) in path_gems(root, lock_text.as_deref(), manifest, &declared) {
+    let path_gems = path_gems(root, lock_text.as_deref(), manifest, &declared);
+    for (name, dir) in path_gems.found {
         in_checkout.insert(dir.clone());
         installed.entry(name).or_insert(dir);
     }
@@ -800,6 +801,7 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
             lock: &lock,
             installed: &installed,
             shared: shared.get(name),
+            same_dir: path_gems.shared.get(name),
         })?;
         let mut caveats = caveats;
         if let Some(required) = soft.get(name).filter(|r| r.by_row) {
@@ -929,8 +931,37 @@ struct Required {
 /// The path gems inside the checkout (not the checkout itself), each with
 /// its directory under `root`: the lockfile's `PATH` specs, and a `path:`
 /// the lockfile does not name. Their files are indexed as the checkout's,
-/// and are theirs.
+/// and are theirs — unless two gems are found in one directory, whose files
+/// are told apart from neither's: those are in `shared`, each with the
+/// directory and the others there.
+struct PathGems {
+    found: Vec<(String, String)>,
+    shared: HashMap<String, (String, Vec<String>)>,
+}
+
 fn path_gems(
+    root: &Path,
+    lockfile: Option<&str>,
+    manifest: &Path,
+    declared: &[(Declaration, String)],
+) -> PathGems {
+    let mut found = path_gem_dirs(root, lockfile, manifest, declared);
+    let mut by_dir: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (name, dir) in &found {
+        by_dir.entry(dir.clone()).or_default().push(name.clone());
+    }
+    let mut shared = HashMap::new();
+    for (dir, names) in by_dir.into_iter().filter(|(_, names)| names.len() > 1) {
+        for name in &names {
+            let others = names.iter().filter(|n| *n != name).cloned().collect();
+            shared.insert(name.clone(), (dir.clone(), others));
+        }
+    }
+    found.retain(|(name, _)| !shared.contains_key(name));
+    PathGems { found, shared }
+}
+
+fn path_gem_dirs(
     root: &Path,
     lockfile: Option<&str>,
     manifest: &Path,
@@ -1041,7 +1072,7 @@ impl Layers {
             .iter()
             .map(|(name, dir)| (format!("{dir}/"), name.clone()))
             .collect();
-        gems.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then(a.0.cmp(&b.0)));
+        gems.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then(a.cmp(b)));
         Layers {
             app: format!("{app}/"),
             gems,
@@ -1101,7 +1132,7 @@ impl Layers {
 /// one gem is that, to each of them. Ruby core's and the stdlib's belong to
 /// none.
 struct Owned {
-    by_fqn: HashMap<String, Vec<String>>,
+    by_fqn: BTreeMap<String, Vec<String>>,
     /// Each owned constant's last segment: a reference naming none of them
     /// cannot reach one, and is never resolved.
     leaves: HashSet<String>,
@@ -1111,7 +1142,7 @@ struct Owned {
 
 impl Owned {
     fn new(tree: &Tree, layers: &Layers, lock: &Lock) -> Owned {
-        let mut by_fqn = HashMap::new();
+        let mut by_fqn = BTreeMap::new();
         let mut railties = HashMap::new();
         let mut declared = tree.declared();
         declared.sort();
@@ -1873,6 +1904,8 @@ struct Weigh<'a> {
     lock: &'a Lock,
     installed: &'a HashMap<String, String>,
     shared: Option<&'a (String, Vec<String>)>,
+    /// A path gem found in one directory with others: its directory, and them.
+    same_dir: Option<&'a (String, Vec<String>)>,
 }
 
 /// What may still use a gem nothing was seen to: each a phrase naming the
@@ -1882,6 +1915,14 @@ fn caveats(w: Weigh<'_>) -> anyhow::Result<Vec<String>> {
     let mut caveats = Vec::new();
     let loads = w.declaration.require != Require::Off;
     let Some(dir) = w.gem_dir else {
+        if let Some((dir, others)) = w.same_dir {
+            caveats.push(format!(
+                "it is found in {} with {}, so its files are not told apart from theirs",
+                shown(dir),
+                others.join(", ")
+            ));
+            return Ok(caveats);
+        }
         caveats.push(match w.declaration.local || w.lock.local.contains(name) {
             true => "its source is a path or git checkout trekr did not index as a gem, so \
                      its constants are not told apart from the app's own"

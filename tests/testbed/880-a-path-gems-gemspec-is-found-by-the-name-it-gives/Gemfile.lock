@@ -1,0 +1,27 @@
+PATH
+  remote: components
+  specs:
+    billing-engine (0.1.0)
+    shipping-engine (0.1.0)
+
+PATH
+  remote: vendor/kits
+  specs:
+    a_kit (0.1.0)
+    b_kit (0.1.0)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  a_kit!
+  b_kit!
+  billing-engine!
+  shipping-engine!
+
+BUNDLED WITH
+   2.6.9

@@ -65,7 +65,7 @@
 --dead $.candidates[].frees[].name: string
 --dead $.candidates[].frees[].path: string
 --dead $.candidates[].frees[].root: string
---dead $.candidates[].gem_dir: string
+--dead $.candidates[].gem_dir: null|string
 --dead $.candidates[].group: null|string
 --dead $.candidates[].groups: array
 --dead $.candidates[].groups[]: string

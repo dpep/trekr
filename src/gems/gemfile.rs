@@ -319,6 +319,28 @@ impl Lock {
     }
 }
 
+/// The name a gemspec gives its gem (`s.name = "billing-engine"`), which is
+/// how Bundler picks a path or git source's gemspec, whatever the file is
+/// called. `None` when it is not written as a literal.
+pub(crate) fn gemspec_name(source: &[u8]) -> Option<String> {
+    struct Finder(Option<String>);
+    impl<'pr> Visit<'pr> for Finder {
+        fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+            if self.0.is_none()
+                && node.name().as_slice() == b"name="
+                && let Some(value) = node.arguments().and_then(|a| a.arguments().iter().next())
+            {
+                self.0 = string(&value);
+            }
+            ruby_prism::visit_call_node(self, node);
+        }
+    }
+    let parsed = ruby_prism::parse(source);
+    let mut finder = Finder(None);
+    finder.visit(&parsed.node());
+    finder.0
+}
+
 /// An installed gem's specification, as rubygems writes it: the commands
 /// it installs (`executables`) and whether it compiles (`extensions`). A
 /// list that is not literal is `None`, for the caller to look on disk; one

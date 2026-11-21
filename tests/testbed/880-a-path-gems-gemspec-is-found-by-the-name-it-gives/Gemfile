@@ -1,0 +1,7 @@
+source "https://rubygems.org"
+path "components" do
+  gem "billing-engine"
+  gem "shipping-engine"
+end
+gem "a_kit", path: "vendor/kits"
+gem "b_kit", path: "vendor/kits"

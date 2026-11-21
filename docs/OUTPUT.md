@@ -685,7 +685,12 @@ was read from an older one.
 A path gem inside the checkout (a lockfile `PATH` spec or `path:`, not the
 checkout itself) is graded as a gem: its files are its, so a use of its
 constants counts, and its own files naming it do not. Its code is still
-the checkout's for every other gem: an engine's use of a gem counts.
+the checkout's for every other gem: an engine's use of a gem counts. Its
+gemspec is the one in the source whose `name` is the gem's, as Bundler
+picks it (`billing_engine.gemspec` for billing-engine), else the file
+named for the gem when the name is computed (DEC-800). Two gems found in
+one directory are told apart from neither: each is a row, `lower`, "it
+is found in DIR with …".
 
 The rows, from least evidence to most:
 

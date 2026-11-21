@@ -767,26 +767,53 @@ pub(crate) fn locate(repo: &Path, gems: Vec<Gem>, ruby: Option<&stdlib::Stdlib>)
 /// The directory of `name`'s gemspec within a source, searched where bundler
 /// searches (`{,*,*/*}.gemspec`), shallowest first. A monorepo keeps each gem
 /// in its own subdirectory: rails' `actionpack/actionpack.gemspec`.
-fn gemspec_dir(source: &Path, name: &str, sole: bool) -> Option<PathBuf> {
-    let levels = [source.to_path_buf(), source.join("*"), source.join("*/*")];
-    let named = format!("{name}.gemspec");
-    let found = levels
+pub(crate) fn gemspec_dir(source: &Path, name: &str, sole: bool) -> Option<PathBuf> {
+    // Each level sorted: the walk's order is the filesystem's otherwise.
+    let specs: Vec<PathBuf> = [source.to_path_buf(), source.join("*"), source.join("*/*")]
         .iter()
-        .flat_map(|level| expand(level))
-        .find(|dir| dir.join(&named).is_file());
-    if found.is_some() || !sole {
-        return found;
+        .flat_map(|level| {
+            let mut found: Vec<PathBuf> = expand(level)
+                .into_iter()
+                .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten())
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "gemspec") && p.is_file())
+                .collect();
+            found.sort();
+            found
+        })
+        .collect();
+    let written: Vec<Option<String>> = specs
+        .iter()
+        .map(|spec| {
+            let raw = crate::scan::read_source(spec).ok()?;
+            gemfile::gemspec_name(&raw)
+        })
+        .collect();
+    let dir = |spec: &PathBuf| spec.parent().map(Path::to_path_buf);
+    // Bundler loads each and takes the one whose name is the gem's.
+    if let Some(at) = written.iter().position(|w| w.as_deref() == Some(name)) {
+        return dir(&specs[at]);
+    }
+    // A name computed, not written: the file named for the gem.
+    let named = format!("{name}.gemspec");
+    if let Some(spec) = specs
+        .iter()
+        .zip(&written)
+        .find(|(spec, written)| written.is_none() && spec.file_name().is_some_and(|f| *f == *named))
+        .map(|(spec, _)| spec)
+    {
+        return dir(spec);
+    }
+    if !sole {
+        return None;
     }
     // A gem whose gemspec is named for something else, alone in its source.
-    let mut specs = levels.iter().flat_map(|level| expand(level)).filter(|dir| {
-        std::fs::read_dir(dir).is_ok_and(|entries| {
-            entries
-                .flatten()
-                .any(|e| e.path().extension().is_some_and(|x| x == "gemspec"))
-        })
-    });
-    let only = specs.next()?;
-    specs.next().is_none().then_some(only)
+    let mut dirs: Vec<PathBuf> = specs.iter().filter_map(dir).collect();
+    dirs.dedup();
+    match dirs.as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
+    }
 }
 
 /// Each path gem the lockfile names whose directory is inside the checkout
