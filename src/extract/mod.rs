@@ -19,6 +19,7 @@ mod macros;
 pub(crate) use macros::{camelize, table_to_class};
 mod sends;
 mod sig;
+pub(crate) mod slim;
 pub(crate) mod template;
 
 use crate::core::*;
