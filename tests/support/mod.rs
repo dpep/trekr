@@ -196,5 +196,7 @@ pub fn neutral<'a>(command: &'a mut Command, home: &Path) -> &'a mut Command {
 /// (which sets its own) ever sees it run out.
 pub const PROBE_WAIT_MS: &str = "60000";
 
-/// The wait a test about it sets, against a git made never to answer.
-pub const SHORT_PROBE_WAIT_MS: &str = "300";
+/// The wait a test about it sets, against a git made to block for 30 s: long
+/// enough for that git to start under load (at 300 ms the query gave up
+/// before the wrapper ran), far short of the block.
+pub const SHORT_PROBE_WAIT_MS: &str = "5000";

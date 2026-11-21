@@ -18483,8 +18483,10 @@ Test: testbed 798.
 **Decided.** `scan::PROBE_WAIT` (1 s, DEC-035) reads
 `TREKR_TEST_PROBE_WAIT_MS` once, as the other test waits do, and
 `support::neutral` sets it to 60 s for every trekr the suite runs. A test
-about the wait sets it short (300 ms) against a git wrapper that blocks
-`status` far longer, and asserts it was not waited out.
+about the wait sets it to 5 s against a git wrapper that blocks `status`
+for 30 s, and asserts it was not waited out. Not shorter: the wait runs
+from the probe's start, not git's, and at 300 ms a loaded machine gave up
+before the wrapper's `status` had started (2 runs in 5).
 
 **Why.** Every e2e test that runs a real git raced the 1 s budget, and under
 `cargo test`'s parallel load a cold git lost: the answer came from the index
