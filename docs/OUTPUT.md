@@ -14,7 +14,7 @@ is the short version an agent loads; this is where the detail lives.
 | `status: residue`, `reason: "no name at this position"`, exit 1 | `--def` on a line with no name on it (blank, a comment, only punctuation). |
 | `status: no_such_method`, exit 1 | `'Owner#name'`: the owner resolved and nothing in its ancestors defines the name — `reason` says so, and nothing is listed. `--refs` adds a `hint` (`trekr --refs name`) for every call site of the name, unnarrowed. A chain with an unindexed ancestor is `residue` instead, naming it; an owner trekr cannot find at all is `residue` with the same `hint`. |
 | exit 1, "no mention of …" | indexed, and the name really is not there. |
-| `status: not_indexed`, exit 2 | only with `--no-index`: nobody has indexed this checkout. The answer names the root and the command. |
+| `status: not_indexed`, exit 2 | only with `--no-index`: nobody has indexed this checkout, or another trekr's first index of it is still running (its `reason` says which). The answer names the root and the command. |
 | `status: incomplete`, exit 2 | the index this query started could not finish (another writer held the store's lock for 10 minutes). Run the `hint`, then ask again. |
 | exit 2 while `warming` | with `--no-index`, a miss while a first index is still running. Ask again. |
 | exit 64–74, `{"error", "kind", "code"}` | the call failed; see [Errors](#errors). Not an answer about the code. |

@@ -156,6 +156,9 @@
   at shutdown is refused with `RequestFailed`, saying the checkout is being
   indexed; with indexing turned off (`trekr.index: false`), at once,
   naming `trekr --index`.
+- **`--no-index` beside another trekr's first index says it is under
+  way**: its `not_indexed` reason was "this checkout has never been
+  indexed"; it is "another trekr is indexing it now (…)".
 
 ## 0.10.2 — 2026-11-20
 

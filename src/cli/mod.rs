@@ -4922,9 +4922,20 @@ fn not_indexed(out: Output, root: &Path, store: &Store) -> anyhow::Result<ExitCo
     crate::usage::outcome(Outcome::NotIndexed);
     let root = root.to_string_lossy().to_string();
     let hint = format!("trekr --index {}", paths::pretty(&root));
-    let (reason, upgraded) = not_indexed_reason(store)?;
+    // `--no-index` beside another trekr's first index: "never indexed" would
+    // send the caller to start a second one.
+    let (reason, say) = match store.warming(&root)?.filter(|w| !w.interrupted) {
+        Some(w) => (
+            format!(
+                "another trekr is indexing it now ({}); without --no-index a query waits for it",
+                w.how_far()
+            ),
+            true,
+        ),
+        None => not_indexed_reason(store)?,
+    };
     match out {
-        Output::Text if upgraded => eprintln!(
+        Output::Text if say => eprintln!(
             "trekr: {} is not indexed — {reason}. Run: {hint}",
             paths::pretty(&root)
         ),

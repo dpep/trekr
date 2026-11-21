@@ -3888,6 +3888,41 @@ fn a_claim_whose_pid_was_reused_is_taken_over() {
     }
 }
 
+/// `--no-index` while another trekr's first index is filling the checkout
+/// says so, rather than that nobody ever indexed it.
+#[test]
+fn no_index_beside_anothers_first_index_says_it_is_under_way() {
+    let (dir, db) = scratch("noindex-warming");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--status"]).status.code() == Some(2));
+    let root = fs::canonicalize(&dir).unwrap();
+    // This test's own pid: a live writer, for as long as the test runs.
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+            [
+                format!("warming {}", root.to_string_lossy()),
+                format!("{} 0 1 own", std::process::id()),
+            ],
+        )
+        .unwrap();
+    let out = trekr(
+        &db,
+        &dir,
+        &["--def", "widget.rb:7:5", "--no-index", "--json"],
+    );
+    assert_eq!(out.status.code(), Some(2));
+    let answer = json(&out);
+    assert_eq!(answer["status"], "not_indexed");
+    let reason = answer["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("another trekr is indexing it now"),
+        "{reason}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A hand-typed column is a guess, so `--def` snaps to the nearest name on the
 /// line — and says that it did.
 #[test]

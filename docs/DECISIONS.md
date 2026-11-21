@@ -21,7 +21,7 @@ belongs to:
 | Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610 |
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
-| `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
+| `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563, 812 |
 | `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 680, 690, 730, 770, 771, 772 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646, 810, 811 |
 | Scope and housekeeping | 030, 063, 640 |
@@ -18141,3 +18141,19 @@ Tests: `a_definition_asked_before_the_index_waits_for_it_while_the_loop_serves`,
 `a_request_the_index_outlasts_is_refused_saying_why`,
 `with_indexing_off_an_unindexed_checkout_is_refused_not_answered_empty`,
 `answers_from_a_partial_index_say_so_and_references_wait_for_the_whole`.
+
+## DEC-812 — `--no-index` beside another's first index says it is under way
+
+**Decided.** `--no-index` in a checkout whose first index another live
+trekr is writing (its `warming` mark stands, nothing whole is stored yet)
+still answers `not_indexed`, exit 2, but its `reason` is "another trekr is
+indexing it now (N of M files read, …); without --no-index a query waits
+for it", and text output says it too. "This checkout has never been
+indexed" sent the caller to start an index that was already running.
+
+**Not changed.** A manual `trekr --index` writes its mark after listing
+the checkout's files, so in that first moment there is nothing to see and
+the reason is still "never been indexed". A query's own index claims the
+checkout before it starts (DEC-500) and is seen at once.
+
+Test: `no_index_beside_anothers_first_index_says_it_is_under_way`.
