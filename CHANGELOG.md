@@ -41,6 +41,15 @@
   `test_sites`, each call, symbol or `super` a test writes, with the
   example and the innermost group written around it.
 
+### Changed
+
+- **`--usage` counts each row under the trekr that made it**: `--json`
+  rows carry `version` (`+dev` for a cargo build, `""` for counts from
+  before), and the summary ends with a `trekr versions:` line. `--dead` on
+  a bundle file counts as `dead gems`, `--status --all` as `status all`,
+  and `--retention`, `--older-than` and `--jobs` are counted when given.
+  The counts file is migrated in place on first use; nothing to do.
+
 ### Fixed
 
 - **`--dead` reads an operator assignment to a call as a call of its

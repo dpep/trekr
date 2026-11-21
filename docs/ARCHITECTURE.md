@@ -1035,7 +1035,7 @@ improved on evidence (DEC-063). One table, in its own file
 (`trekr.usage.db` beside the store, `$TREKR_USAGE` to move it or `off`):
 
 ```text
-usage_daily(day, surface, feature, flags, origin, outcome, latency, cold, count)
+usage_daily(day, surface, feature, flags, origin, outcome, latency, cold, version, count)
   PRIMARY KEY (every column but count), WITHOUT ROWID
 ```
 
@@ -1044,9 +1044,10 @@ usage_daily(day, surface, feature, flags, origin, outcome, latency, cold, count)
   operation without its `textDocument/` prefix, plus the lifecycle events
   `session`, `resume`, `reload`, `reload-failed`, `retire`, `index`.
 - `flags` names the knobs and variants reached for (`json`, `explain`, `bare`,
-  `by-name`, `snapped`, `stale`, `require`, `cut`, and `tree-built` when the
-  operation had to assemble the tree rather than map its snapshot), never
-  their values.
+  `by-name`, `snapped`, `stale`, `require`, `cut`, `gems` for `--dead` on a
+  bundle file, `all` for `--status --all`, `retention`, `older-than`, `jobs`,
+  and `tree-built` when the operation had to assemble the tree rather than
+  map its snapshot), never their values.
 - `origin` is rq's caller taxonomy (`claude-code`, `cursor`, `ci`, `human`,
   `piped`); an LSP session with no agent in its environment is labelled by the
   client's `clientInfo.name`.
@@ -1055,11 +1056,14 @@ usage_daily(day, surface, feature, flags, origin, outcome, latency, cold, count)
   `error:<kind>`.
 - `latency` is a decade bucket (`<1ms` … `10s+`); `cold` marks an LSP
   session's first request, including the first after a hot-reload resume.
+- `version` is the counting trekr's, with `+dev` when it ran from a cargo
+  `target/` directory; `''` on a row from before it was kept (DEC-860).
 
 No query text, path, or repository name is stored. The CLI counts in `run()`
 after the command's output is written; the LSP after the response is sent.
 Rows older than 90 days are pruned on write. `--usage` folds the rows into one
-line per feature; `--json`/`--ndjson` emit the rows themselves.
+line per feature, then the flags and the versions counted; `--json`/`--ndjson`
+emit the rows themselves.
 
 ## LSP front
 

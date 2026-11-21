@@ -35,7 +35,7 @@ use crate::resolve::DefinedOn;
 use crate::store::Store;
 use crate::tree::{Status, Tree, public_name};
 use crate::{extract, scan};
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, FromArgMatches, Parser};
 use clap_complete::Shell;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -323,8 +323,12 @@ enum Output {
 pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
     let started = std::time::Instant::now();
     crate::store::untracked_memory();
-    let cli = match Cli::try_parse() {
-        Ok(cli) => cli,
+    // The matches are kept to tell a knob given from its default, for the count.
+    let parsed = Cli::command()
+        .try_get_matches()
+        .and_then(|matches| Cli::from_arg_matches(&matches).map(|cli| (cli, matches)));
+    let (cli, matches) = match parsed {
+        Ok(parsed) => parsed,
         Err(error) => return clap_failure(error, started),
     };
 
@@ -420,6 +424,7 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
             .and_then(|spec| cmd_def(out, written, &spec, cli.explain, cli.context.as_deref()));
         (Some("def"), def)
     } else if gems_scope {
+        crate::usage::flag("gems");
         (
             Some("dead"),
             dead_gems::cmd_dead_gems(out, &cli.dead, cli.explain),
@@ -504,7 +509,7 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
     {
         let note = crate::usage::take();
         let mut flags = note.flags;
-        flags.extend(cli_flags(&cli, out));
+        flags.extend(cli_flags(&cli, &matches, out));
         let outcome = match (note.outcome, &result) {
             (Some(outcome), _) => outcome,
             (None, Ok(code)) if *code == ExitCode::SUCCESS => Outcome::Hit,
@@ -536,7 +541,9 @@ fn count(feature: &str, flags: String, outcome: Outcome, started: std::time::Ins
 }
 
 /// Which knobs a call reached for — names only, never their values.
-fn cli_flags(cli: &Cli, out: Output) -> Vec<&'static str> {
+fn cli_flags(cli: &Cli, matches: &clap::ArgMatches, out: Output) -> Vec<&'static str> {
+    // Written on this command line: a standing `TREKR_JOBS` would mark every call.
+    let given = |id: &str| matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine);
     [
         (out == Output::Json, "json"),
         (out == Output::Ndjson, "ndjson"),
@@ -548,6 +555,10 @@ fn cli_flags(cli: &Cli, out: Output) -> Vec<&'static str> {
         (cli.dry_run, "dry-run"),
         (cli.vacuum, "vacuum"),
         (cli.profile, "profile"),
+        (cli.all, "all"),
+        (cli.retention.is_some(), "retention"),
+        (given("older_than"), "older-than"),
+        (given("jobs"), "jobs"),
     ]
     .into_iter()
     .filter_map(|(on, name)| on.then_some(name))
@@ -6163,7 +6174,13 @@ fn usage_text(rows: &[crate::usage::Row], days: Option<u32>) -> String {
     }
     let mut features: BTreeMap<(String, String), Feature> = BTreeMap::new();
     let mut flags: BTreeMap<String, i64> = BTreeMap::new();
+    let mut versions: BTreeMap<String, i64> = BTreeMap::new();
     for row in rows {
+        let version = match row.version.as_str() {
+            "" => "unrecorded",
+            v => v,
+        };
+        *versions.entry(version.to_string()).or_default() += row.count;
         let f = features
             .entry((row.surface.clone(), row.feature.clone()))
             .or_default();
@@ -6302,6 +6319,7 @@ fn usage_text(rows: &[crate::usage::Row], days: Option<u32>) -> String {
         let list: Vec<String> = flags.iter().map(|(k, v)| format!("{k} {v}")).collect();
         let _ = writeln!(text, "\nflags and variants: {}", list.join(" · "));
     }
+    let _ = writeln!(text, "trekr versions: {}", ranked(&versions));
     text
 }
 
@@ -6632,10 +6650,32 @@ mod tests {
             outcome: "hit".into(),
             latency: String::new(),
             cold: false,
+            version: String::new(),
             count: 2,
         };
         let text = usage_text(&[row("session")], None);
         assert!(text.contains("editor (--lsp)"), "{text}");
         assert!(text.contains("sessions 2"), "{text}");
+    }
+
+    #[test]
+    fn the_summary_counts_each_version_and_the_rows_from_before_them() {
+        let row = |version: &str, count| crate::usage::Row {
+            day: "2026-01-01".into(),
+            surface: "cli".into(),
+            feature: "refs".into(),
+            flags: String::new(),
+            origin: "human".into(),
+            outcome: "hit".into(),
+            latency: String::new(),
+            cold: false,
+            version: version.into(),
+            count,
+        };
+        let text = usage_text(&[row("", 5), row("1.0.0", 2)], None);
+        assert!(
+            text.contains("trekr versions: unrecorded 5 · 1.0.0 2"),
+            "{text}"
+        );
     }
 }

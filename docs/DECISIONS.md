@@ -24,7 +24,7 @@ belongs to:
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563, 812 |
 | `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 670, 680, 690, 720, 721, 730, 750, 751, 760, 762, 770, 771, 772, 791, 792, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 815, 816, 817, 818, 819, 820, 821, 822 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646, 810, 811 |
-| Scope and housekeeping | 030, 063, 640 |
+| Scope and housekeeping | 030, 063, 640, 860 |
 
 A few revisits are subsections filed under a neighbouring entry, as they
 were appended: DEC-022's (session 35) and DEC-033's (session 30) under
@@ -18160,3 +18160,29 @@ the reason is still "never been indexed". A query's own index claims the
 checkout before it starts (DEC-500) and is seen at once.
 
 Test: `no_index_beside_anothers_first_index_says_it_is_under_way`.
+
+## DEC-860 — A usage count says which trekr made it, and what mode it ran in
+
+**Decided.** `usage_daily` gains `version`, in its primary key: the
+counting binary's `CARGO_PKG_VERSION`, with `+dev` when it runs from a path
+with a `target` component, so a dev build's counts in the default file
+never pass for a release's. A table from before is rebuilt with the column
+(SQLite cannot alter a primary key), its rows kept with `version` `''`.
+And knobs that changed the question but left no trace now leave a flag:
+`gems` for `--dead` on a bundle file (it counted as `--dead` on code),
+`all`, `retention`, and `older-than` and `jobs` when written on the command
+line (clap's value source: both have defaults, and a standing `TREKR_JOBS`
+would otherwise mark every call).
+
+**Why.** DEC-063's purpose is seeing a feature's adoption across releases,
+and the table could not separate releases; the sustainability pass found
+`--dead Gemfile` and `--status --all` invisible in it, so no verdict on
+either could be read from the counts.
+
+**Not recorded.** The values of any knob, paths, or which tier of `--dead`
+rows came back: still counts, not content.
+
+Tests: `usage_tells_modes_and_knobs_apart_and_records_the_version`,
+`a_table_from_before_versions_keeps_its_rows_unversioned`,
+`each_version_counts_apart`,
+`the_summary_counts_each_version_and_the_rows_from_before_them`.

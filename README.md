@@ -321,7 +321,8 @@ copy at once, another trekr's index once it has been idle for `--older-than`.
 
 `trekr --usage` shows which commands and editor features get used, by whom (an
 agent, a person, an editor), how often they come back empty, and how slow. It
-counts locally — no queries, paths or repository names — in `trekr.usage.db`.
+counts locally — no queries, paths or repository names — in `trekr.usage.db`,
+each count under the trekr version that made it (`+dev` for a cargo build).
 `TREKR_USAGE=off` stops the counting entirely (`--usage` then says so and
 exits `1`); a path in `TREKR_USAGE` moves the file.
 

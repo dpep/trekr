@@ -2,7 +2,7 @@
 //! slow — counted, never logged (DEC-063).
 //!
 //! One row per day × surface × feature × flags × caller × outcome × latency
-//! bucket, holding a count. No query text, no paths, no repository names: the
+//! bucket × trekr version, holding a count. No query text, no paths, no repository names: the
 //! table answers "is `--explain` used" and "how often does `--refs` come back
 //! empty for agents", and nothing about what anyone was looking at.
 //!
@@ -38,10 +38,52 @@ CREATE TABLE IF NOT EXISTS usage_daily (
   outcome TEXT    NOT NULL,   -- hit | uncertain | empty | not-indexed | cancelled | error:<kind>
   latency TEXT    NOT NULL,   -- a bucket from `bucket`, '' when not timed
   cold    INTEGER NOT NULL,   -- 1 for an LSP session's first request
+  version TEXT    NOT NULL,   -- the counting trekr's, `+dev` from a cargo build; '' before it was kept
   count   INTEGER NOT NULL,
-  PRIMARY KEY (day, surface, feature, flags, origin, outcome, latency, cold)
+  PRIMARY KEY (day, surface, feature, flags, origin, outcome, latency, cold, version)
 ) WITHOUT ROWID;
 ";
+
+/// A table written before `version` was kept is rebuilt with it, its rows
+/// marked ''. A rebuild, not `ALTER TABLE ADD COLUMN`: the column joins the
+/// primary key, which SQLite cannot alter in place.
+fn migrate(conn: &mut Connection) -> rusqlite::Result<()> {
+    let has_version = |conn: &Connection| -> rusqlite::Result<bool> {
+        conn.prepare("SELECT 1 FROM pragma_table_info('usage_daily') WHERE name = 'version'")?
+            .exists([])
+    };
+    if has_version(conn)? {
+        return Ok(());
+    }
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    // Another process may have migrated while this one waited for the lock.
+    if has_version(&tx)? {
+        return Ok(());
+    }
+    tx.execute_batch("ALTER TABLE usage_daily RENAME TO usage_daily_unversioned;")?;
+    tx.execute_batch(SCHEMA)?;
+    tx.execute_batch(
+        "INSERT INTO usage_daily
+           SELECT day, surface, feature, flags, origin, outcome, latency, cold, '', count
+             FROM usage_daily_unversioned;
+         DROP TABLE usage_daily_unversioned;",
+    )?;
+    tx.commit()
+}
+
+/// This build's version as a row records it: `+dev` when the binary runs from
+/// a cargo `target/` directory, so a dev build's counts never pass for a
+/// release's.
+fn this_version() -> String {
+    let dev = std::env::current_exe()
+        .ok()
+        .is_some_and(|exe| exe.components().any(|c| c.as_os_str() == "target"));
+    format!(
+        "{}{}",
+        env!("CARGO_PKG_VERSION"),
+        if dev { "+dev" } else { "" }
+    )
+}
 
 /// How an operation ended. `Uncertain` is an answer with competitors or a low
 /// confidence — answered, but not with the certainty the product promises.
@@ -163,24 +205,29 @@ pub(crate) fn path() -> Option<PathBuf> {
 /// the file could not be opened.
 pub(crate) struct Recorder {
     conn: Option<Mutex<Connection>>,
+    version: String,
 }
 
 impl Recorder {
     pub(crate) fn open() -> Recorder {
         Recorder {
             conn: path().and_then(|p| open(&p).ok()).map(Mutex::new),
+            version: this_version(),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn off() -> Recorder {
-        Recorder { conn: None }
+        Recorder {
+            conn: None,
+            version: String::new(),
+        }
     }
 
     pub(crate) fn record(&self, tally: &Tally) {
         let Some(conn) = &self.conn else { return };
         if let Ok(mut conn) = conn.lock() {
-            let _ = write(&mut conn, tally);
+            let _ = write(&mut conn, tally, &self.version);
         }
     }
 }
@@ -189,24 +236,25 @@ fn open(path: &std::path::Path) -> rusqlite::Result<Connection> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let conn = Connection::open(path)?;
+    let mut conn = Connection::open(path)?;
     // A short wait: two processes counting at once is normal, and losing one
     // count beats making a caller wait on another's write.
     conn.execute_batch(
         "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=200;",
     )?;
     conn.execute_batch(SCHEMA)?;
+    migrate(&mut conn)?;
     Ok(conn)
 }
 
-fn write(conn: &mut Connection, tally: &Tally) -> rusqlite::Result<()> {
+fn write(conn: &mut Connection, tally: &Tally, version: &str) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
     // Local date, as rq's `usage_daily`: an evening's work filed under
     // tomorrow makes a per-day report quietly wrong.
     tx.execute(
-        "INSERT INTO usage_daily (day, surface, feature, flags, origin, outcome, latency, cold, count)
-         VALUES (date('now', 'localtime'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)
-         ON CONFLICT(day, surface, feature, flags, origin, outcome, latency, cold)
+        "INSERT INTO usage_daily (day, surface, feature, flags, origin, outcome, latency, cold, version, count)
+         VALUES (date('now', 'localtime'), ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)
+         ON CONFLICT(day, surface, feature, flags, origin, outcome, latency, cold, version)
          DO UPDATE SET count = count + 1",
         params![
             tally.surface,
@@ -216,6 +264,7 @@ fn write(conn: &mut Connection, tally: &Tally) -> rusqlite::Result<()> {
             tally.outcome.label(),
             tally.latency.map(bucket).unwrap_or(""),
             tally.cold,
+            version,
         ],
     )?;
     tx.execute(
@@ -236,6 +285,8 @@ pub(crate) struct Row {
     pub(crate) outcome: String,
     pub(crate) latency: String,
     pub(crate) cold: bool,
+    /// The trekr that counted it; '' for a row from before versions were kept.
+    pub(crate) version: String,
     pub(crate) count: i64,
 }
 
@@ -248,10 +299,10 @@ pub(crate) fn read(path: &std::path::Path, days: Option<u32>) -> rusqlite::Resul
     let conn = open(path)?;
     let since = format!("-{} days", days.unwrap_or(RETENTION_DAYS).saturating_sub(1));
     let mut stmt = conn.prepare(
-        "SELECT day, surface, feature, flags, origin, outcome, latency, cold, count
+        "SELECT day, surface, feature, flags, origin, outcome, latency, cold, version, count
            FROM usage_daily
           WHERE day >= date('now', 'localtime', ?1)
-          ORDER BY day DESC, surface, count DESC, feature, flags, origin, outcome, latency, cold",
+          ORDER BY day DESC, surface, count DESC, feature, flags, origin, outcome, latency, cold, version",
     )?;
     stmt.query_map(params![since], |r| {
         Ok(Row {
@@ -263,7 +314,8 @@ pub(crate) fn read(path: &std::path::Path, days: Option<u32>) -> rusqlite::Resul
             outcome: r.get(5)?,
             latency: r.get(6)?,
             cold: r.get(7)?,
-            count: r.get(8)?,
+            version: r.get(8)?,
+            count: r.get(9)?,
         })
     })?
     .collect()
@@ -291,9 +343,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("u.db");
         let mut conn = open(&path).unwrap();
-        write(&mut conn, &tally("refs", Outcome::Hit)).unwrap();
-        write(&mut conn, &tally("refs", Outcome::Hit)).unwrap();
-        write(&mut conn, &tally("refs", Outcome::Empty)).unwrap();
+        write(&mut conn, &tally("refs", Outcome::Hit), "1.0.0").unwrap();
+        write(&mut conn, &tally("refs", Outcome::Hit), "1.0.0").unwrap();
+        write(&mut conn, &tally("refs", Outcome::Empty), "1.0.0").unwrap();
         let rows = read(&path, None).unwrap();
         assert_eq!(rows.len(), 2, "one row per distinct outcome");
         assert_eq!(rows[0].count, 2, "most counted first within a day");
@@ -308,15 +360,65 @@ mod tests {
         let path = dir.join("u.db");
         let mut conn = open(&path).unwrap();
         conn.execute(
-            "INSERT INTO usage_daily VALUES (date('now', 'localtime', '-200 days'), 'cli', 'def', '', 'human', 'hit', '', 0, 5)",
+            "INSERT INTO usage_daily VALUES (date('now', 'localtime', '-200 days'), 'cli', 'def', '', 'human', 'hit', '', 0, '', 5)",
             [],
         )
         .unwrap();
-        write(&mut conn, &tally("def", Outcome::Hit)).unwrap();
+        write(&mut conn, &tally("def", Outcome::Hit), "1.0.0").unwrap();
         let total: i64 = conn
             .query_row("SELECT SUM(count) FROM usage_daily", [], |r| r.get(0))
             .unwrap();
         assert_eq!(total, 1, "the 200-day-old row is gone");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn each_version_counts_apart() {
+        let dir = std::env::temp_dir().join(format!("trekr-usage-ver-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("u.db");
+        let mut conn = open(&path).unwrap();
+        write(&mut conn, &tally("refs", Outcome::Hit), "1.0.0").unwrap();
+        write(&mut conn, &tally("refs", Outcome::Hit), "1.1.0").unwrap();
+        let mut versions: Vec<String> = read(&path, None)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.version)
+            .collect();
+        versions.sort();
+        assert_eq!(versions, ["1.0.0", "1.1.0"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_table_from_before_versions_keeps_its_rows_unversioned() {
+        let dir = std::env::temp_dir().join(format!("trekr-usage-mig-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("u.db");
+        // The schema as 0.10.2 wrote it.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE usage_daily (
+                   day TEXT NOT NULL, surface TEXT NOT NULL, feature TEXT NOT NULL,
+                   flags TEXT NOT NULL, origin TEXT NOT NULL, outcome TEXT NOT NULL,
+                   latency TEXT NOT NULL, cold INTEGER NOT NULL, count INTEGER NOT NULL,
+                   PRIMARY KEY (day, surface, feature, flags, origin, outcome, latency, cold)
+                 ) WITHOUT ROWID;
+                 INSERT INTO usage_daily VALUES
+                   (date('now', 'localtime'), 'cli', 'refs', '', 'human', 'hit', '<100ms', 0, 3);",
+            )
+            .unwrap();
+        let rows = read(&path, None).unwrap();
+        assert_eq!(
+            (rows.len(), rows[0].version.as_str(), rows[0].count),
+            (1, "", 3)
+        );
+        let mut conn = open(&path).unwrap();
+        write(&mut conn, &tally("refs", Outcome::Hit), "1.0.0").unwrap();
+        let rows = read(&path, None).unwrap();
+        assert_eq!(rows.len(), 2, "a versioned count is a row of its own");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

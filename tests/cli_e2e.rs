@@ -2614,6 +2614,71 @@ fn usage_counts_each_command_by_caller_and_outcome() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A mode or knob that changes what was asked is a row of its own, and every
+/// row says which trekr counted it — or the counts cannot judge a feature
+/// across releases.
+#[test]
+fn usage_tells_modes_and_knobs_apart_and_records_the_version() {
+    let (dir, db) = scratch("usage-modes");
+    repo(&dir);
+    fs::write(
+        dir.join("Gemfile"),
+        "source \"https://rubygems.org\"\ngem \"spare\"\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Gemfile.lock"),
+        "GEM\n  remote: https://rubygems.org/\n  specs:\n    spare (1.0)\n\n\
+         PLATFORMS\n  ruby\n\nDEPENDENCIES\n  spare\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    trekr(&db, &dir, &["--index"]);
+    for args in [
+        &["--dead", "."][..],
+        &["--dead", "Gemfile"],
+        &["--status"],
+        &["--status", "--all"],
+        &["--status", "--retention", "30d"],
+        &["--gc", "--dry-run"],
+        &["--gc", "--dry-run", "--older-than", "1d"],
+        &["--index", "--jobs", "1"],
+    ] {
+        trekr(&db, &dir, args);
+    }
+
+    let rows = json(&trekr(&db, &dir, &["--usage", "--json"]));
+    let rows = rows.as_array().expect("rows");
+    let flags = |feature: &str| {
+        let mut flags: Vec<&str> = rows
+            .iter()
+            .filter(|r| r["feature"] == feature)
+            .map(|r| r["flags"].as_str().unwrap())
+            .collect();
+        flags.sort();
+        flags
+    };
+    assert_eq!(flags("dead"), ["", "gems"], "{rows:?}");
+    assert_eq!(flags("status"), ["", "all", "retention"], "{rows:?}");
+    assert_eq!(flags("gc"), ["dry-run", "dry-run,older-than"], "{rows:?}");
+    assert!(flags("index").contains(&"jobs"), "{rows:?}");
+    // A test binary runs from cargo's target/, so it counts as a dev build.
+    let version = format!("{}+dev", env!("CARGO_PKG_VERSION"));
+    assert!(
+        rows.iter().all(|r| r["version"] == version.as_str()),
+        "{rows:?}"
+    );
+
+    let summary = stdout(&trekr(&db, &dir, &["--usage"]));
+    assert!(summary.contains("dead gems 1"), "{summary}");
+    assert!(summary.contains("status all 1"), "{summary}");
+    assert!(
+        summary.contains(&format!("trekr versions: {version} ")),
+        "{summary}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A whole question whose index finished its rows before the query first
 /// looked still waits for that index to prepare the tree, and maps it,
 /// rather than assembling a second copy itself — which the usage row said
