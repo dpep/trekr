@@ -688,6 +688,22 @@ fn admits(root: &Path, relative: &str, gits: Option<&Gits>) -> Result<Option<Str
     Ok(schema_dumps(root, app).contains(&key).then_some(key))
 }
 
+/// The checkout's files matching `globs` (git pathspecs; none for every
+/// file), relative and sorted, by the rule [`scan`] lists its own by:
+/// tracked, and untracked but not ignored. For the readers beside the
+/// index, of files it does not read; empty when git cannot list them.
+pub(crate) fn listed(root: &Path, globs: &[&str]) -> Vec<String> {
+    let mut args = vec!["ls-files", "-c", "-o", "--exclude-standard", "-z", "--"];
+    args.extend(globs);
+    let Ok(out) = git(root, &args) else {
+        return Vec::new();
+    };
+    let mut paths = parse_paths(&out);
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
 /// How long git is given to say whether the index walk reads one file before
 /// it is taken as hung. Waited for off the serve loop, so it can be long.
 const ADMIT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -886,6 +902,33 @@ pub(crate) fn hash(root: &Path, paths: impl IntoIterator<Item = String>) -> File
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_files_listed_are_the_ones_the_index_reads() {
+        let dir = std::env::temp_dir().join(format!("trekr-listed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&dir)
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        for (name, text) in [
+            ("Gemfile", "gem 'x'\n"),
+            ("Dangerfile", "warn 'x'\n"),
+            ("skip.log", "x\n"),
+            (".gitignore", "*.log\n"),
+        ] {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        git(&["add", "Gemfile", ".gitignore"]);
+        assert_eq!(listed(&dir, &[]), [".gitignore", "Dangerfile", "Gemfile"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_source_is_a_regular_file_of_bounded_size() {
