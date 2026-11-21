@@ -1,0 +1,7 @@
+# Found comparing with sorbet-deadcode (MIT), whose "finite symbol-list
+# iteration" reads it, on discourse's Post: `%i[a b].each { |attr|
+# define_method(attr) { analyzer.public_send(attr) } }` sends each listed
+# name to another class's object. Not yet passing, so not asserted:
+# Analyzer#link_count and #has_oneboxes? are unreferenced, clear (case 121
+# reads the same list for the names `define_method` makes).
+dead app/models/analyzer.rb Analyzer#lonely=unreferenced~

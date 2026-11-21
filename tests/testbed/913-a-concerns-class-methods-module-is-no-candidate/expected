@@ -1,0 +1,7 @@
+# Found comparing with Spoom and sorbet-deadcode on discourse (59 rows of
+# 245 unreferenced there): a concern's `ClassMethods`, written as a module
+# or made by `class_methods do`, is extended onto each includer by
+# ActiveSupport::Concern, which names it by its name. Not yet passing, so
+# not asserted: both are unreferenced, clear, while their methods have a
+# caller each. A module nothing names is a candidate.
+dead app/models Widget::Helpers=unreferenced~ Sluggable::ClassMethods#find_by_slug=single-caller Taggable::ClassMethods#tagged=single-caller

@@ -186,3 +186,5 @@
 909-an-attr-reader-nothing-calls 80d0f468e74308e3
 910-a-cops-msg-is-read-by-the-cop 5e8fc441a97ca450
 911-const-get-with-a-literal-names-the-constant 18b636381636a63a
+912-a-name-sent-from-a-literal-list-reaches-another-class 81e37bccf2f325d9
+913-a-concerns-class-methods-module-is-no-candidate e3fcfc60d487dab1
