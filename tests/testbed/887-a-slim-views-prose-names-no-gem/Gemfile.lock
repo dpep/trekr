@@ -1,0 +1,23 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    attr_kit (1.0)
+    interp_kit (1.0)
+    link_kit (1.0)
+    note_kit (1.0)
+    out_kit (1.0)
+    prose_kit (1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  attr_kit
+  interp_kit
+  link_kit
+  note_kit
+  out_kit
+  prose_kit
+
+BUNDLED WITH
+   2.6.9

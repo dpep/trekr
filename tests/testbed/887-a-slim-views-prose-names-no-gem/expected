@@ -1,0 +1,6 @@
+# A Slim view was read by its words, prose and all: a gem named in its
+# text, a `/` comment or a quoted URL counted as used. Only its Ruby
+# counts now — a `-` or `=` line, a tag's `=` output, an unquoted
+# attribute, a `#{}` — so those three are rows again, while the gems its
+# code uses are not.
+dead Gemfile prose_kit=unreferenced~ link_kit=unreferenced~ note_kit=unreferenced~ out_kit=none attr_kit=none interp_kit=none

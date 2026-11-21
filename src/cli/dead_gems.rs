@@ -1580,9 +1580,8 @@ impl Scripts {
                 continue;
             };
             if slim {
-                scripts
-                    .words
-                    .push((path, words(&String::from_utf8_lossy(&raw))));
+                let ruby = slim_ruby(&String::from_utf8_lossy(&raw));
+                scripts.words.push((path, words(&ruby)));
                 continue;
             }
             // A file with no extension is Ruby when it parses as Ruby: a
@@ -1652,6 +1651,188 @@ impl Scripts {
             })
         })
     }
+}
+
+/// What a Slim view's line holds below it: Ruby (`ruby:`), text whose
+/// `#{}` is Ruby (`|`, `javascript:`), or a comment (`/`).
+#[derive(Clone, Copy, PartialEq)]
+enum SlimBlock {
+    Ruby,
+    Text,
+    Comment,
+}
+
+/// A Slim view's Ruby, line for line: what follows `-`, `=` or `==`, a
+/// tag's `=` output, an attribute's unquoted value, a `ruby:` block, and
+/// each `#{…}`. Text, a `/` comment and a quoted attribute are blank: prose
+/// naming `Diffy`, or a URL holding `Tomlrb`, is no use of a gem.
+fn slim_ruby(text: &str) -> String {
+    let mut out = Vec::new();
+    let mut block: Option<(usize, SlimBlock)> = None;
+    let mut continued = false;
+    for line in text.lines() {
+        let indent = line.len() - line.trim_start().len();
+        let body = line.trim();
+        if let Some((at, kind)) = block {
+            if body.is_empty() || indent > at {
+                out.push(match kind {
+                    SlimBlock::Ruby => body.to_string(),
+                    SlimBlock::Text => interpolations(body),
+                    SlimBlock::Comment => String::new(),
+                });
+                continue;
+            }
+            block = None;
+        }
+        let ruby = if continued {
+            body.to_string()
+        } else {
+            let (ruby, opens) = slim_line(body);
+            block = opens.map(|kind| (indent, kind));
+            ruby
+        };
+        // A line of code ending in `,` or `\` goes on below.
+        continued = ruby.ends_with(',') || ruby.ends_with('\\');
+        out.push(ruby);
+    }
+    out.join("\n")
+}
+
+/// One Slim line's Ruby, and the block it opens.
+fn slim_line(body: &str) -> (String, Option<SlimBlock>) {
+    match body.chars().next() {
+        None => (String::new(), None),
+        Some('/') => (String::new(), Some(SlimBlock::Comment)),
+        Some('|' | '\'') => (interpolations(&body[1..]), Some(SlimBlock::Text)),
+        Some('-' | '=') => (
+            body.trim_start_matches(['-', '=', '~', '\'', '<', '>'])
+                .to_string(),
+            None,
+        ),
+        Some('<') => (interpolations(body), None),
+        _ if body == "ruby:" => (String::new(), Some(SlimBlock::Ruby)),
+        // An embedded engine: `javascript:`, `markdown:`.
+        _ if body.strip_suffix(':').is_some_and(|engine| {
+            !engine.is_empty() && engine.chars().all(|c| c.is_ascii_alphanumeric())
+        }) =>
+        {
+            (String::new(), Some(SlimBlock::Text))
+        }
+        _ if body.starts_with("doctype") => (String::new(), None),
+        _ => (slim_tag(body), None),
+    }
+}
+
+/// A tag line's Ruby: `p = x` outputs `x`; `a href=url_for(x)` computes an
+/// attribute; `a href="…#{x}"` interpolates; text after the tag does not.
+fn slim_tag(line: &str) -> String {
+    let named = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '@');
+    let mut ruby = Vec::new();
+    let mut rest = line.trim_start_matches(|c: char| named(c) && c != ':');
+    // `.class` and `#id` shortcuts.
+    while let Some(after) = rest.strip_prefix(['.', '#']) {
+        rest =
+            after.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    }
+    let mut wrapped = false;
+    loop {
+        rest = rest.trim_start();
+        if let Some(inline) = rest.strip_prefix(": ") {
+            ruby.push(slim_tag(inline.trim_start()));
+            break;
+        }
+        if rest.starts_with('=') {
+            ruby.push(rest.trim_start_matches(['=', '\'', '<', '>']).to_string());
+            break;
+        }
+        if let Some(after) = rest.strip_prefix(['(', '[', '{']) {
+            wrapped = true;
+            rest = after;
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix([')', ']', '}']).filter(|_| wrapped) {
+            wrapped = false;
+            rest = after;
+            continue;
+        }
+        let name_len = rest.len() - rest.trim_start_matches(named).len();
+        if name_len == 0 {
+            ruby.push(interpolations(rest));
+            break;
+        }
+        let after_name = &rest[name_len..];
+        let Some(value) = after_name.strip_prefix('=') else {
+            if wrapped {
+                rest = after_name;
+                continue;
+            }
+            // Text after the tag.
+            ruby.push(interpolations(rest));
+            break;
+        };
+        let value = value.trim_start();
+        let end = value_end(value);
+        let (written, after) = value.split_at(end);
+        match written.chars().next() {
+            Some(q @ ('"' | '\'')) => ruby.push(interpolations(written.trim_matches(q))),
+            _ => ruby.push(written.to_string()),
+        }
+        rest = after;
+    }
+    ruby.retain(|r| !r.is_empty());
+    ruby.join(" ")
+}
+
+/// Where an attribute's value ends: past its closing quote, or at the first
+/// space outside brackets.
+fn value_end(value: &str) -> usize {
+    let mut chars = value.char_indices();
+    if let Some((_, q @ ('"' | '\''))) = chars.next() {
+        let mut escaped = false;
+        for (at, c) in chars {
+            match c {
+                '\\' if !escaped => escaped = true,
+                c if c == q && !escaped => return at + 1,
+                _ => escaped = false,
+            }
+        }
+        return value.len();
+    }
+    let mut depth = 0usize;
+    for (at, c) in value.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => return at,
+            ')' | ']' | '}' => depth -= 1,
+            c if c.is_whitespace() && depth == 0 => return at,
+            _ => {}
+        }
+    }
+    value.len()
+}
+
+/// Each `#{…}` in text, its Ruby joined by spaces.
+fn interpolations(text: &str) -> String {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("#{") {
+        let inner = &rest[start + 2..];
+        let mut depth = 1usize;
+        let end = inner
+            .char_indices()
+            .find(|(_, c)| {
+                match c {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ => {}
+                }
+                depth == 0
+            })
+            .map_or(inner.len(), |(at, _)| at);
+        found.push(&inner[..end]);
+        rest = &inner[end.min(inner.len())..];
+    }
+    found.join(" ")
 }
 
 /// A text's words, by line: each constant path (`Diffy::Diff`), method
@@ -2314,6 +2495,31 @@ mod tests {
         git(&["add", "Gemfile", ".gitignore"]);
         assert_eq!(listed(&dir), [".gitignore", "Dangerfile", "Gemfile"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_slim_views_ruby_is_its_code_not_its_text() {
+        let view = "/ we used to render with Diffy here\n\
+                    h1 Welcome\n\
+                    p Our deploys are Retriable and safe.\n\
+                    a href=\"https://example.com/Tomlrb-docs\" docs\n\
+                    p = Widget.render\n\
+                    - if Pager.on?\n\
+                    a href=url_for(Linker.path) title=\"#{Titler.name}\" go\n\
+                    li: a = Inline.name\n\
+                    | text #{Piped.word} more\n\
+                    ruby:\n  Embedded.run\n\
+                    p done\n";
+        let ruby = slim_ruby(view);
+        assert_eq!(ruby.split('\n').count(), view.lines().count());
+        for used in [
+            "Widget", "Pager", "Linker", "Titler", "Inline", "Piped", "Embedded",
+        ] {
+            assert!(ruby.contains(used), "{used}: {ruby}");
+        }
+        for prose in ["Diffy", "Retriable", "Tomlrb", "Welcome", "done"] {
+            assert!(!ruby.contains(prose), "{prose}: {ruby}");
+        }
     }
 
     #[test]

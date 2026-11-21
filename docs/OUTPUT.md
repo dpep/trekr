@@ -682,8 +682,10 @@ ones git does not ignore (DEC-803) — plus the Ruby it does not
 error (a script, `Dangerfile`, `Vagrantfile`, `fastlane/Fastfile`,
 `Steepfile`; DEC-804), Builder, Arbre, Jb, axlsx and Prawn views, Thor
 files, Capistrano `.cap` tasks, `.irbrc` and `.pryrc`, parsed; and Slim
-views, whose words are read — a constant path, a method
-name, a `require "…"`. A constant several gems declare is the one whose
+views, whose Ruby — a `-` or `=` line, a tag's `=` output, an unquoted
+attribute, a `ruby:` block, a `#{}` — is read by its words: a constant
+path, a method name, a `require "…"`; its text, `/` comments and quoted
+attributes are not (DEC-808). A constant several gems declare is the one whose
 `lib/` has its file, else the one named for it, else the one the others
 depend on; a module none of those picks is no gem's. A `require: false`
 gem's methods count only once a require of it is seen. Ruby's methods

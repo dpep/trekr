@@ -17679,3 +17679,18 @@ Testbed 886 (engine gemspec; a gemspec no root path gem is stays
 refused). The link and the messages are not testbed-shaped (the harness
 copies a link as a file and asserts no message): checked by hand on hunt
 2's symlink and mono checkouts.
+
+## DEC-808 — A Slim view's words are read from its Ruby only
+
+**Decided.** DEC-770 read a Slim view's words from every line, so prose
+credited gems: "we used to render with Diffy" in a `/` comment, "deploys
+are Retriable" in a `p`, `Tomlrb` in a quoted `href` URL, and a lowercase
+prose word equal to a gem's method (hunt 2's slim). Now only its Ruby is
+read, line for line: what follows `-`, `=` or `==`; a tag's `=` output
+(`p = Widget.render`, `li: a = x`); an attribute's unquoted value
+(`a href=url_for(x)`); a `ruby:` block; a line of code ending in `,` or
+`\` and the next; and each `#{…}` in text, a quoted attribute or a
+`|` block. A `/` comment and what is indented under it are blank. Slim
+is still not parsed — a line is split by its leading character and a
+tag's attributes — so this reads less than before, never more.
+Testbed 887; unit test `a_slim_views_ruby_is_its_code_not_its_text`.

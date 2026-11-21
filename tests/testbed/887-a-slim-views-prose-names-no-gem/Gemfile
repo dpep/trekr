@@ -1,0 +1,7 @@
+source "https://rubygems.org"
+gem "prose_kit"
+gem "link_kit"
+gem "note_kit"
+gem "out_kit"
+gem "attr_kit"
+gem "interp_kit"
