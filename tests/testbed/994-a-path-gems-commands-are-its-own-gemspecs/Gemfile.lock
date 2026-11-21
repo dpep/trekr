@@ -1,0 +1,17 @@
+PATH
+  remote: vendor/kits
+  specs:
+    a_kit (0.1.0)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  a_kit!
+
+BUNDLED WITH
+   2.6.9

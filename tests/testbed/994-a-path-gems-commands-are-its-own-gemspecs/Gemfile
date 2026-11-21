@@ -1,0 +1,2 @@
+source "https://rubygems.org"
+gem "a_kit", path: "vendor/kits"

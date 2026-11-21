@@ -1,0 +1,4 @@
+jobs:
+  x:
+    steps:
+      - run: bundle exec a-run

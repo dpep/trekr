@@ -367,8 +367,19 @@ pub(crate) fn gemspec_name(source: &[u8]) -> Option<String> {
     struct Finder(Option<String>);
     impl<'pr> Visit<'pr> for Finder {
         fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+            // `s.name = "x"`, or `Gem::Specification.new("x", "1.0")`.
+            let named = match node.name().as_slice() {
+                b"name=" => true,
+                b"new" => node.receiver().is_some_and(|r| {
+                    r.as_constant_path_node().is_some_and(|path| {
+                        path.name()
+                            .is_some_and(|n| n.as_slice() == b"Specification")
+                    })
+                }),
+                _ => false,
+            };
             if self.0.is_none()
-                && node.name().as_slice() == b"name="
+                && named
                 && let Some(value) = node.arguments().and_then(|a| a.arguments().iter().next())
             {
                 self.0 = string(&value);
@@ -509,6 +520,23 @@ gemspec path: "engines/widget"
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn a_gemspec_names_its_gem_by_name_or_by_new() {
+        let named = |s: &str| gemspec_name(s.as_bytes());
+        assert_eq!(
+            named("Gem::Specification.new do |s|\n  s.name = \"a\"\nend\n").as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            named("Gem::Specification.new(\"b\", \"1.0\") do |s|\nend\n").as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            named("Gem::Specification.new do |s|\n  s.name = File.basename(__FILE__)\nend\n"),
+            None
+        );
     }
 
     #[test]

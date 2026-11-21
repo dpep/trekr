@@ -1,0 +1,6 @@
+# A path gem's own gemspec was the first `*.gemspec` its directory listed,
+# in the filesystem's order: with b_kit.gemspec beside a_kit.gemspec,
+# a_kit's commands were read from b_kit's, which lists none, so the CI
+# line running `a-run` named nothing and a_kit was `clear`. It is the
+# gemspec whose `name` is the gem's.
+dead Gemfile a_kit=convention-only

@@ -17942,3 +17942,18 @@ without a lock):
 The no-lock resolver (`declared.rs`) still skips a block's gems whole,
 so a `source:` gem inside one is "not installed" there: `lower`, never
 `clear`. Unit test `a_gem_line_keeps_its_place_its_groups_and_how_it_loads`.
+
+## DEC-817 — A path gem's commands are read from its own gemspec
+
+**Decided.** `installed_spec` read a git or path gem's commands and
+extensions from the first `*.gemspec` its directory listed, in the
+filesystem's order: with `vendor/kits/a_kit.gemspec` beside
+`b_kit.gemspec`, a_kit's were b_kit's, so a CI line running a_kit's
+`a-run` named nothing and a_kit was `clear` on one filesystem and
+`convention-only` on another (hunt 3's kits1, kits2). The gemspec is now
+picked as DEC-800 picks a source's, from a sorted list: the one whose
+`name` is the gem's, else the file named for it when the name is
+computed, else the only one; none, and `exe/` or `bin/` says what it
+installs. `gemspec_name` also reads `Gem::Specification.new("x", …)`.
+Testbed 994 (red on macOS's order, where b_kit's lists first); unit test
+`a_gemspec_names_its_gem_by_name_or_by_new`.

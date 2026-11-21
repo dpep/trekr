@@ -765,7 +765,10 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
             continue;
         }
         let gem_dir = installed.get(name).cloned();
-        let spec = gem_dir.as_deref().map(installed_spec).unwrap_or_default();
+        let spec = gem_dir
+            .as_deref()
+            .map(|dir| installed_spec(dir, name))
+            .unwrap_or_default();
         let mut row = GemRow {
             kind: "gem",
             name: name.clone(),
@@ -2242,26 +2245,20 @@ fn tokens(declaration: &Declaration, executables: &[String]) -> Vec<(String, &'s
 
 /// What an installed gem's specification says: its commands and whether it
 /// compiles. Read from rubygems' `specifications/` beside the gem, or the
-/// gem's own gemspec (a git gem); a list it computes is looked for on disk.
-fn installed_spec(dir: &str) -> InstalledSpec {
+/// gem's own gemspec (a git or path gem), picked as Bundler picks it; a list
+/// it computes is looked for on disk.
+fn installed_spec(dir: &str, gem: &str) -> InstalledSpec {
     let dir = Path::new(dir);
-    let name = dir
+    let base = dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let written = dir
         .parent()
         .and_then(Path::parent)
-        .map(|base| base.join("specifications").join(format!("{name}.gemspec")))
+        .map(|root| root.join("specifications").join(format!("{base}.gemspec")))
         .and_then(|p| crate::scan::read_source(p).ok())
-        .or_else(|| {
-            std::fs::read_dir(dir)
-                .ok()?
-                .flatten()
-                .map(|e| e.path())
-                .find(|p| p.extension().is_some_and(|e| e == "gemspec"))
-                .and_then(|p| crate::scan::read_source(p).ok())
-        });
+        .or_else(|| own_gemspec(dir, gem));
     let spec = written.map(|raw| gemfile::spec(&raw)).unwrap_or_default();
     let executables = spec.executables.unwrap_or_else(|| {
         let mut found: Vec<String> = ["exe", "bin"]
@@ -2284,6 +2281,36 @@ fn installed_spec(dir: &str) -> InstalledSpec {
         executables,
         compiled: spec.extensions || dir.join("ext").is_dir(),
     }
+}
+
+/// The gemspec in `dir` that is `gem`'s, of those sorted by name: the one
+/// whose `name` is the gem's, else the file named for it when its name is
+/// computed, else the only one. Two gems' gemspecs may share a directory
+/// (`vendor/kits/a_kit.gemspec`, `b_kit.gemspec`).
+fn own_gemspec(dir: &Path, gem: &str) -> Option<Vec<u8>> {
+    let mut specs: Vec<(PathBuf, Vec<u8>)> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "gemspec"))
+        .filter_map(|p| Some((p.clone(), crate::scan::read_source(&p).ok()?)))
+        .collect();
+    specs.sort_by(|a, b| a.0.cmp(&b.0));
+    let named = format!("{gem}.gemspec");
+    let names: Vec<Option<String>> = specs
+        .iter()
+        .map(|(_, raw)| gemfile::gemspec_name(raw))
+        .collect();
+    let at = names
+        .iter()
+        .position(|n| n.as_deref() == Some(gem))
+        .or_else(|| {
+            specs.iter().zip(&names).position(|((path, _), n)| {
+                n.is_none() && path.file_name().is_some_and(|f| *f == *named)
+            })
+        })
+        .or_else(|| (specs.len() == 1).then_some(0))?;
+    Some(specs.swap_remove(at).1)
 }
 
 #[derive(Default)]
