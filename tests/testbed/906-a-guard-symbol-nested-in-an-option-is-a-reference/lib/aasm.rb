@@ -1,0 +1,2 @@
+module AASM
+end

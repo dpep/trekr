@@ -1,0 +1,2 @@
+require:
+  - ./rubocop/no_widgets.rb

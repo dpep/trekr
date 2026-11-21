@@ -1,0 +1,6 @@
+# Ported from Spoom's RuboCop plugin (MIT): a cop's `MSG` and
+# `RESTRICT_ON_SEND` are read by RuboCop's `Base`, not by the cop. A cop the
+# app's `.rubocop.yml` requires has them convention-only. Not yet passing,
+# so not asserted: in a gem of cops, no `.rubocop.yml` of its own, both are
+# unreferenced, clear.
+dead rubocop RuboCop::Cop::Style::NoWidgets::MSG=convention-only RuboCop::Cop::Style::NoWidgets::RESTRICT_ON_SEND=convention-only

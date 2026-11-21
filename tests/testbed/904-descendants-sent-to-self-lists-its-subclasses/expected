@@ -1,0 +1,5 @@
+# Ported from sorbet-deadcode (MIT) issue #69: `descendants` sent to self,
+# or `T.unsafe(self).subclasses`, lists the class's subclasses as
+# `Base.subclasses` does (case 428). Not yet passing, so not asserted: Leaf
+# and OtherLeaf are unreferenced, clear. A class no listing reaches is one.
+dead app/models Orphan=unreferenced~

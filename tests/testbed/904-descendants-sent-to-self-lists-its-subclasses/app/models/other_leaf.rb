@@ -1,0 +1,2 @@
+class OtherLeaf < OtherBase
+end

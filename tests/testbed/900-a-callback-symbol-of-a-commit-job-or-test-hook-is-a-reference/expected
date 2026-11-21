@@ -1,0 +1,10 @@
+# Ported from sorbet-deadcode's false-positive issues and docs/dsl-parity.md
+# and Spoom's deadcode plugins (both MIT): sorbet-deadcode issues #86 (the
+# `after_*_commit` callbacks), #101 (Active Job's enqueue and perform
+# callbacks) and #106 (Minitest's `setup :x`, `teardown :x` and
+# `assert_predicate obj, :x?`), each a false positive there before its fix.
+# A symbol handed to any of those names a method, as `before_save :x` does.
+dead app/models/widget.rb Widget#announce=convention-only Widget#cleanup=convention-only Widget#sync=convention-only Widget#found=convention-only Widget#lonely=unreferenced~
+dead app/jobs/widget_job.rb WidgetJob#prepare=convention-only WidgetJob#log_enqueue=convention-only WidgetJob#wrap=convention-only WidgetJob#lonely=unreferenced~
+dead test WidgetTest#build_widget=convention-only WidgetTest#drop_widget=convention-only
+dead app/models/gadget.rb Gadget#shiny?=test-only Gadget#dull?=unreferenced~

@@ -1,0 +1,8 @@
+# Ported from Spoom's GraphQL plugin and sorbet-deadcode (both MIT; issues
+# #53, #92, #27): graphql-ruby calls the method a `field` is named for, or
+# its `resolver_method:`, by name. Also staged, and not yet passing, so not
+# asserted: `method: :paint` and `prepare: :clean_name` read as "not read as
+# a call", `loads:` calling `load_widget`, and a `.graphql` schema's
+# `fullName` naming `full_name` are each unreferenced.
+dead app/graphql/types/widget_type.rb Types::WidgetType#display_name=convention-only Types::WidgetType#resolve_size=convention-only Types::WidgetType#lonely=unreferenced~
+dead app/graphql/mutations/update_widget.rb Mutations::UpdateWidget#lonely=unreferenced~

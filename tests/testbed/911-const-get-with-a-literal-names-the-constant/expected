@@ -1,0 +1,5 @@
+# Ported from Spoom's Ruby plugin (MIT): `const_get`, `const_defined?` and
+# `const_source_location` with a literal name reference that constant. A
+# string path is read; not yet passing, so not asserted: `Object.const_get
+# (:HandlerA)` leaves HandlerA unreferenced, lower, "read on a value".
+dead app/models Handlers::HandlerB=convention-only HandlerC=unreferenced~

@@ -1,0 +1,5 @@
+# Ported from Spoom's ActionMailerPreview plugin and sorbet-deadcode (both
+# MIT): Rails runs each public method of an ActionMailer::Preview at
+# /rails/mailers. The class is convention-only; not yet passing, so not
+# asserted: its `welcome` is unreferenced, clear.
+dead spec WidgetMailerPreview=convention-only

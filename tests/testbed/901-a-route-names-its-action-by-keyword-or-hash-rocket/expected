@@ -1,0 +1,4 @@
+# Ported from sorbet-deadcode (MIT) issue #67: a route scanner that read only
+# `to: "widgets#index"` missed `controller: "widgets", action: "alt"` and the
+# hash-rocket `"/z" => "widgets#zed"`, and called both actions dead.
+dead app/controllers/widgets_controller.rb WidgetsController#index=convention-only WidgetsController#alt=convention-only WidgetsController#zed=convention-only WidgetsController#unrouted=unreferenced~

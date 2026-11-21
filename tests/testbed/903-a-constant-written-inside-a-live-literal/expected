@@ -1,0 +1,5 @@
+# Ported from sorbet-deadcode (MIT) issues #2 and #88: `KINDS = [ALPHA = 1]`
+# defines ALPHA inside a literal KINDS holds, so ALPHA is used wherever KINDS
+# is. Not yet passing, so not asserted: ALPHA, BETA and SMALL are
+# unreferenced, clear. A constant written on its own line is a candidate.
+dead app/models/widget.rb Widget::LONE=unreferenced~ Widget#kinds=single-caller

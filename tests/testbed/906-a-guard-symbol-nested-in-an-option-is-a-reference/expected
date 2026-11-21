@@ -1,0 +1,8 @@
+# Ported from sorbet-deadcode (MIT) issues #89, #94 and #149 and Spoom's
+# ActiveModel plugin: a guard nested in a validator's options (`exclusion:
+# { unless: :skip_name? }`, `numericality: { greater_than: :min_size }`),
+# and AASM's `event … after:` and `transitions … guard:, after:` written in
+# an `aasm do` block, name methods Rails or AASM call. Not yet passing, so
+# not asserted: each is unreferenced, lower, "is not read as a call".
+dead app/models/widget.rb Widget#lonely=unreferenced~
+dead app/models/order.rb Order#lonely=unreferenced~

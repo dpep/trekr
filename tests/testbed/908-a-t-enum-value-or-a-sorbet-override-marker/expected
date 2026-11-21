@@ -1,0 +1,8 @@
+# Ported from Spoom's Sorbet plugin and sorbet-deadcode (both MIT; issues
+# #70, #156): a T::Enum value is reached by `values` and `deserialize`
+# without its name, and `sig { override }` says an ancestor's caller runs
+# the method. Not yet passing, so not asserted: Status::Active, Color::Blue,
+# Box#run and Box#hook are unreferenced, clear (and Box::Elem, a
+# `type_member` Spoom never reports). A method with no marker is a
+# candidate.
+dead app/models/box.rb Box#lonely=unreferenced~

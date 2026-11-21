@@ -1,0 +1,5 @@
+# Ported from Spoom (MIT), which reports `attr_reader` and `attr_writer`,
+# and sorbet-deadcode issue #137 (an `attr_accessor` with one side used).
+# Not yet passing, so not asserted: `--dead` reports no method a macro
+# declares, so `unused_reader`, `unused_writer=` and `half` are absent.
+dead app/models/widget.rb Widget#lonely=unreferenced~
