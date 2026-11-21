@@ -2851,6 +2851,54 @@ it is the column that lost money's `set.add` and moved `hash[…]` off
 `Hash#[]`.
 
 
+## Cascaded `--dead` rows, against discourse's history (2026-11-20)
+
+DEC-680's check, session 36's method: an old discourse worktree indexed on
+its own, `--dead app lib plugins`, each method row scored by whether a file
+in the later checkout that declares its owner's last segment still has
+`def [self.]name` (attribute macros excluded on both sides, so the base
+rate shares the rule), against 400 random methods `--symbols` lists in the
+same scope (seed 36). Two windows: 2024-08-25 (910bfaf5f55) scored at
+2025-08-26 (ef503f2f8f9), and 2025-08-26 scored at the corpus checkout
+(2026-08-25). mastodon's clone has no history, so it only counts chains.
+
+| | 2024 → 2025 | 2025 → 2026 | pooled |
+| --- | ---: | ---: | ---: |
+| candidates (files in scope) | 5,849 (2,446) | 8,985 (4,678) | |
+| **base rate**, random methods | 13 / 400, 3.2 % | 32 / 400, 8.0 % | 45 / 800, 5.6 % |
+| `unreferenced` `clear` (the roots) | 7 / 128, 5.5 % | 15 / 201, 7.5 % | 22 / 329, 6.7 % |
+| `single-caller`, caller no candidate | 51 / 1,839, 2.8 % | 513 / 3,044, 16.9 % | |
+| `single-caller`, caller a candidate | 31 / 667, 4.6 % | 99 / 969, 10.2 % | |
+| **cascaded** (`cascaded_from`) | 1 / 20 | 6 / 21 | 7 / 41, 17 % |
+
+The 2025 window's `plugins/` moved more than its core, so its tiers swing
+(`single-caller` with a live caller at 16.9 %): read the windows apart.
+Cascaded rows were deleted about three times the base rate pooled, and more
+often than their roots, on 41 rows from 36 roots (17 and 19) — six of
+the seven deletions in one window, two of them one vendored gem's removal. Too few to grade on;
+enough to say they are not noise.
+
+**Read by hand**, all 41: 32 not refuted. Three roots were wrong — a mailer
+action reached by `type: :chat_summary` (`test-only`, `clear`; 3 rows and
+2), a writer `IncomingLink.create(referer: …)` runs (2), a `def msg_att` in
+`class << imap.instance_variable_get("@parser")` overriding Net::IMAP's (1
+and 1). Arguable rather than wrong: a vendored gem's documented API
+(`Holidays.next_holidays`), a hook plugins outside the repo call
+(`FlagQuery.register_plugin_post_custom_field`), a console-only debugging
+helper (`MethodProfiler.output_sql_to_stderr!`).
+
+**Why one step.** Chains where every row and the root are `clear`, by
+depth, over the three runs: depth 1, 21 + 20 + 1 (mastodon); deeper,
+none. The loose rule (any grade) adds 127 rows at one step, and rows whose
+chain tops out at a `lower` `unreferenced` root were deleted 8 of 106
+(7.5 %). Mutual recursion with no outside caller: none; the 25 discourse
+rows whose one call sits in their own body are, all but one, a `possible`
+call on a same-named method.
+
+The build's own output matched the offline count on all three runs (21,
+20, 1 rows carrying `cascaded_from`), every other field unchanged but one
+reason, whose named caller is now the innermost candidate around the call.
+
 ## What `--dead` could not see (2026-09-30)
 
 DEC-340 to DEC-344, against main at 2c04019, each build on stores it indexed
