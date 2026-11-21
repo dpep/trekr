@@ -1,0 +1,23 @@
+PATH
+  remote: tools/idle_tool
+  specs:
+    idle_tool (0.1.0)
+
+PATH
+  remote: tools/lintr
+  specs:
+    lintr (0.1.0)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  idle_tool!
+  lintr!
+
+BUNDLED WITH
+   2.6.9

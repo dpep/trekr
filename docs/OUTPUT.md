@@ -721,7 +721,8 @@ method it defines on a class it does not own, a module it mixes into one,
 or an `on_load` hook (a class it declares beside a constant of the same
 name, `class PReadFile` by `PReadFile = ::File`, is its own); a command
 its specification installs that nothing read runs (one that lists none
-installs none, whatever `bin/` holds); a
+installs none, whatever `bin/` holds; a list written any way but one
+literal array, `s.executables << "x"`, is read from `exe/` or `bin/`); a
 compiled extension; rake tasks or generators it ships; a name that makes
 it a plugin of a bundled gem (`rubocop-rails`); the development group; a
 gem it brings that the app uses, which others bring too.

@@ -362,8 +362,9 @@ pub(crate) fn gemspec_name(source: &[u8]) -> Option<String> {
 
 /// An installed gem's specification, as rubygems writes it: the commands
 /// it installs (`executables`) and whether it compiles (`extensions`). A
-/// list that is not literal is `None`, for the caller to look on disk; one
-/// not written is empty, as rubygems defaults it (mini_mime ships a
+/// list written any way but one literal array (`s.executables << "x"`, a
+/// computed list) is `None`, for the caller to look on disk; one not
+/// written is empty, as rubygems defaults it (mini_mime ships a
 /// `bin/db_pull_request` it does not install).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Spec {
@@ -372,19 +373,37 @@ pub(crate) struct Spec {
 }
 
 pub(crate) fn spec(source: &[u8]) -> Spec {
-    struct Finder(Spec);
+    /// The spec as read, and whether `executables` was written any way
+    /// but one literal array.
+    struct Finder(Spec, bool);
     impl<'pr> Visit<'pr> for Finder {
+        fn visit_call_operator_write_node(
+            &mut self,
+            node: &ruby_prism::CallOperatorWriteNode<'pr>,
+        ) {
+            self.1 |= node.read_name().as_slice() == b"executables";
+            ruby_prism::visit_call_operator_write_node(self, node);
+        }
+
+        fn visit_call_or_write_node(&mut self, node: &ruby_prism::CallOrWriteNode<'pr>) {
+            self.1 |= node.read_name().as_slice() == b"executables";
+            ruby_prism::visit_call_or_write_node(self, node);
+        }
+
         fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
             let value = node
                 .arguments()
                 .and_then(|args| args.arguments().iter().next());
             match (node.name().as_slice(), value) {
+                // Read to be added to: `s.executables << "x"`, `.push`.
+                (b"executables", _) => self.1 = true,
                 (b"executables=", Some(value)) => {
                     let literal = value.as_array_node().is_some()
                         && value
                             .as_array_node()
                             .is_some_and(|a| a.elements().iter().all(|e| string(&e).is_some()));
-                    self.0.executables = literal.then(|| names(&value));
+                    self.1 |= !literal;
+                    self.0.executables = Some(names(&value));
                 }
                 (b"extensions=", Some(value)) => {
                     self.0.extensions = value
@@ -397,12 +416,19 @@ pub(crate) fn spec(source: &[u8]) -> Spec {
         }
     }
     let parsed = ruby_prism::parse(source);
-    let mut finder = Finder(Spec {
-        executables: Some(Vec::new()),
-        extensions: false,
-    });
+    let mut finder = Finder(
+        Spec {
+            executables: Some(Vec::new()),
+            extensions: false,
+        },
+        false,
+    );
     finder.visit(&parsed.node());
-    finder.0
+    let Finder(mut spec, unknown) = finder;
+    if unknown {
+        spec.executables = None;
+    }
+    spec
 }
 
 #[cfg(test)]
@@ -500,5 +526,14 @@ end
         assert!(!computed.extensions);
         let unwritten = spec(b"Gem::Specification.new { |s| s.name = \"mini_mime\" }");
         assert_eq!(unwritten.executables, Some(Vec::new()));
+        for added in [
+            "s.executables << \"lint\"",
+            "s.executables.push(\"lint\")",
+            "s.executables += [\"lint\"]",
+            "s.executables = [\"a\"]; s.executables << \"lint\"",
+        ] {
+            let source = format!("Gem::Specification.new {{ |s| {added} }}");
+            assert_eq!(spec(source.as_bytes()).executables, None, "{added}");
+        }
     }
 }

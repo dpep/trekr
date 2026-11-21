@@ -1,0 +1,6 @@
+# A specification's `executables` was read only as one literal array, so
+# `s.executables << "check-style"` read as installing no command: lintr,
+# which CI runs by that command, was `unreferenced`, `clear`. A list
+# written any other way is unknown, and the gem's `exe/` is read: lintr is
+# named by CI, and idle_tool's command, which nothing runs, lowers it.
+dead Gemfile lintr=convention-only idle_tool=unreferenced~command

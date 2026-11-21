@@ -17633,3 +17633,12 @@ rails, 2 in mastodon's pruned corpus; parsing them is milliseconds, below
 the run-to-run noise of `--dead Gemfile` there (5–20 s warm on a loaded
 machine, both builds). Rows on rails, discourse and mastodon did not move.
 Testbed 883.
+
+## DEC-805 — `executables` written any way but one literal array is unknown
+
+**Decided.** A specification's `executables` is read as a list only from
+one literal `s.executables = [...]`; written any other way — `<<`,
+`.push`, `+=`, `||=`, a computed value, or read at all — it is unknown,
+and the gem's `exe/` or `bin/` says what it installs. `s.executables <<
+"check-style"` read as no command, so a path gem CI runs by that command
+was `unreferenced`, `clear` (hunt 2's exes). Testbed 884.
