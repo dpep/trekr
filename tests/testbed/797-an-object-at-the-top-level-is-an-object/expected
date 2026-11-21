@@ -1,0 +1,3 @@
+# `class << io` and `def io.x` at the top of a script define on the object
+# `io` holds, as they do in a class body.
+symbols lib/top.rb top_write,helper_top,other

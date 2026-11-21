@@ -1,0 +1,3 @@
+# A top-level `def` is Object's private method: a bare call on `main`
+# reaches it.
+def lib/t.rb:3:1 status=resolved owner=Object via=main

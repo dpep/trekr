@@ -867,6 +867,10 @@ ruby tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/helpers/wi
 ruby tests/testbed/788-a-visibility-def-after-module-function-keeps-its-copy/app.rb 2cbe0d1cac82e96b
 ruby tests/testbed/788-a-visibility-def-after-module-function-keeps-its-copy/lib/util.rb f72546b679efbc96
 ruby tests/testbed/790-a-crlf-haml-blank-line-is-blank/app/helpers/widgets_helper.rb 98fd8461a0084030
+ruby tests/testbed/795-self-in-an-objects-method-is-that-object/app/a.rb cc473014db640d59
+ruby tests/testbed/796-refs-on-an-objects-method-counts-calls-it-may-take/app/w.rb 9fdce9aa58058ff1
+ruby tests/testbed/797-an-object-at-the-top-level-is-an-object/lib/top.rb a7662b43177659dd
+ruby tests/testbed/798-refs-at-a-top-level-def/lib/t.rb 17ef586b26a64b3b
 ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/lib/gate.rb 0d07bcce57e15fdf
 ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/rspec-core/lib/rspec/core/example_group.rb d88eafe305e0fd5d
 ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281

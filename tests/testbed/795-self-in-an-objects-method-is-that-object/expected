@@ -1,0 +1,3 @@
+# `self` in a method defined on an object (`def obj.x`, `class << obj`) is
+# that object, not the class whose method the `def` is written in.
+dead app/a.rb Printer#run=single-caller KD1=unreferenced

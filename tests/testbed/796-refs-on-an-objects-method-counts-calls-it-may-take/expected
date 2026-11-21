@@ -1,0 +1,3 @@
+# A method defined on an object is reached by a call on what may be that
+# object, though its class has no method of the name.
+dead app/w.rb Shop#build=single-caller
