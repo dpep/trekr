@@ -942,6 +942,11 @@ that owns them, its literal requires, and calls of methods a gem's own
 modules define, then against the config, CI files, symbols and other
 gems' requires that load a gem by name. Read at query time from the
 stored facts and the gems' own files, so it changes no extraction.
+`gems::bundle` holds the bundle's facts (what a manifest declares, its
+path gems, an installed gem's spec); the command's `owners` says which gem
+owns a constant, method or feature, `scripts` reads the Ruby the index
+does not, `texts` the files outside Ruby, and `grade` credits each gem one
+evidence channel at a time.
 
 **An example group's members** (`let`, `subject`, a group's `def`) are file
 facts the store never sees (DEC-084), so they are weighed by
