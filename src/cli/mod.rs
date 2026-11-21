@@ -5262,7 +5262,8 @@ fn cmd_def(
             });
             // A top-level def is Object's (DEC-311).
             if def.kind == crate::core::Kind::Method {
-                answer["owner"] = def.nesting.first().map_or("Object", String::as_str).into();
+                answer["owner"] =
+                    crate::tree::ruby_owner(def.nesting.first().map_or("", String::as_str)).into();
                 // Its `.rbi` signatures, as Go to Declaration opens them
                 // (DEC-646): from the index as it stands, so the answer on
                 // a `def` stays the file's own, with no git probe or wait.

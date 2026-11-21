@@ -711,10 +711,7 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
             if never_loaded.contains(gem.as_str()) {
                 continue;
             }
-            let owner = match tree.owner(row) {
-                owner if owner.is_empty() => "Object".to_string(),
-                owner => owner,
-            };
+            let owner = crate::tree::ruby_owner(&tree.owner(row)).to_string();
             let mixin = tree.kind_of(&owner) == Some("module");
             if !mixin && owned.owns(gem, &owner) {
                 continue;
@@ -2668,12 +2665,7 @@ fn patch(w: &Weigh<'_>, dir: &str) -> anyhow::Result<Option<String>> {
         if found.is_some() || !its(&row.path) {
             return;
         }
-        let owner = w.tree.owner(&row);
-        let owner = if owner.is_empty() {
-            "Object".to_string()
-        } else {
-            owner
-        };
+        let owner = crate::tree::ruby_owner(&w.tree.owner(&row)).to_string();
         if !w.owned.owns(name, &owner)
             && !w.owned.of_name(&owner).contains(name)
             && !w.owned.owns(name, &placed(&row.nesting))

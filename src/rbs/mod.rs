@@ -247,10 +247,7 @@ fn ruby(store: &Store, root: &Path, signatures: &stubs::Signatures) -> anyhow::R
     // inside `class Time`, `def HTTP.new` inside `module Net`.
     let tree = crate::tree::Tree::alone(store, &roots.list[0])?;
     for row in store.methods(&roots)? {
-        let owner = match tree.owner(&row) {
-            owner if owner.is_empty() => "Object".to_string(),
-            owner => owner,
-        };
+        let owner = crate::tree::ruby_owner(&tree.owner(&row)).to_string();
         let params = row
             .params
             .iter()
