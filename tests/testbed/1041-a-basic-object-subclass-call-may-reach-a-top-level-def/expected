@@ -1,0 +1,11 @@
+# A call in a BasicObject subclass stays a possible caller of a top-level
+# def (DEC-892, reverted). Excluding it graded live defs unreferenced: a
+# call on the class object (`Bare.go` runs on a Class, which reaches
+# Object) and a `method_missing` forwarder both run the top-level def.
+# Known gap, pinned as it stands: an instance call in `Bare` raises
+# NameError, and `Wrapper`'s runs Tryish's, yet both stay possible.
+dead lib/top.rb #only_bare=single-caller #attempt=single-caller #from_class=single-caller #forwarded=single-caller
+refs lib/top.rb:1:5 status=resolved possible=1 excluded=0
+refs lib/top.rb:5:5 status=resolved possible=1 excluded=0
+refs lib/top.rb:9:5 status=resolved possible=1 excluded=0
+refs lib/top.rb:15:5 status=resolved possible=1 excluded=0

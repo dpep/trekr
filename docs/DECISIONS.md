@@ -19290,7 +19290,22 @@ as DEC-869's `class Object`).
 
 ## DEC-892 — A class whose chain ends at BasicObject never reaches a top-level def
 
-**Decided.** DEC-311's `possible` arms — a call whose lookup finds nothing,
+**Reverted** before release. It excluded (`different_owner`) a call whose
+typed receiver's chain reaches BasicObject without Object, so `--dead`
+stopped crediting the top-level def with it. Hunt 6 found calls Ruby
+does run that it excluded, grading the live def `unreferenced`, `clear`:
+`def self.go; helper_top` in `Bare < BasicObject` (the receiver is the
+class object, a Class, which reaches Object), a `SimpleDelegator`
+subclass's implicit call, and a `Proxy < BasicObject` whose
+`method_missing` forwards with `@t.__send__` (repros `hunt6-bo`,
+`hunt6-dl`). The error it fixed kept dead code; the one it made deleted
+live code, so the safe-direction error stands. A correct version would
+let `receiver.singleton` reach Object, and keep the call when the chain
+holds a forwarder (`forwarder_in_chain`) or a `method_missing` not
+BasicObject's. Testbed 1041 pins the restored `possible` answers,
+the known gap among them.
+
+**Decided** (reverted). DEC-311's `possible` arms — a call whose lookup finds nothing,
 and DEC-868's, one that finds a method behind Object's place — now first
 ask whether the receiver reaches Object: a typed receiver whose ancestors
 reach BasicObject without Object does not, so the call is excluded
@@ -19307,8 +19322,6 @@ Tryish's `attempt`, not the top-level one Object comes to first.
 **Not `tree.inherits(receiver, "Object")` alone.** A module's chain holds
 no Object, and its methods run on includers that do; asking for Object
 alone would exclude every implicit call in a module.
-
-Testbed 1041.
 
 ## DEC-893 — `--dead`'s directory walk takes `.rake` files
 
