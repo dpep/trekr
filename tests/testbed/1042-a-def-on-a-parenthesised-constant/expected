@@ -1,0 +1,2 @@
+# `def (CONST).x` is `def CONST.x` (DEC-870) written in parentheses.
+def lib/a.rb:17:19 name=ix
