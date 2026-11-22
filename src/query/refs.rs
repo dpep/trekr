@@ -150,6 +150,12 @@ pub(crate) fn target<'a>(
     owner: Option<&'a str>,
     facts: impl Fn(&str) -> Option<std::sync::Arc<Facts>>,
 ) -> Target<'a> {
+    // `Object` as written asks about the top-level defs, which the tree keys
+    // under `""` (DEC-837): every front tiers them by that key.
+    let owner = match owner {
+        Some("Object") if refs::top_level_key(tree, query) => Some(""),
+        owner => owner,
+    };
     Target {
         query,
         owner,

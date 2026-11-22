@@ -220,7 +220,13 @@
 - **`--refs Object#helper` finds a top-level `def helper`**: `--def` names
   its owner `Object`, and asking `--refs` about that owner answered
   `no_such_method`, exit 1. It lists the def's callers, and so does
-  `--refs` at the def itself, which exited 64; the card answers too.
+  `--refs` at the def itself, which exited 64; the card answers too. A
+  top-level def comes before Kernel's (`def format` is not
+  `Kernel#format`), and one with a `class Object` def of the same name is
+  one method: both are listed as its definition.
+- **`--dead` counts a call Kernel answers as a possible call of a
+  top-level def of the name**, which comes before Kernel's once its file
+  is loaded; it excluded the call, and could call the def `unreferenced`.
 - **`--dead` asks about `def CONF.alpha` as `CONF`'s**: it took the scope
   the def is written in for its owner, so a top-level one was
   `unreferenced`, `clear`, while `CONF.alpha` called it, and one in a
@@ -229,6 +235,8 @@
 - **A concern included through a plain module no longer puts its
   `ClassMethods` on the class**: `module Outer; include Inner; end` gave a
   class including `Outer` Inner's class methods, which Ruby does not.
+- **A call in a module's own `def self.x` is the module's**: its residue
+  said no class mixes the module in, as if the call ran on one.
 - **Answers that rest on `helper_method` and other class-body macros no
   longer vary between fresh indexes** of the same checkout.
 

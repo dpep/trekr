@@ -504,6 +504,24 @@ fn tier(tree: &Tree, facts: &Facts, call: &Call, path: &str, asked: &Target) -> 
                     None,
                 )
             }
+            // A `class Object` body's def is the same method (DEC-869).
+            Some(found) if !found.singleton && found.owner == "Object" => here(
+                Tier::Confirmed,
+                receiver_type,
+                Some(found.owner),
+                "Object defines it too: one method with the top-level def",
+                0,
+                None,
+            ),
+            // Kernel's is behind Object's place, where the top-level def is.
+            Some(found) if super::behind_object(tree, &found.owner) => here(
+                Tier::Possible,
+                receiver_type,
+                None,
+                "a method defined at the top level is Object's, ahead of the one the lookup finds",
+                1,
+                None,
+            ),
             Some(found) => here(
                 Tier::Excluded,
                 receiver_type,
@@ -1810,6 +1828,14 @@ pub(crate) fn method_of(tree: &Tree, owner: &str, query: &Query) -> Option<Metho
     tree.lookup_owned(owner, query.singleton, &query.name)
 }
 
+/// Does an instance method query on `Object` name only top-level defs, which
+/// the tree keys under `""`? Not when a `class Object` body defines the name
+/// too: then Object's own key reaches both (DEC-869).
+pub(crate) fn top_level_key(tree: &Tree, query: &Query) -> bool {
+    let defs = super::object_defs(tree, &query.name);
+    !query.singleton && !defs.is_empty() && defs.iter().all(|d| d.owner.is_empty())
+}
+
 /// Where the queried method is defined, if the owner resolves.
 pub(crate) fn definition_of(tree: &Tree, query: &Query) -> (Option<String>, Vec<Site>) {
     let Some(written) = &query.owner else {
@@ -1820,13 +1846,17 @@ pub(crate) fn definition_of(tree: &Tree, query: &Query) -> (Option<String>, Vec<
     };
     // A top-level def is Object's private method, which the tree keys under
     // the top level's `""` rather than placing on Object (DEC-311, DEC-837).
-    if owner == "Object" && !query.singleton && tree.lookup(&owner, false, &query.name).is_none() {
-        let top: Vec<Site> = super::top_level_defs(tree, &query.name)
-            .into_iter()
-            .map(|method| method.site)
-            .collect();
-        if !top.is_empty() {
-            return (Some(String::new()), top);
+    // It comes before Kernel's (DEC-868), and is one method with a `class
+    // Object` body's, whose owner then tiers the calls (DEC-869).
+    if owner == "Object" && !query.singleton {
+        let defs = super::object_defs(tree, &query.name);
+        if !defs.is_empty() {
+            let key = if top_level_key(tree, query) {
+                String::new()
+            } else {
+                owner
+            };
+            return (Some(key), defs.into_iter().map(|d| d.site).collect());
         }
     }
     // A name two programs declare differently has a definition in each

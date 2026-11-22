@@ -1,0 +1,13 @@
+# A top-level `def format` is Object's, ahead of Kernel#format. `--refs`
+# at the def answered "resolves to Kernel#format, inherited", with core's
+# definition and both calls confirmed as Kernel's, and the def itself not
+# listed. The call on `main` runs the top-level def; the one in a class
+# reaches it only if its file is loaded, so it is `possible` (DEC-311).
+# `--def` there still answers Kernel's (DEC-868, not done).
+refs Object#format status=resolved confirmed=1 possible=1 excluded=0 resolves_to=Object#format sites=app/models/user.rb:3:5,lib/top.rb:5:1
+def lib/top.rb:5:1 status=resolved owner=Object via=main site=lib/top.rb:1
+dead lib/top.rb #format=none
+# A call in a module's own `def self.go` runs on the module, not on what
+# includes it: the residue said "no class the index knows of mixes it in".
+def lib/top.rb:13:5 status=residue reason=ancestors
+refs Object#helper_top status=resolved possible=1 sites=lib/top.rb:13:5

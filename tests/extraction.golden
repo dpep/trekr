@@ -998,6 +998,10 @@ ruby tests/testbed/855-a-predicate-matcher-may-run-an-objects-method/rspec-core/
 ruby tests/testbed/855-a-predicate-matcher-may-run-an-objects-method/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281
 ruby tests/testbed/855-a-predicate-matcher-may-run-an-objects-method/rspec-expectations/lib/rspec/expectations/syntax.rb 239a5775c154560d
 ruby tests/testbed/855-a-predicate-matcher-may-run-an-objects-method/spec/widget_spec.rb dd7e9c8119bfdfc6
+ruby tests/testbed/868-a-top-level-def-comes-before-kernels/app/models/user.rb 7fafa7dec4da4ac7
+ruby tests/testbed/868-a-top-level-def-comes-before-kernels/lib/top.rb 4dbdd9f07b038707
+ruby tests/testbed/869-a-top-level-def-and-class-object-are-one-method/app/models/user.rb 7adab9118805a00e
+ruby tests/testbed/869-a-top-level-def-and-class-object-are-one-method/lib/top.rb d519b3dd58fd0b62
 ruby tests/testbed/870-a-gem-is-used-through-its-constants-requires-and-mixins/Gemfile eb9ece9254db72df
 ruby tests/testbed/870-a-gem-is-used-through-its-constants-requires-and-mixins/app/models/report.rb ad8cfdd419271fe3
 ruby tests/testbed/870-a-gem-is-used-through-its-constants-requires-and-mixins/spec/report_spec.rb 95f5e19a1851d68b

@@ -1,0 +1,9 @@
+# A top-level `def dual` and `class Object; def dual` define one method,
+# Object's. `--refs` at the top-level def gave the `class Object` one as
+# the definition and not the def asked about. Asked at either, or by
+# `Object#dual`, both definitions are listed and every call is Object's.
+refs lib/top.rb:1:5 status=resolved confirmed=2 possible=0 excluded=0 resolves_to=Object#dual sites=app/models/user.rb:3:5,lib/top.rb:11:1
+refs lib/top.rb:6:7 status=resolved confirmed=2 possible=0 excluded=0 resolves_to=Object#dual sites=app/models/user.rb:3:5,lib/top.rb:11:1
+refs Object#dual status=resolved confirmed=2 resolves_to=Object#dual
+dead lib/top.rb #dual=none
+def app/models/user.rb:3:5 status=resolved owner=Object site=lib/top.rb:1

@@ -313,6 +313,14 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                     // A name `helper_method` exposes runs the method Rails
                     // generates at that line, which sends it on (DEC-521).
                     let mut sites = sites;
+                    // Object's method: every top-level def of it, and a
+                    // `class Object` body's (DEC-869).
+                    if found.owner == "Object" && !found.singleton {
+                        let defs = object_defs(tree, &call.name);
+                        if defs.len() > 1 {
+                            sites = defs.iter().map(MethodSite::of).collect();
+                        }
+                    }
                     if matches!(receiver.via, "view" | "rabl")
                         && let Some(at) = tree.exposed_at(&found.owner, &call.name)
                     {
@@ -376,7 +384,10 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 // A call written inside a module has no receiver of its own:
                 // whatever includes the module is the receiver. When the index
                 // knows which class that is, the call is determinate after all.
-                None if tree.kind_of(&receiver.fqn) == Some("module") => {
+                // Not in the module's own `def self.x`, which runs on the module.
+                None if tree.kind_of(&receiver.fqn) == Some("module")
+                    && !in_own_singleton_def(facts, call) =>
+                {
                     match via_includers(tree, call, &receiver) {
                         Some(answer) => answer,
                         None if let Some(found) = on_any_object(tree, &call.name, &receiver) => {
@@ -3468,6 +3479,45 @@ pub(crate) fn top_level_defs(tree: &Tree, name: &str) -> Vec<crate::tree::Method
         .filter(|method| method.via.as_deref() != Some(crate::core::TOP_LEVEL_BLOCK))
         .cloned()
         .collect()
+}
+
+/// Is the call in a `def self.x` (or `class << self`) of its own scope,
+/// where `self` is the scope? A concern's `included do` block is recorded on
+/// the class side too, and runs on each includer (DEC-127).
+fn in_own_singleton_def(facts: &Facts, call: &Call) -> bool {
+    call.singleton
+        && facts.defs.iter().any(|def| {
+            def.kind == crate::core::Kind::Method
+                && def.singleton
+                && def.nesting == call.nesting
+                && (def.pos.line..=def.end_line).contains(&call.pos.line)
+        })
+}
+
+/// Is `owner` behind Object's place in a lookup — Kernel, BasicObject, a
+/// module Object mixes in? A top-level def is Object's, so it comes first
+/// (DEC-868).
+pub(crate) fn behind_object(tree: &Tree, owner: &str) -> bool {
+    tree.inherits("Object", owner)
+}
+
+/// Every definition of Object's instance method `name`: its top-level defs
+/// and a `class Object` body's, which Ruby makes one method (DEC-869).
+/// Empty when no top-level def has the name.
+pub(crate) fn object_defs(tree: &Tree, name: &str) -> Vec<crate::tree::MethodDef> {
+    let mut defs = top_level_defs(tree, name);
+    if defs.is_empty() {
+        return defs;
+    }
+    if let Some(own) = tree.lookup("Object", false, name)
+        && own.owner == "Object"
+    {
+        defs.push(own);
+    }
+    let at = |d: &crate::tree::MethodDef| (d.site.path.clone(), d.site.line, d.site.col);
+    defs.sort_by_key(at);
+    defs.dedup_by(|a, b| at(a) == at(b));
+    defs
 }
 
 /// At most this many definitions of a name is "few" (DEC-442).

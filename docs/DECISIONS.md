@@ -17,7 +17,7 @@ belongs to:
 | Indexing and freshness | 014, 035, 041, 043, 046, 047, 048, 049, 055, 066, 139, 171, 195, 232, 320, 400, 500, 501, 512 |
 | Extraction: macros, made methods, schema | 022, 033, 069, 070, 085, 086, 094, 110, 111, 130, 131, 132, 160, 161, 162, 163, 164, 212, 310, 312, 480, 561, 643, 645, 710, 711, 712, 740, 741 |
 | Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841, 871 |
-| Resolve: the receiver ladder, confidence, residue | 008, 010, 011, 019, 020, 027, 028, 031, 068, 071, 077, 081, 082, 089, 093, 112, 116, 126, 127, 133, 136, 137, 140, 165, 166, 172, 211, 213, 214, 260, 261, 280, 311, 314, 340, 341, 342, 350, 351, 380, 390, 391, 392, 401, 440, 441, 442, 444, 445, 541, 795, 796, 797, 798, 825, 826, 827, 828, 837 |
+| Resolve: the receiver ladder, confidence, residue | 008, 010, 011, 019, 020, 027, 028, 031, 068, 071, 077, 081, 082, 089, 093, 112, 116, 126, 127, 133, 136, 137, 140, 165, 166, 172, 211, 213, 214, 260, 261, 280, 311, 314, 340, 341, 342, 350, 351, 380, 390, 391, 392, 401, 440, 441, 442, 444, 445, 541, 795, 796, 797, 798, 825, 826, 827, 828, 837, 868, 869, 872 |
 | Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610, 847 |
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
@@ -9564,6 +9564,9 @@ when it is not — and `main`, where top-level calls run, is not typed at
 all. `--dead` only needs to know a call may reach the method, which
 `possible` says.
 
+*Revisited by DEC-868:* a method the lookup finds behind Object's place
+(Kernel's) does not exclude a call either: it is `possible` too.
+
 **Measured.** `--dead spec/support lib/tasks` on mastodon: 27 candidates →
 26, `mock_omniauth` no longer listed.
 
@@ -18492,6 +18495,10 @@ argument holds, and the one mapping is `ruby_owner`.
 
 Test: testbed 798.
 
+*Amended by DEC-868 and DEC-869:* a method Object's chain has behind
+Object (Kernel's `format`) no longer hides the top-level def, and a
+`class Object` def of the name is the same method, listed beside it.
+
 ## DEC-838 — The suite waits a minute for git's view of the working tree
 
 **Decided.** `scan::PROBE_WAIT` (1 s, DEC-035) reads
@@ -18685,6 +18692,74 @@ Test: `parked_references_are_searched_again_only_when_the_index_is_whole`
 (ten parked, a hover answered ahead of them, at most two searches each:
 when asked, and when whole).
 
+## DEC-868 — A top-level def comes before Kernel's
+
+**Decided.** A top-level `def` is Object's, and Object comes before
+Kernel and BasicObject in every chain that reaches it, so a method the
+lookup finds behind Object's place does not shadow the top-level def; the
+top-level def would shadow it, once its file is loaded:
+
+- `--refs Object#format` asks about the top-level def when one exists,
+  though Kernel has `format` (DEC-837 took the top-level defs only when
+  Object's chain had nothing by the name);
+- DEC-311's tiering reads such a call as it reads one whose lookup finds
+  nothing: `possible`, "a method defined at the top level is Object's,
+  ahead of the one the lookup finds". A call on `main` stays `confirmed`
+  (DEC-798).
+
+**Why.** `--refs lib/top.rb:5:5` on a top-level `def format(x)` answered
+"resolves to Kernel#format, inherited", gave core's `Kernel.rb` as the
+definition, and listed both calls as Kernel's, confirmed: not the method
+at the position. `--dead` missed the call in a class for the same reason.
+
+**Not placed on Object.** The uncertainty is DEC-311's: whether the
+top-level def is loaded where the call runs is not the index's to say.
+Placing it on Object would make `--def` answer the top-level def at
+confidence 1 everywhere, `helper` in any class included, which DEC-311
+declined. One rule — what is behind Object's place cannot rule a
+top-level def out — and `main`'s own lookup still finds the top-level def
+first (DEC-445).
+
+**Not done: `--def` at such a call** still answers Kernel's at confidence
+1. The same rule there makes it residue, the top-level def first, and was
+built and measured: on discourse,
+`define_singleton_method(:inspect) { to_s }` (`plugins/discourse-ai/app/
+models/ai_agent.rb:400`) went from `Kernel#to_s`, right, to residue led by
+a `def to_s` in capybara's `has_text_spec.rb`. That def is no top-level
+def: it is in `Class.new do` inside an `it` block, which the extractor
+records with an empty nesting and no `via`, as it records every `def` in
+an RSpec block's `Class.new` (discourse's spec helpers `initialize`,
+`is_a?`, `method_missing` too). `--def` waits on the extractor telling
+those apart, a store bump; `--refs` and `--dead` only widen what may
+reach a top-level def, and a wrongly kept candidate is the safe error.
+`--refs Object#to_s` in such a checkout does list those defs: the same
+extractor gap.
+
+Testbed 868. No other case moved.
+
+## DEC-869 — A top-level def and a `class Object` def are one method
+
+**Decided.** `def dual` at the top level and `def dual` in `class Object`
+both define Object's instance method `dual`, and the later one replaces
+the earlier: one method, two definition sites. Asked about either —
+`--refs` at either position, or `Object#dual` — the answer lists both as
+its definition, and tiers the calls by Object's own key, so every call
+whose lookup reaches Object is `confirmed`. `--def` at a call that lands
+on either lists both sites. `--dead` asking about the top-level def takes
+a call that lands on the `class Object` def as its own: confirmed, "Object
+defines it too".
+
+**Why.** `--refs` at the top-level def answered with the `class Object`
+def as the definition, and not the def asked about; `--def` gave
+whichever its rung met, the top-level def from `main` and the `class
+Object` one from a class.
+
+**Not disclosed as ambiguous.** Which site runs is the later one to load,
+but both are the same method: a call cannot reach one and not the other,
+so no tier or candidate list has anything to rank.
+
+Testbed 869.
+
 ## DEC-870 — A `def` on a constant is the constant's, at every front
 
 **Decided.** `def CONF.alpha` is a method of the object `CONF` names, and
@@ -18697,10 +18772,18 @@ def answered "no method at": the position had no scope to name.
 
 The query a position on a `def` asks is one function,
 `query::refs::def_query`: the constant's for a `def CONST.x`, `Object`'s
-for a top-level def, the scope's otherwise.
+for a top-level def, the scope's otherwise. And `query::refs::target`,
+which every front tiers through, reads `Object` as the top-level key
+`""` when the query names only top-level defs, so a front that hands it
+`Object` tiers as `--refs` does.
 
 **Why.** `--dead` graded `CONF.alpha` `unreferenced`, `clear`, while
 `--refs CONF.alpha` found its call: a silent wrong answer, in 0.10.2 too.
+
+**Editor.** Find References and incoming calls at a top-level def still
+build their query from the scope alone (`serve::handlers::asked_method`),
+an owner of none, and list by name: incoming calls there confirm a class's
+call that `--refs` calls `possible`. The serve lane takes `def_query` there.
 
 Testbed 1012.
 
@@ -18719,6 +18802,22 @@ and through each concern among them what that concern mixes in
 class including `Outer` resolved `has_inner` to `Inner::ClassMethods`.
 
 Testbed 1013.
+
+## DEC-872 — A call in a module's own `def self.x` runs on the module
+
+**Decided.** DEC-127 sends a call in a module that its own chain does not
+answer to the classes that mix the module in, on the side it runs on. A
+concern's `included do` block is recorded on the class side and does run
+on each includer; a module's own `def self.go` (or `class << self`) runs
+on the module. A call inside such a def, which the file's facts place,
+no longer goes to the includers: it is the module's, and a miss is
+DEC-311's residue ("nothing indexed in its ancestors defines this name").
+
+**Why.** `helper_top` in `module Runner; def self.go`: `--refs` at the call
+said "no class the index knows of mixes it in", which says nothing true
+about a call that never runs on an includer.
+
+Testbed 868.
 
 ## DEC-873 — A body's calls come back in path order
 
