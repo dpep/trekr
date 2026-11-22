@@ -18576,3 +18576,24 @@ Tests: `an_error_exits_on_its_own_code_and_speaks_json_when_asked`
 unknown), `a_replaced_version_is_kept_for_the_retention_then_collected`
 (`TREKR_RETENTION` on `--status`), `gc_reports_the_bytes_it_returned_to_the_disk`,
 `the_environment_wins_then_the_default`.
+
+## DEC-864 — A header section past 8 KiB is refused
+
+**Decided.** The wire refuses a message whose header section, blank line
+included, runs past 8 KiB, as it refuses the other framing errors of
+DEC-810 and DEC-836: the reason on stderr, then the connection closes.
+Whitespace before a message is dropped from the buffer as it is read, not
+skipped at every scan.
+
+**Why.** The frame was looked for from the buffer's start at every read,
+so a header line with no newline was rescanned for each 64 KiB that
+arrived: 8 MiB took 2.8 s and 32 MiB 23 s, quadratic, on the serve loop's
+thread. With the cap, a read rescans at most 8 KiB, which is linear in what
+arrives, so the scan is not resumed where it stopped: that would be state
+to carry across reads for a cost the cap already bounds. 8 KiB because a
+client sends `Content-Length` and perhaps `Content-Type`, under a hundred
+bytes, and it is the limit HTTP servers commonly put on a header line
+(nginx's buffer, Apache's `LimitRequestFieldSize`).
+
+Tests: `a_header_section_past_its_cap_is_refused_not_scanned_toward`,
+`whitespace_between_messages_is_dropped_not_held`.

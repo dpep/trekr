@@ -210,9 +210,9 @@
   hover on that method an internal error. The comment is dedented by
   characters.
 - **`--lsp` no longer dies on a bad `Content-Length`**: one past
-  addressable memory panicked the server. It, and any longer than 256 MiB,
-  is refused as other bad framing is: the reason on stderr, and the
-  connection closes.
+  addressable memory panicked the server. It, any longer than 256 MiB,
+  and a header section longer than 8 KiB are refused as other bad framing
+  is: the reason on stderr, and the connection closes.
 - **`--refs Object#helper` finds a top-level `def helper`**: `--def` names
   its owner `Object`, and asking `--refs` about that owner answered
   `no_such_method`, exit 1. It lists the def's callers, and so does

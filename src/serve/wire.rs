@@ -67,6 +67,14 @@ impl Reader {
 
     /// The next whole message in the buffer, if one has fully arrived.
     pub(crate) fn message(&mut self) -> Option<Message> {
+        // Whitespace between messages carries nothing; dropped here, a run of
+        // it is not scanned again at every read.
+        let blank = self
+            .buffer
+            .iter()
+            .take_while(|b| b.is_ascii_whitespace())
+            .count();
+        self.buffer.drain(..blank);
         let parsed = match frame(&self.buffer) {
             Ok(Some((length, body))) => {
                 let parsed = serde_json::from_slice::<Message>(&self.buffer[body])
@@ -104,6 +112,13 @@ impl Reader {
 /// room for JSON's escaping. A longer one is refused, not buffered toward.
 const MAX_MESSAGE: usize = 4 * crate::scan::MAX_SOURCE as usize;
 
+/// The longest header section read, blank line included. A client sends
+/// `Content-Length` and perhaps `Content-Type`, under a hundred bytes; 8 KiB
+/// is the limit HTTP servers commonly put on one header line (nginx's
+/// buffer, Apache's `LimitRequestFieldSize`). Past it, framing is refused
+/// rather than waited for, and each read rescans at most this much.
+const MAX_HEADERS: usize = 8 * 1024;
+
 /// The frame at the start of `buffer`: its length, whitespace before it
 /// included, and where its body lies. `None` until it has all arrived, `Err`
 /// saying what is wrong when its headers are not LSP's.
@@ -119,10 +134,16 @@ fn frame(buffer: &[u8]) -> Result<Option<(usize, std::ops::Range<usize>)>, Strin
         .iter()
         .position(|b| !b.is_ascii_whitespace())
         .unwrap_or(buffer.len());
+    let headers_end = buffer.len().min(at.saturating_add(MAX_HEADERS));
     let mut length = None;
     loop {
-        let Some(newline) = buffer[at..].iter().position(|&b| b == b'\n') else {
-            return Ok(None);
+        let Some(newline) = buffer[at..headers_end].iter().position(|&b| b == b'\n') else {
+            if headers_end == buffer.len() {
+                return Ok(None);
+            }
+            return Err(format!(
+                "a header section longer than the {MAX_HEADERS} bytes headers may be"
+            ));
         };
         let line = &buffer[at..at + newline];
         at += newline + 1;
@@ -395,6 +416,45 @@ mod tests {
             Ok(None),
             "waits for the rest"
         );
+    }
+
+    #[test]
+    fn a_header_section_past_its_cap_is_refused_not_scanned_toward() {
+        // No newline yet: refused once the cap is passed, not waited on.
+        let mut line = b"X-Pad: ".to_vec();
+        line.resize(MAX_HEADERS + 1, b'a');
+        let refused = super::frame(&line).expect_err("refused");
+        assert!(refused.contains("header section longer than"), "{refused}");
+        assert_eq!(
+            super::frame(&line[..MAX_HEADERS]),
+            Ok(None),
+            "at the cap, waits"
+        );
+        assert_eq!(methods_in(&line), (vec![], true));
+
+        // Lines that each end, but add up past it, are refused too.
+        let many = "X-Pad: a\r\n".repeat(MAX_HEADERS / 10 + 1);
+        let bytes = format!("{many}Content-Length: 2\r\n\r\n{{}}");
+        assert!(super::frame(bytes.as_bytes()).is_err());
+
+        // Long, but under it: read.
+        let pad = "a".repeat(MAX_HEADERS - 200);
+        let n = INITIALIZED.len();
+        let bytes = format!("X-Pad: {pad}\r\nContent-Length: {n}\r\n\r\n{INITIALIZED}");
+        assert_eq!(
+            methods_in(bytes.as_bytes()),
+            (vec!["initialized".into()], false)
+        );
+    }
+
+    #[test]
+    fn whitespace_between_messages_is_dropped_not_held() {
+        let blank = " \r\n".repeat(MAX_HEADERS);
+        let mut reader = reader_over(blank.as_bytes(), Vec::new());
+        reader.fill(Some(Duration::ZERO));
+        assert!(reader.message().is_none());
+        assert!(reader.unread().is_empty(), "nothing to rescan or hand on");
+        assert!(!reader.is_closed());
     }
 
     #[test]
