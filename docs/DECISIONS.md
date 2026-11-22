@@ -18639,6 +18639,13 @@ not marked either.
 
 Test: `a_locals_definition_and_references_need_no_index`.
 
+**`it` is a local.** Ruby 3.4's `it`, a block's implicit parameter, is a
+local read as `_1` is (`visit_it_local_variable_read_node`). It was no
+variable at all, so this marking never reached it: with `index: false`
+Find References said to run `trekr --index`, with an index the editor
+answered null, `--refs` said "no method at" and `--def` snapped to the
+next name (hunt 5's k1; 0.10.2 too). Testbed 1043.
+
 ## DEC-866 — A parked request whose document changed is refused `ContentModified`
 
 **Decided.** A request held for the index (DEC-811) records which text of

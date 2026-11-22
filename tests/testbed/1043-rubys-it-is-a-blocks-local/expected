@@ -1,0 +1,7 @@
+# Ruby 3.4's `it` is a block's implicit parameter, read as `_1` is. It
+# was no local: `--refs` said "no method at", `--def` snapped to `+`, and
+# the editor waited on the index for it (DEC-865 marks only a local).
+def lib/foo.rb:3:17 variable=local name=_1
+def lib/foo.rb:4:17 variable=local name=it
+refs lib/foo.rb:4:17 confirmed=1 status=resolved
+refs lib/foo.rb:5:27 confirmed=2

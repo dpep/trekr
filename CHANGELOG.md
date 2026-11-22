@@ -294,6 +294,10 @@
   raises NameError, and `Wrapper < BasicObject; include Tryish` runs
   Tryish's method, yet each call was a `possible` caller of the top-level
   def. Such a call is excluded.
+- **Ruby 3.4's `it` is a block's local**, as `_1` is: `--refs` at it said
+  "no method at", `--def` snapped to the next name, and the editor's Find
+  References answered nothing, or with indexing off said to run
+  `trekr --index`.
 
 ## 0.10.2 — 2026-11-20
 

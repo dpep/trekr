@@ -653,6 +653,15 @@ impl<'pr> Visit<'pr> for Walker<'_> {
         self.local(node.name().as_slice(), node.depth(), at, true, None);
     }
 
+    /// Ruby 3.4's `it`, a block's implicit parameter, read as `_1` is.
+    fn visit_it_local_variable_read_node(
+        &mut self,
+        node: &ruby_prism::ItLocalVariableReadNode<'pr>,
+    ) {
+        let at = node.location().start_offset();
+        self.local(b"it", 0, at, true, None);
+    }
+
     fn visit_local_variable_write_node(&mut self, node: &ruby_prism::LocalVariableWriteNode<'pr>) {
         let from = self.occurrences.len();
         let blocks_from = self.blocks.len();
