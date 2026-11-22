@@ -245,6 +245,7 @@ ruby tests/testbed/1010-an-untracked-file-is-read-as-a-tracked-one/app/controlle
 ruby tests/testbed/1010-an-untracked-file-is-read-as-a-tracked-one/app/models/widget.rb 7c6869f9a01933c9
 ruby tests/testbed/1010-an-untracked-file-is-read-as-a-tracked-one/untracked/config/routes.rb ff347232cc92ebae
 ruby tests/testbed/1011-a-slim-views-ruby-keeps-a-method-as-slim-5-reads-it/app/models/widget.rb 1ef1a29f0db04792
+ruby tests/testbed/1012-a-def-on-a-constant-is-the-constants/lib/a.rb afaaaa0af6ac2a2b
 ruby tests/testbed/1013-a-plain-module-keeps-a-concerns-class-methods/app/models/concerns/dependent.rb 17ce6c9dd7520f54
 ruby tests/testbed/1013-a-plain-module-keeps-a-concerns-class-methods/app/models/concerns/inner.rb cce7a6b342773917
 ruby tests/testbed/1013-a-plain-module-keeps-a-concerns-class-methods/app/models/concerns/outer.rb 00733667aff906a1

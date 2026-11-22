@@ -784,10 +784,14 @@ fn dead_in(
         } = candidate;
         // The class it is, not the name as written: `Helpers` inside `module
         // Alpha` is `Alpha::Helpers`, and that is what a resolved call names.
-        let owner = tree
-            .scope_fqn(&def.nesting)
-            .or_else(|| def.nesting.first().cloned())
-            .unwrap_or_default();
+        // `def CONF.x` is the constant's, wherever it is written.
+        let owner = if crate::query::refs::on_constant(def) {
+            tree.def_owner(def)
+        } else {
+            tree.scope_fqn(&def.nesting)
+                .or_else(|| def.nesting.first().cloned())
+                .unwrap_or_default()
+        };
         let query = refs::Query {
             owner: Some(owner.clone()),
             singleton: def.singleton,

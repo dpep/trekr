@@ -221,6 +221,11 @@
   its owner `Object`, and asking `--refs` about that owner answered
   `no_such_method`, exit 1. It lists the def's callers, and so does
   `--refs` at the def itself, which exited 64; the card answers too.
+- **`--dead` asks about `def CONF.alpha` as `CONF`'s**: it took the scope
+  the def is written in for its owner, so a top-level one was
+  `unreferenced`, `clear`, while `CONF.alpha` called it, and one in a
+  module was named `Settings.gamma`. `--refs` at such a def answers, where
+  it exited 64.
 - **A concern included through a plain module no longer puts its
   `ClassMethods` on the class**: `module Outer; include Inner; end` gave a
   class including `Outer` Inner's class methods, which Ruby does not.

@@ -21,7 +21,7 @@ belongs to:
 | Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610, 847 |
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
-| `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563, 812, 855, 856 |
+| `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563, 812, 855, 856, 870 |
 | `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 670, 680, 690, 720, 721, 730, 750, 751, 760, 762, 770, 771, 772, 791, 792, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 815, 816, 817, 818, 819, 820, 821, 822, 842, 843, 845, 846, 857, 858 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646, 810, 811, 836 |
 | Scope and housekeeping | 030, 063, 640, 835, 838, 860, 863 |
@@ -18684,6 +18684,25 @@ caught it).
 Test: `parked_references_are_searched_again_only_when_the_index_is_whole`
 (ten parked, a hover answered ahead of them, at most two searches each:
 when asked, and when whole).
+
+## DEC-870 — A `def` on a constant is the constant's, at every front
+
+**Decided.** `def CONF.alpha` is a method of the object `CONF` names, and
+the tree keys it under `CONF` (`Tree::def_owner`). `--dead` asked about it
+with the scope the def is written in as its owner: the top level's `""`,
+which DEC-311 reads as a top-level def, or the enclosing module
+(`Settings.gamma` for `def STORE.gamma` in `module Settings`). It now asks
+the constant (`CONF.alpha`, `Settings::STORE.gamma`). `--refs` at such a
+def answered "no method at": the position had no scope to name.
+
+The query a position on a `def` asks is one function,
+`query::refs::def_query`: the constant's for a `def CONST.x`, `Object`'s
+for a top-level def, the scope's otherwise.
+
+**Why.** `--dead` graded `CONF.alpha` `unreferenced`, `clear`, while
+`--refs CONF.alpha` found its call: a silent wrong answer, in 0.10.2 too.
+
+Testbed 1012.
 
 ## DEC-871 — A concern's `ClassMethods` reach through concerns only
 

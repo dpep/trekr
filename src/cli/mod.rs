@@ -1858,12 +1858,10 @@ fn cmd_refs_at(
         Some(crate::query::position::Under::Definition(def))
             if def.kind == crate::core::Kind::Method =>
         {
-            // A top-level def is Object's (DEC-837); one on an object
-            // (`def io.x`) is no class's.
-            let top_level = def.nesting.is_empty() && !def.singleton;
-            tree.scope_fqn(&def.nesting)
-                .or_else(|| top_level.then(|| "Object".to_string()))
-                .map(|owner| (owner, def.singleton, def.name.clone()))
+            let query = crate::query::refs::def_query(&tree, &def);
+            query
+                .owner
+                .map(|owner| (owner, query.singleton, query.name))
         }
         Some(crate::query::position::Under::Call(call)) => {
             let answer = crate::resolve::method_at(&tree, &facts, &call, &relative);

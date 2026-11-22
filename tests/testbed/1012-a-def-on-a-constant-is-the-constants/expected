@@ -1,0 +1,8 @@
+# `def CONF.x` is a method of the object the constant names. `--dead`
+# asked about it with the scope the def is written in as its owner — the
+# top level's `""`, which DEC-311 read as a top-level def, so `CONF.alpha`
+# was `unreferenced`, `clear`, though `CONF.alpha` calls it; in a module,
+# `Settings.gamma`. And `--refs` at the def refused, "no method at".
+dead lib/a.rb CONF#alpha=single-caller Settings::STORE#gamma=single-caller
+refs lib/a.rb:6:10 status=resolved possible=1 sites=lib/a.rb:20:10
+refs lib/a.rb:13:13 status=resolved possible=1 sites=lib/a.rb:21:21

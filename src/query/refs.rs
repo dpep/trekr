@@ -115,6 +115,31 @@ pub(crate) fn placed_name(tree: &Tree, written: &str, nesting: &[String], path: 
         .unwrap_or_else(|| crate::tree::whole_name(bare))
 }
 
+/// The method a `def` read from a file defines, as a query names it: every
+/// front asks about a definition through this. `def CONF.x` is the
+/// constant's; a top-level def is Object's (DEC-837); the owner is `None`
+/// where the scope is not known, or the def is on an object (`def io.x`).
+pub(crate) fn def_query(tree: &Tree, def: &crate::core::Def) -> Query {
+    let owner = if on_constant(def) {
+        Some(tree.def_owner(def))
+    } else if def.nesting.is_empty() {
+        (!def.singleton).then(|| "Object".to_string())
+    } else {
+        tree.scope_fqn(&def.nesting)
+    };
+    Query {
+        owner,
+        singleton: def.singleton,
+        name: def.name.clone(),
+    }
+}
+
+/// `def CONF.x`: a method of the object a constant names, which the tree
+/// keys under the constant rather than the scope the def is written in.
+pub(crate) fn on_constant(def: &crate::core::Def) -> bool {
+    def.singleton && def.target.is_some() && def.via.is_none()
+}
+
 /// The method `query` asks about, its owner resolved to `owner`, with what
 /// its `def`s their scope does not own are defined on (DEC-562): `facts`
 /// reads a checkout file's facts. A method defined on an object may be
