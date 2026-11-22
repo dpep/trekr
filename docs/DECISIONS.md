@@ -18808,6 +18808,43 @@ class including `Outer` resolved `has_inner` to `Inner::ClassMethods`.
 
 Testbed 1013.
 
+**Addendum: the written order places them.** Before this decision the
+class side asked every ancestor, so a superclass's concerns' `ClassMethods`
+also landed at each subclass's level, ahead of the superclass's `extend`s;
+asked only where the include is written, they landed after that level's
+`extend`s, whatever order the two were written in. Rails' `ActiveRecord::Base`
+writes `extend Querying` before `include Core`, and `Account.find` went to
+`Querying`'s delegate: mastodon's `--refs
+'ActiveRecord::Core::ClassMethods#find'` fell from 203 confirmed to 0. (The
+including class itself had always been wrong: 0.10.2 answers `Base.find`
+with `Querying`.)
+
+The rule, one for every level of the superclass walk: Ruby's `extend` puts
+a module ahead of what the class extended before, and a concern's include
+extends its `ClassMethods` when it runs, after including the concerns it
+depends on. So each level's `extend`s and the `ClassMethods` its includes
+bring are taken in written order, and the later comes first. To know that
+order the tree keeps, with each `extend`, how many mixins were written
+before it (snapshot format 3); an `included` hook's extends take the
+position of the include that ran it, ahead of the `extend`s written after
+that include, which had gone last. `Tree::class_methods_through` replaces
+`concerns_reaching`; DEC-841's per-module `ClassMethods` memo and the
+chain memo keyed by name are unchanged.
+
+**Measured** against the build before: mastodon `--refs` for `#find` 0 →
+203 confirmed and `#find_by` 0 → 246, each the rows that had been excluded
+for a different owner, `possible` unchanged; `--def` at
+`admin/account_actions_controller.rb:37:26` is `Core::ClassMethods#find`,
+resolved, where it was the relation's, ambiguous. `--dead app lib` is
+identical on mastodon and discourse. Discourse's `User.find`
+(`session_controller.rb:566:19`) answers bullet's `active_record42.rb` both
+before and after: its `class << self; def find` is on `ActiveRecord::Base`
+itself, which Ruby asks before any module Base extends. That bullet
+requires the file only under ActiveRecord 4.2, and runs it only from
+`Bullet.enable`, is a question of which code runs, not of the class side.
+
+Testbed 1025, checked against Ruby 3.4 with ActiveSupport 8.1.
+
 ## DEC-872 — A call in a module's own `def self.x` runs on the module
 
 **Decided.** DEC-127 sends a call in a module that its own chain does not

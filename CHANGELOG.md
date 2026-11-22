@@ -271,6 +271,13 @@
 - **A concern included through a plain module no longer puts its
   `ClassMethods` on the class**: `module Outer; include Inner; end` gave a
   class including `Outer` Inner's class methods, which Ruby does not.
+- **On the class side, of an `extend` and an included concern's
+  `ClassMethods`, the one written later wins**, as in Ruby: a class that
+  writes `extend Finders` before `include Lookup` answers a class method
+  both define with `Lookup::ClassMethods`, on the class and on its
+  subclasses, where the class itself answered `Finders`. The same holds
+  through a concern another concern includes, and for what an
+  `included` hook extends.
 - **A call in a module's own `def self.x` is the module's**: its residue
   said no class mixes the module in, as if the call ran on one.
 - **Answers that rest on `helper_method` and other class-body macros no

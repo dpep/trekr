@@ -1,0 +1,17 @@
+# On the class side, of an `extend` and an included concern's (or a hook's)
+# extended module, the one written later comes first, as Ruby's `extend`
+# puts it: ActiveRecord::Base's `extend Querying` before `include Core`
+# leaves `Account.find` on `Core::ClassMethods`. DEC-871 placed a concern's
+# `ClassMethods` only at its includer's level, after every `extend` there,
+# whatever was written first. Checked against Ruby with ActiveSupport.
+def app/models/records.rb:4:3 status=resolved owner=Lookup::ClassMethods
+def app/models/records.rb:8:3 status=resolved owner=Lookup::ClassMethods
+def app/models/records.rb:14:3 status=resolved owner=Finders
+def app/models/records.rb:18:3 status=resolved owner=Finders
+def app/models/records.rb:24:3 status=resolved owner=Lookup::ClassMethods
+def app/models/records.rb:30:3 status=resolved owner=Finders
+def app/models/records.rb:36:3 status=resolved owner=Finders
+def app/models/records.rb:42:3 status=resolved owner=Hooked::Helpers
+def app/models/records.rb:45:18 status=resolved owner=Lookup::ClassMethods
+def app/models/records.rb:46:19 status=resolved owner=Finders
+def app/models/records.rb:51:3 status=resolved owner=Layered::ClassMethods

@@ -489,7 +489,8 @@ Two things a naive implementation gets wrong here:
   A module prepended to the singleton class comes ahead of each level's own
   class methods (DEC-101).
   A concern's own singleton chain has no `ClassMethods`: Concern gives them
-  to its includer (DEC-105).
+  to its includer (DEC-105). At each level, of an `extend` and the
+  `ClassMethods` an include brings, the later written comes first (DEC-871).
 
 ### `gems/` and core — making the index contain the answers
 

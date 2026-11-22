@@ -119,8 +119,11 @@ struct Entry {
     superclass: Option<Target>,
     /// `extend M` — M's *instance* methods become this scope's singleton
     /// methods. A different chain from `include`, which is why it is a
-    /// different field rather than another mixin kind.
-    extends: Vec<Target>,
+    /// different field rather than another mixin kind. In source order, each
+    /// with how many of `mixins` were written before it: a concern's
+    /// `ClassMethods` is extended when its include runs, and of the two the
+    /// later comes first on the class side.
+    extends: Vec<(u32, Target)>,
     /// `singleton_class.prepend(M)` — M's instance methods come before this
     /// scope's own singleton methods (DEC-101).
     singleton_prepends: Vec<Target>,
@@ -221,9 +224,14 @@ impl<'a> EntryRef<'a> {
         }
     }
 
-    fn extends(self) -> Vec<Written<'a>> {
+    /// Each `extend`, with how many mixins were written before it.
+    fn extends(self) -> Vec<(u32, Written<'a>)> {
         match self {
-            EntryRef::Building(e) => e.extends.iter().map(Target::written).collect(),
+            EntryRef::Building(e) => e
+                .extends
+                .iter()
+                .map(|(after, t)| (*after, t.written()))
+                .collect(),
             EntryRef::Frozen(n) => n.extends(false),
         }
     }
@@ -231,7 +239,7 @@ impl<'a> EntryRef<'a> {
     fn singleton_prepends(self) -> Vec<Written<'a>> {
         match self {
             EntryRef::Building(e) => e.singleton_prepends.iter().map(Target::written).collect(),
-            EntryRef::Frozen(n) => n.extends(true),
+            EntryRef::Frozen(n) => n.extends(true).into_iter().map(|(_, t)| t).collect(),
         }
     }
 
@@ -1537,7 +1545,9 @@ impl Tree {
                         kind: MixinKind::Include,
                         target: target.clone(),
                     }),
-                    "extend" => entry.extends.push(target.clone()),
+                    "extend" => entry
+                        .extends
+                        .push((entry.mixins.len() as u32, target.clone())),
                     "singleton_prepend" => entry.singleton_prepends.push(target.clone()),
                     _ => continue,
                 };
@@ -1606,7 +1616,12 @@ impl Tree {
                         };
                         (how, Some(at), m.target.clone())
                     })
-                    .chain(entry.extends.iter().map(|t| ("extend", None, t.clone())))
+                    .chain(
+                        entry
+                            .extends
+                            .iter()
+                            .map(|(_, t)| ("extend", None, t.clone())),
+                    )
                     .collect::<Vec<_>>();
                 let next = written.into_iter().find_map(|(how, at, target)| {
                     let module = self
@@ -1626,13 +1641,25 @@ impl Tree {
                     .get_mut(&scope)
                     .expect("the scope was listed");
                 let mut after = at.map(|at| at + 1);
+                // The hook's extends go before every extend written after
+                // the hooked include, and its includes push those back.
+                let mut extend_at = match at {
+                    Some(at) => entry
+                        .extends
+                        .iter()
+                        .position(|(written, _)| *written as usize > at)
+                        .unwrap_or(entry.extends.len()),
+                    None => entry.extends.len(),
+                };
                 for edge in edges {
                     let target = edge.target;
                     let kind = match edge.relation.as_str() {
                         "include" => MixinKind::Include,
                         "prepend" => MixinKind::Prepend,
                         "extend" => {
-                            entry.extends.push(target);
+                            let written = after.unwrap_or(entry.mixins.len()) as u32;
+                            entry.extends.insert(extend_at, (written, target));
+                            extend_at += 1;
                             continue;
                         }
                         "singleton_prepend" => {
@@ -1646,6 +1673,9 @@ impl Tree {
                         Some(at) => {
                             entry.mixins.insert(at, mixin);
                             after = Some(at + 1);
+                            for (written, _) in &mut entry.extends[extend_at..] {
+                                *written += 1;
+                            }
                         }
                         None => entry.mixins.push(mixin),
                     }
@@ -3685,43 +3715,42 @@ impl Tree {
             if seen.insert((own.clone(), true)) {
                 chain.push((own, true));
             }
-            let mut extends = entry.map(EntryRef::extends).unwrap_or_default();
-            extends.extend(self.macro_mixins_of(&class, crate::core::Relation::Extend));
-            for target in extends.iter().rev() {
-                // `extend self` is the module-function idiom: the module
-                // extends itself, so its own instance methods become singleton
-                // ones. The target names no constant, so the owner is it.
-                let module = if target.name == "self" {
-                    Some(class.clone())
-                } else {
-                    self.resolve_lexical(target.name, &target.nesting)
-                        .map(|fqn| self.namespace_of(&fqn))
-                };
-                let Some(module) = module else { continue };
-                for ancestor in &self.ancestors(&module).chain {
-                    if seen.insert((ancestor.clone(), false)) {
-                        chain.push((ancestor.clone(), false));
-                    }
+            // Ruby's `extend` puts the module ahead of what the class
+            // extended before, and ActiveSupport::Concern extends a module's
+            // nested `ClassMethods` into whatever includes it, when the
+            // include runs: of the two, the later written comes first.
+            // That is a *tree* fact — the module and the class that includes
+            // it are different blobs — and it is how most Rails class
+            // methods come to exist. Not into a concern: it defers its own
+            // and its dependencies' to its includer (DEC-105).
+            let concerns = as_self || !self.is_concern(&class);
+            let ancestry = concerns.then(|| self.ancestors(&class));
+            let (mixins, mut extends) = self.mixed_in(&class);
+            extends.sort_by_key(|(after, _)| *after);
+            let mut extends = extends.into_iter().peekable();
+            let mut reached = HashSet::from([class.clone()]);
+            let mut extended = Vec::new();
+            for (at, target) in mixins.iter().enumerate() {
+                while let Some((_, target)) = extends.next_if(|(after, _)| *after as usize <= at) {
+                    extended.extend(self.extended_module(&class, &target));
+                }
+                if let Some(ancestry) = &ancestry {
+                    self.class_methods_through(
+                        target,
+                        &ancestry.chain,
+                        &mut reached,
+                        &mut extended,
+                    );
                 }
             }
-
-            // ActiveSupport::Concern extends a module's nested `ClassMethods`
-            // into whatever includes it. That is a *tree* fact — the module and
-            // the class that includes it are different blobs — and it is how
-            // most Rails class methods come to exist. Not into a concern: it
-            // defers its own and its dependencies' to its includer (DEC-105).
-            if !as_self && self.is_concern(&class) {
-                continue;
+            for (_, target) in extends {
+                extended.extend(self.extended_module(&class, &target));
             }
-            let reached = self.concerns_reaching(&class);
-            for module_name in &self.ancestors(&class).chain {
-                if !reached.contains(module_name.as_str()) {
-                    continue;
-                }
-                let Some(class_methods) = self.concern_class_methods(module_name) else {
-                    continue;
-                };
-                for ancestor in &self.ancestors(&class_methods).chain {
+            if concerns {
+                extended.extend(self.concern_class_methods(&class));
+            }
+            for module in extended.iter().rev() {
+                for ancestor in &self.ancestors(module).chain {
                     if seen.insert((ancestor.clone(), false)) {
                         chain.push((ancestor.clone(), false));
                     }
@@ -3747,38 +3776,69 @@ impl Tree {
         chain
     }
 
-    /// The modules whose `ClassMethods` a concern extends into `class`: the
-    /// class itself, what it mixes in, and through a concern what that
-    /// concern mixes in, which it hands on. Not through a plain module: a
-    /// concern it includes extends the module itself (DEC-871).
-    fn concerns_reaching(&self, class: &str) -> HashSet<String> {
-        let mut reached = HashSet::from([class.to_string()]);
-        let mut stack = vec![class.to_string()];
-        while let Some(module) = stack.pop() {
-            let entry = self.names.get(&module);
-            let mut written: Vec<Written<'_>> = entry
-                .map(EntryRef::mixins)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(_, target)| target)
-                .collect();
-            for how in [
-                crate::core::Relation::Include,
-                crate::core::Relation::Prepend,
-            ] {
-                written.extend(self.macro_mixins_of(&module, how));
-            }
-            for target in written {
-                let Some(fqn) = self.resolve_lexical(target.name, &target.nesting) else {
-                    continue;
-                };
-                let fqn = self.namespace_of(&fqn);
-                if reached.insert(fqn.clone()) && self.is_concern(&fqn) {
-                    stack.push(fqn);
+    /// What `class` mixes in, in source order: its includes and prepends,
+    /// and each `extend` with how many of those were written before it. A
+    /// macro's come after what the body writes.
+    fn mixed_in(&self, class: &str) -> (Vec<Written<'_>>, Vec<(u32, Written<'_>)>) {
+        let entry = self.names.get(class);
+        let mut mixins: Vec<Written<'_>> = entry
+            .map(EntryRef::mixins)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, target)| target)
+            .collect();
+        let mut extends = entry.map(EntryRef::extends).unwrap_or_default();
+        for (relation, target) in self.macro_mixins.get(class).into_iter().flatten() {
+            match relation {
+                crate::core::Relation::Include | crate::core::Relation::Prepend => {
+                    mixins.push(target.written())
                 }
+                crate::core::Relation::Extend => {
+                    extends.push((mixins.len() as u32, target.written()))
+                }
+                _ => {}
             }
         }
-        reached
+        (mixins, extends)
+    }
+
+    /// The module an `extend` in `class` names. `extend self` is the
+    /// module-function idiom: the module extends itself, so its own instance
+    /// methods become singleton ones.
+    fn extended_module(&self, class: &str, target: &Written<'_>) -> Option<String> {
+        if target.name == "self" {
+            return Some(class.to_string());
+        }
+        self.resolve_lexical(target.name, &target.nesting)
+            .map(|fqn| self.namespace_of(&fqn))
+    }
+
+    /// The `ClassMethods` a mixin extends into its includer, oldest first:
+    /// a concern includes its own dependencies into the includer before
+    /// extending its own. Not through a plain module: a concern it includes
+    /// extends the module itself (DEC-871). `reached` keeps a module to its
+    /// first include, and `ancestry` is the includer's chain, which a
+    /// module must be in.
+    fn class_methods_through(
+        &self,
+        target: &Written<'_>,
+        ancestry: &[Fqn],
+        reached: &mut HashSet<String>,
+        extended: &mut Vec<String>,
+    ) {
+        let Some(fqn) = self.resolve_lexical(target.name, &target.nesting) else {
+            return;
+        };
+        let module = self.namespace_of(&fqn);
+        if !reached.insert(module.clone()) || !self.is_concern(&module) {
+            return;
+        }
+        for target in &self.mixed_in(&module).0 {
+            self.class_methods_through(target, ancestry, reached, extended);
+        }
+        if ancestry.iter().any(|a| a.as_str() == module) {
+            extended.extend(self.concern_class_methods(&module));
+        }
     }
 
     /// Does this module extend `ActiveSupport::Concern`? As it resolves, or,
@@ -3794,7 +3854,7 @@ impl Tree {
         };
         self.names.get(module_name).is_some_and(|entry| {
             entry.kind() == "module"
-                && entry.extends().iter().any(|target| {
+                && entry.extends().iter().any(|(_, target)| {
                     let Some(fqn) = self.resolve_lexical(target.name, &target.nesting) else {
                         return written(target.name);
                     };

@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 const MAGIC: &[u8; 8] = b"trekrtre";
 /// Bumped whenever the layout below changes shape.
-pub(super) const FORMAT: u32 = 2;
+pub(super) const FORMAT: u32 = 3;
 const NONE: u32 = u32::MAX;
 
 // Sections, in file order. Each starts 8-byte aligned.
@@ -39,8 +39,9 @@ const NAME_WORDS: usize = 10;
 const SITE_WORDS: usize = 4;
 /// A mixin: kind (0 prepend, 1 include), target.
 const MIXIN_WORDS: usize = 2;
-/// A singleton mixin: kind (0 extend, 1 singleton prepend), target.
-const EXTEND_WORDS: usize = 2;
+/// A singleton mixin: kind (0 extend, 1 singleton prepend), target, and for
+/// an extend how many mixins were written before it.
+const EXTEND_WORDS: usize = 3;
 /// A target: name, nesting list.
 const TARGET_WORDS: usize = 2;
 
@@ -127,6 +128,7 @@ impl Snapshot {
             || !whole(NAMES, NAME_WORDS)
             || !whole(SITES, SITE_WORDS)
             || !whole(MIXINS, MIXIN_WORDS)
+            || !whole(EXTENDS, EXTEND_WORDS)
             || !whole(TARGETS, TARGET_WORDS)
         {
             return Err(Invalid::Layout);
@@ -261,12 +263,16 @@ impl<'a> NameRef<'a> {
             .collect()
     }
 
-    /// `extend`s, or with `prepended` the singleton class's prepends.
-    pub(super) fn extends(self, prepended: bool) -> Vec<Written<'a>> {
+    /// `extend`s, each with how many mixins were written before it, or
+    /// with `prepended` the singleton class's prepends.
+    pub(super) fn extends(self, prepended: bool) -> Vec<(u32, Written<'a>)> {
         let s = self.snap;
         self.range(6)
             .filter(|i| (s.word(EXTENDS, i * EXTEND_WORDS) == 1) == prepended)
-            .map(|i| s.target(s.word(EXTENDS, i * EXTEND_WORDS + 1)))
+            .map(|i| {
+                let at = i * EXTEND_WORDS;
+                (s.word(EXTENDS, at + 2), s.target(s.word(EXTENDS, at + 1)))
+            })
             .collect()
     }
 
@@ -307,11 +313,11 @@ pub(super) fn encode(names: &HashMap<String, Entry>, key: &Key) -> anyhow::Resul
             w.mixins.extend([kind, target]);
         }
         let extends = w.extends.len() / EXTEND_WORDS;
-        let singleton = entry.extends.iter().map(|t| (0, t));
-        let prepended = entry.singleton_prepends.iter().map(|t| (1, t));
-        for (kind, target) in singleton.chain(prepended) {
+        let singleton = entry.extends.iter().map(|(after, t)| (0, t, *after));
+        let prepended = entry.singleton_prepends.iter().map(|t| (1, t, 0));
+        for (kind, target, after) in singleton.chain(prepended) {
             let target = w.target(&target.name, &target.nesting)?;
-            w.extends.extend([kind, target]);
+            w.extends.extend([kind, target, after]);
         }
         let superclass = w.optional(&entry.superclass)?;
         let alias = w.optional(&entry.alias_of)?;
@@ -612,12 +618,24 @@ mod tests {
                 .map(|m| (m.kind, written(&m.target)))
                 .collect();
             assert_eq!(mixins, want, "{fqn}");
-            let extends: Vec<_> = got.extends(false).into_iter().map(read).collect();
+            let extends: Vec<_> = got
+                .extends(false)
+                .into_iter()
+                .map(|(after, t)| (after, read(t)))
+                .collect();
             assert_eq!(
                 extends,
-                entry.extends.iter().map(written).collect::<Vec<_>>()
+                entry
+                    .extends
+                    .iter()
+                    .map(|(after, t)| (*after, written(t)))
+                    .collect::<Vec<_>>()
             );
-            let prepends: Vec<_> = got.extends(true).into_iter().map(read).collect();
+            let prepends: Vec<_> = got
+                .extends(true)
+                .into_iter()
+                .map(|(_, t)| read(t))
+                .collect();
             assert_eq!(
                 prepends,
                 entry
