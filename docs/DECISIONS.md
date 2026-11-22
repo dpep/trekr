@@ -18993,3 +18993,15 @@ if File.exist?(custom_gemfile)`, a local, is said as computed.
 
 Tests: testbed 1024 (the three forms graded), `an_eval_gemfile_not_followed_is_said`,
 both red before.
+
+## DEC-877 — An eval'd file outside the checkout is graded from the checkout `--dead` runs in
+
+**Decided.** `--dead ../outside/ext.gemfile`, a file the root Gemfile
+evals from outside the checkout, looked for the root that evals it from
+the file's own directory, which is in no checkout, so it was refused as
+another bundle's with "the root has no Gemfile or gems.rb" (hunt 4's eg),
+though DEC-820 says such a file is accepted wherever it sits. The root is
+now the file's own checkout when its Gemfile evals the file, else the
+checkout `--dead` runs in when its Gemfile does; the file is graded as
+that root's manifest. A file neither evals is refused as before. Test
+`an_evaled_gemfile_outside_the_checkout_is_graded_from_it`, red before.

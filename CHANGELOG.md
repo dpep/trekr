@@ -23,7 +23,7 @@
   Gemfile in a subdirectory is refused with exit 64; an engine's gemspec
   that is a path gem of the root bundle is graded, and so is a file the
   root Gemfile reads with `eval_gemfile`, whose gems `--dead Gemfile`
-  grades too.
+  grades too, named from the checkout wherever the file sits.
   `--explain` lists each gem found in use and the first evidence;
   `--json` carries it as `referenced`.
 

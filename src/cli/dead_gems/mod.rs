@@ -50,14 +50,28 @@ pub(super) fn is_bundle_file(path: &Path) -> bool {
 /// A file the root's Gemfile reads with `eval_gemfile` (`Gemfile.tools`),
 /// directly or through another: its gems are the root bundle's.
 fn is_evaled(path: &Path) -> bool {
-    let Ok(root) = named_checkout(path) else {
-        return false;
-    };
+    evaled_root(path).is_some()
+}
+
+/// The checkout whose root Gemfile evals `path`: the file's own, or the one
+/// `--dead` runs in, for a file outside it — accepted wherever it sits
+/// (DEC-820, DEC-877).
+fn evaled_root(path: &Path) -> Option<PathBuf> {
+    let mut roots: Vec<PathBuf> = named_checkout(path).ok().into_iter().collect();
+    if let Ok(here) = named_checkout(Path::new(".")) {
+        roots.retain(|root| *root != here);
+        roots.push(here);
+    }
+    roots.into_iter().find(|root| evals(root, path))
+}
+
+/// Whether the Gemfile at `root` evals `path`, directly or through another.
+fn evals(root: &Path, path: &Path) -> bool {
     let canonical = |p: &Path| std::fs::canonicalize(p).ok();
     let Some(wanted) = canonical(path) else {
         return false;
     };
-    let gemfile = crate::gems::bundle_files(&root).0;
+    let gemfile = crate::gems::bundle_files(root).0;
     let mut todo = vec![gemfile];
     let mut seen = HashSet::new();
     while let Some(file) = todo.pop() {
@@ -70,7 +84,7 @@ fn is_evaled(path: &Path) -> bool {
         if at == wanted && seen.len() > 1 {
             return true;
         }
-        let dir = file.parent().unwrap_or(&root).to_path_buf();
+        let dir = file.parent().unwrap_or(root).to_path_buf();
         if let Ok(raw) = crate::scan::read_source(&file) {
             todo.extend(
                 gemfile::declarations(&raw)
@@ -220,7 +234,10 @@ pub(super) fn cmd_dead_gems(
         if !path.is_file() {
             return Err(Failure::NotFound.error(format!("no such file: {}", path.display())));
         }
-        let root = named_checkout(path)?;
+        let root = match evaled_root(path) {
+            Some(root) => root,
+            None => named_checkout(path)?,
+        };
         // A link's directory is where it is written, not where it points:
         // a root `Gemfile` may link to `gemfiles/Gemfile.rails7`.
         let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());

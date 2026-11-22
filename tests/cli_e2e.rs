@@ -898,6 +898,42 @@ fn an_eval_gemfile_not_followed_is_said() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A file the root Gemfile evals from outside the checkout is graded as the
+/// root's manifest when named, from the checkout `--dead` runs in; it was
+/// refused as another bundle's, "the root has no Gemfile or gems.rb".
+#[test]
+fn an_evaled_gemfile_outside_the_checkout_is_graded_from_it() {
+    let (dir, db) = ruby_scratch("eval-outside");
+    repo(&dir);
+    let outside = dir.with_file_name("eval-outside-ext");
+    let _ = fs::remove_dir_all(&outside);
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("ext.gemfile"), "gem \"far_kit\"\n").unwrap();
+    fs::write(
+        dir.join("Gemfile"),
+        "source \"https://rubygems.org\"\neval_gemfile \"../eval-outside-ext/ext.gemfile\"\n",
+    )
+    .unwrap();
+    commit_all(&dir);
+
+    let out = trekr(
+        &db,
+        &dir,
+        &["--dead", "../eval-outside-ext/ext.gemfile", "--json"],
+    );
+    let answer = json(&out);
+    let names: Vec<&str> = answer["candidates"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{answer}"))
+        .iter()
+        .map(|row| row["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["far_kit"], "{answer}");
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&outside);
+}
+
 /// A gem's base class may reach what a subclass in the app defines by a
 /// name no call writes: a drop's `public_send(key)` runs its methods, and a
 /// dashboard's `self.class::ATTRS` reads its constant. `--dead` reads the
