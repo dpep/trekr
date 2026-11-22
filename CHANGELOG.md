@@ -268,7 +268,8 @@
 - **The editor's Find References and incoming calls at a top-level def
   list what `--refs` at it lists**: they asked by name, so
   incoming calls confirmed a class's call `--refs` calls possible, and
-  Find References left out a call in a module's `def self.x`.
+  Find References left out a call in a module's `def self.x`, and a
+  `class Object` def of the name among the declarations.
 - **A concern included through a plain module no longer puts its
   `ClassMethods` on the class**: `module Outer; include Inner; end` gave a
   class including `Outer` Inner's class methods, which Ruby does not.

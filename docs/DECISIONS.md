@@ -18768,7 +18768,11 @@ Object` one from a class.
 but both are the same method: a call cannot reach one and not the other,
 so no tier or candidate list has anything to rank.
 
-Testbed 869.
+**Editor.** Find References at either def lists both as declarations
+(`serve::handlers::asked_method`); it listed only the def asked at, while
+`--refs` listed both (hunt 5's a6).
+
+Testbed 869; `references_at_a_top_level_def_list_the_class_object_def_too`.
 
 ## DEC-870 — A `def` on a constant is the constant's, at every front
 

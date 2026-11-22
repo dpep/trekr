@@ -729,18 +729,27 @@ pub(crate) fn references(
 
     let mut declared: Vec<Location> = Vec::new();
     if declarations {
-        match own_site {
-            Some(pos) => declared.extend(location(
+        if let Some(pos) = own_site {
+            declared.extend(location(
                 &root,
                 &path,
                 pos.line,
                 pos.col,
                 name.len(),
                 overlay.get(&path).map(String::as_str),
-            )),
-            None => declared.extend(defined_at.iter().filter_map(|site| {
-                location(&root, &site.path, site.line, site.col, name.len(), None)
-            })),
+            ));
+        }
+        for site in &defined_at {
+            let Some(at) = location(&root, &site.path, site.line, site.col, name.len(), None)
+            else {
+                continue;
+            };
+            if !declared
+                .iter()
+                .any(|d| d.uri == at.uri && d.range.start == at.range.start)
+            {
+                declared.push(at);
+            }
         }
     }
     let send = |locations: Vec<Location>| -> anyhow::Result<()> {
@@ -894,7 +903,18 @@ fn asked_method(
 ) -> Option<(refs::Query, Vec<crate::tree::Site>)> {
     match under {
         Under::Definition(def) if def.kind == Kind::Method => {
-            Some((query_refs::def_query(tree, def), Vec::new()))
+            let query = query_refs::def_query(tree, def);
+            // A top-level def and a `class Object` def are one method, each
+            // the other's definition too (DEC-869).
+            let sites = if query.owner.as_deref() == Some("Object") && !query.singleton {
+                crate::resolve::object_defs(tree, &query.name)
+                    .into_iter()
+                    .map(|d| d.site)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            Some((query, sites))
         }
         Under::Call(call) => {
             let answer = crate::resolve::method_at(tree, facts, call, path);

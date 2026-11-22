@@ -5262,6 +5262,35 @@ fn ask(
     )
 }
 
+/// A top-level def and a `class Object` def are one method (DEC-869):
+/// Find References at either lists both as its declarations, as `--refs`
+/// does. It listed only the def asked at.
+#[test]
+fn references_at_a_top_level_def_list_the_class_object_def_too() {
+    let files = [
+        ("top.rb", "def dual\n  1\nend\n"),
+        ("obj.rb", "class Object\n  def dual\n    2\n  end\nend\n"),
+        (
+            "user.rb",
+            "class User\n  def b\n    User.new.dual\n  end\nend\n",
+        ),
+    ];
+    let (dir, mut session) = files_session("toplevel-object", &files, "top.rb");
+    let refs = ask(
+        &mut session,
+        &dir,
+        "textDocument/references",
+        "top.rb",
+        0,
+        4,
+    );
+    let mut sites = sites_in(&refs);
+    sites.sort();
+    assert_eq!(sites, ["obj.rb:2", "top.rb:1", "user.rb:3"], "{refs}");
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_local_goes_to_the_assignments_its_value_can_come_from() {
     let source = concat!(
