@@ -408,7 +408,7 @@ fn object_value(
             false => crate::core::RecvShape::Local,
         },
         recv_text: Some(value.to_string()),
-        nesting: Vec::new(),
+        nesting: Default::default(),
         singleton: false,
         recv_pos: Some(at),
         recv_value: None,

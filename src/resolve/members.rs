@@ -416,7 +416,7 @@ fn includers_from(
             // runs in the groups that include that one.
             if !answered && depth < INCLUDER_DEPTH {
                 let mut outer = call.clone();
-                outer.nesting = level.clone();
+                outer.nesting = level.as_slice().into();
                 let further = includers_from(context, &includer, &held, &outer, depth + 1);
                 answered = !further.found.is_empty() || !further.mixed.is_empty();
                 for (p, def) in further.found {
@@ -834,7 +834,7 @@ impl<'f> Scan<'f> {
                     && !name.starts_with("attr_")
                     && tree.lookup(rspec::EXAMPLE_GROUP, true, name).is_none())
                 || (call.group_body && mixes_in_a_hook(tree, path, facts, call));
-            if adds && !running.contains(&call.nesting.as_slice()) {
+            if adds && !running.contains(&&call.nesting[..]) {
                 running.push(&call.nesting);
             }
         }

@@ -223,6 +223,24 @@ pub(crate) struct Facts {
 }
 
 impl Facts {
+    /// Points every call with an equal scope stack at one copy of it: for
+    /// facts held across queries.
+    pub(crate) fn share_nestings(&mut self) {
+        let mut seen: std::collections::HashSet<Nesting> = std::collections::HashSet::new();
+        let mut share = |nesting: &mut Nesting| match seen.get(&nesting[..]) {
+            Some(held) => *nesting = held.clone(),
+            None => {
+                seen.insert(nesting.clone());
+            }
+        };
+        for call in &mut self.calls {
+            share(&mut call.nesting);
+            if let Some(standing) = &mut call.stands_for {
+                share(&mut standing.nesting);
+            }
+        }
+    }
+
     /// Which writes the local read at `read` can see, by the flow analysis
     /// `analyze` does over the source — `None` when there is no source to run
     /// it on, or the position is not a local read.
@@ -1049,7 +1067,7 @@ pub(crate) struct Call {
     /// Source text of the receiver, when it is a name worth resolving: the
     /// constant path, the local's name, the ivar's name. `None` otherwise.
     pub(crate) recv_text: Option<String>,
-    pub(crate) nesting: Vec<String>,
+    pub(crate) nesting: Nesting,
     /// Written inside a singleton method (`def self.x`, or `class << self`).
     /// An implicit receiver means the class itself here and an instance of it
     /// otherwise — the same source text, two different lookups.
@@ -1282,6 +1300,61 @@ impl Call {
 /// here, so nothing that asks what the code wrote lists it.
 pub(crate) fn synthetic(fqn: &str) -> bool {
     rspec::is_shared_module(fqn) || runtime::is_hook_module(fqn)
+}
+
+/// A call's lexical scope stack, innermost first. Shared: a file has a few
+/// distinct stacks and many calls, and `Facts::share_nestings` points every
+/// call at one copy of each.
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
+pub(crate) struct Nesting(std::sync::Arc<[String]>);
+
+impl std::ops::Deref for Nesting {
+    type Target = [String];
+    fn deref(&self) -> &[String] {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<[String]> for Nesting {
+    fn borrow(&self) -> &[String] {
+        &self.0
+    }
+}
+
+impl From<Vec<String>> for Nesting {
+    fn from(nesting: Vec<String>) -> Nesting {
+        Nesting(nesting.into())
+    }
+}
+
+impl From<&[String]> for Nesting {
+    fn from(nesting: &[String]) -> Nesting {
+        Nesting(nesting.into())
+    }
+}
+
+impl PartialEq<Vec<String>> for Nesting {
+    fn eq(&self, other: &Vec<String>) -> bool {
+        *self.0 == **other
+    }
+}
+
+impl PartialEq<Nesting> for Vec<String> {
+    fn eq(&self, other: &Nesting) -> bool {
+        **self == *other.0
+    }
+}
+
+impl std::fmt::Debug for Nesting {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Serialize for Nesting {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
 }
 
 /// A nesting stack round-trips through one TEXT column: scope paths joined by

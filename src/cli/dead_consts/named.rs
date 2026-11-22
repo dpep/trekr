@@ -293,7 +293,7 @@ impl Named {
             };
             if on_self {
                 self.self_listed
-                    .push((call.nesting.clone(), (path.to_string(), call.pos.line)));
+                    .push((call.nesting.to_vec(), (path.to_string(), call.pos.line)));
             }
         }
     }

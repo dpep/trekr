@@ -178,7 +178,13 @@ impl Parsed {
         let fresh: Vec<_> = files
             .par_iter()
             .filter(|path| !self.facts.read().expect("unpoisoned").contains_key(*path))
-            .map(|path| (path.clone(), extract::read_file(root, path).map(Arc::new)))
+            .map(|path| {
+                let facts = extract::read_file(root, path).map(|mut facts| {
+                    facts.share_nestings();
+                    Arc::new(facts)
+                });
+                (path.clone(), facts)
+            })
             .collect();
         let mut facts = self.facts.write().expect("unpoisoned");
         for (path, read) in fresh {

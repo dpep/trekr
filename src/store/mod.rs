@@ -2770,7 +2770,7 @@ impl Ref {
             kind: None,
             recv: Some(call.recv.as_str().to_string()),
             recv_text: call.recv_text.clone(),
-            nesting: call.nesting.clone(),
+            nesting: call.nesting.to_vec(),
             tier: None,
             owner: None,
         }

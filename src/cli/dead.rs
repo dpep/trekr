@@ -571,7 +571,9 @@ fn dead_in(
         .filter_map(|file| {
             let raw = crate::scan::read_source(file).ok()?;
             let source = extract::ruby_source(&file.to_string_lossy(), &raw).into_owned();
-            let facts = std::sync::Arc::new(extract::extract(&source));
+            let mut facts = extract::extract(&source);
+            facts.share_nestings();
+            let facts = std::sync::Arc::new(facts);
             let symbols = extract::symbol_literals(&source);
             let method_blocks = method_blocks(&source);
             // A dynamic-dispatch marker anywhere in the file lowers confidence

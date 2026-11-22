@@ -5452,7 +5452,7 @@ impl<'pr> Extractor<'_> {
             call.recv = RecvShape::SelfRecv;
             call.recv_text = None;
             call.recv_pos = None;
-            call.nesting = site.nesting.clone();
+            call.nesting = site.nesting.as_slice().into();
             call.singleton = site.singleton;
             call.block_owner = site.block_owner;
             call.in_example = site.in_example;
@@ -5583,8 +5583,8 @@ impl<'pr> Extractor<'_> {
         };
         let site = self.self_site();
         let (nesting, singleton) = match recv {
-            RecvShape::Implicit | RecvShape::SelfRecv => (site.nesting, site.singleton),
-            _ => (self.nesting.clone(), self.self_is_class()),
+            RecvShape::Implicit | RecvShape::SelfRecv => (site.nesting.into(), site.singleton),
+            _ => (self.nesting.as_slice().into(), self.self_is_class()),
         };
         Call {
             name,
@@ -5675,7 +5675,7 @@ impl<'pr> Extractor<'_> {
             name,
             recv: RecvShape::Symbol,
             recv_text: None,
-            nesting: self.nesting.clone(),
+            nesting: self.nesting.as_slice().into(),
             singleton: false,
             recv_pos: None,
             recv_value: None,
@@ -5698,7 +5698,7 @@ impl<'pr> Extractor<'_> {
             name,
             recv: to.recv,
             recv_text: to.recv_text,
-            nesting: self.nesting.clone(),
+            nesting: self.nesting.as_slice().into(),
             singleton: to.singleton,
             recv_pos: to.recv_pos,
             recv_value: to.recv_value,
@@ -5788,7 +5788,7 @@ impl<'pr> Extractor<'_> {
             name,
             recv: RecvShape::Super,
             recv_text: None,
-            nesting: self.nesting.clone(),
+            nesting: self.nesting.as_slice().into(),
             singleton: self.self_is_class(),
             recv_pos: None,
             recv_value: None,
@@ -6275,7 +6275,7 @@ impl<'pr> Extractor<'_> {
             name,
             recv: RecvShape::Symbol,
             recv_text: None,
-            nesting: self.nesting.clone(),
+            nesting: self.nesting.as_slice().into(),
             singleton: false,
             recv_pos: None,
             recv_value: None,
