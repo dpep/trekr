@@ -19300,3 +19300,15 @@ no Object, and its methods run on includers that do; asking for Object
 alone would exclude every implicit call in a module.
 
 Testbed 1041.
+
+## DEC-893 — `--dead`'s directory walk takes `.rake` files
+
+**Decided.** `--dead DIR` walks `.rb` and `.rake` files. It took only
+`.rb`, so `--dead lib/tasks` read no file (0.10.2 too), though naming a
+`.rake` file read it and the index reads both.
+
+**Measured.** `--dead app lib`: mastodon 3833 → 3838 rows, discourse
+6294 → 6370, every new row in `lib/tasks/*.rake` and nothing else moved. Testbed 999's pinned `--dead . --json` moved the
+same way: its `lib/tasks/tareas.rake` is now read.
+
+Testbed 1044.

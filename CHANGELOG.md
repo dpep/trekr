@@ -299,6 +299,8 @@
   "no method at", `--def` snapped to the next name, and the editor's Find
   References answered nothing, or with indexing off said to run
   `trekr --index`.
+- **`--dead DIR` reads the `.rake` files in it**: `--dead lib/tasks`
+  read no file, though naming a `.rake` file read it.
 
 ## 0.10.2 — 2026-11-20
 

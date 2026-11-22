@@ -276,6 +276,7 @@ ruby tests/testbed/1041-a-basic-object-subclass-never-reaches-a-top-level-def/li
 ruby tests/testbed/1041-a-basic-object-subclass-never-reaches-a-top-level-def/lib/wrapper.rb f9af0e3c0271e13e
 ruby tests/testbed/1042-a-def-on-a-parenthesised-constant/lib/a.rb 5cb1a5a919a652fd
 ruby tests/testbed/1043-rubys-it-is-a-blocks-local/lib/foo.rb 2af672dfc9300653
+ruby tests/testbed/1044-a-directory-of-rake-files-is-walked/lib/tasks/t.rake 9eb247f7eaf4fdd5
 ruby tests/testbed/1045-object-class-eval-is-one-method-with-a-top-level-def/app/models/user.rb 35069407c78da43a
 ruby tests/testbed/1045-object-class-eval-is-one-method-with-a-top-level-def/lib/top.rb c0c803a451d5f6f6
 ruby tests/testbed/120-a-method-made-from-an-unnamed-name-is-not-absent/app.rb b1e220695c537f1f

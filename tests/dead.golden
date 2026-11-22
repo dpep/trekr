@@ -20,6 +20,7 @@
 1040-a-public-top-level-def-takes-a-receiver 7fc0ffe082b0210f
 1041-a-basic-object-subclass-never-reaches-a-top-level-def e0517f5b7b486206
 1042-a-def-on-a-parenthesised-constant e4e2cd7bef0c24f8
+1044-a-directory-of-rake-files-is-walked 96aa6a3262eb6f8e
 1045-object-class-eval-is-one-method-with-a-top-level-def cb310a3ba5d89fef
 122-a-class-eval-string-is-read-as-code 3977f0a5676a712e
 126-a-call-typed-as-an-ancestor-reaches-an-override 90aee89b5713b83c
@@ -222,4 +223,4 @@
 965-a-concern-through-a-constant-alias a486b78e76b79be4
 966-t-unsafe-of-a-constant-lists-its-subclasses a376a9dbd5c42a3c
 967-a-call-after-a-defs-end-on-its-line-is-not-its ac8b8af2384a97ce
-999-a-multibyte-identifier-before-what-a-text-reader-reads f56ffaa51ed17da0
+999-a-multibyte-identifier-before-what-a-text-reader-reads 4a60b144ead7a755

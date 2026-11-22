@@ -1,0 +1,3 @@
+# `--dead lib/tasks` walked no file: a directory's walk took only `.rb`,
+# though naming a `.rake` file read it.
+dead lib/tasks #unused_helper=unreferenced #used_helper=single-caller

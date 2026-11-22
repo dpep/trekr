@@ -1683,7 +1683,8 @@ fn ruby_files(paths: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Ruby files under these paths, following directories one level of recursion.
+/// Ruby files under these paths, a task file's `.rake` included, following
+/// directories one level of recursion.
 fn ruby_files_under(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for path in paths {
@@ -1701,7 +1702,7 @@ fn ruby_files_under(paths: &[PathBuf]) -> Vec<PathBuf> {
         for child in children {
             if child.is_dir() {
                 found.extend(ruby_files_under(&[child]));
-            } else if child.extension().is_some_and(|e| e == "rb") {
+            } else if child.extension().is_some_and(|e| e == "rb" || e == "rake") {
                 found.push(child);
             }
         }
