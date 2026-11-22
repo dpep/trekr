@@ -18832,3 +18832,36 @@ fresh indexes of one checkout. Testbed 600's flip.
 **Measured:** eight fresh indexes of testbed 600's checkout, each asked
 its eight `--def`s and three `--refs`: two distinct answer sets before
 (six and two), one after (all eight).
+
+## DEC-871 — Without a lockfile, a git gem with no checkout is its installed release, said
+
+**Decided.** With no lockfile, a `gem` line's `git:` or `github:` source
+that has no one checkout in `bundler/gems` (DEC-293) no longer takes the
+name away: the name resolves as a release does, every other declaration's
+requirements on it binding, and the gem is listed in `unlocated` with why
+the git source was not taken and that the installed release is indexed
+instead. With nothing installed, the git source's reason stands, as
+before. One rule, wherever the line is written: DEC-847 made an eval'd
+file's git lines count, and a gemspec's `add_dependency "hashdiff"` beside
+`Gemfile.deps`' `gem "hashdiff", git: …` then lost hashdiff — on
+rspec-rails, whose `Gemfile-rspec-dependencies` writes each rspec gem as a
+git line with an interpolated URL, rspec-core, -expectations, -mocks and
+-support went, and `--def` answered `RSpec` with a spec file (hunt 4's
+ev-C). The same line in the Gemfile itself (ev-D) had dropped the gem
+since DEC-293; it falls under the same rule.
+
+A git gem the gemspec does not declare falls back too, rather than only
+one "otherwise resolvable": the line asks for the gem either way, and an
+exception for it would be a second rule saying the same thing less
+usefully. The disclosure is what keeps it honest: a fork's API may differ
+from the release.
+
+**`--status` names the holes.** It counted only the gems the store
+holds, so a missing or unlocated gem was nowhere ("58 gems, all
+indexed"; ev-C said `count: 0`). `gems.missing` and `gems.unlocated` are
+`--index`'s, read again as the next index would find them (the store keeps
+only what was indexed); one function, `gem_holes`, says both.
+
+Tests: `a_git_gem_with_no_checkout_falls_back_to_the_installed_release`,
+`with_no_lockfile_a_gem_whose_git_source_is_not_checked_out_is_the_installed_release`
+(`--status --json`), both red before.

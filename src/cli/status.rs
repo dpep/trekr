@@ -92,7 +92,7 @@ pub(super) fn cmd_status(
                 row["ruby_unmet"] = requirements.into();
             }
             row["ruby"] = serde_json::to_value(ruby)?;
-            if let Some(stdlib) = stdlib {
+            if let Some(stdlib) = stdlib.clone() {
                 let rbs = store.rbs_about(&stdlib)?.map(|about| {
                     serde_json::json!({
                         "version": about.version,
@@ -118,6 +118,20 @@ pub(super) fn cmd_status(
                 "indexed": indexed.len(),
                 "files": indexed.iter().sum::<i64>(),
             });
+            // The store keeps only what was indexed, so the holes are read
+            // again, as the next index would find them.
+            let ruby_now = stdlib.as_deref().and_then(|root| {
+                crate::gems::stdlib::for_checkout(Path::new(&checkout.repo), Some(Path::new(root)))
+            });
+            let (located, _) =
+                crate::gems::for_checkout(Path::new(&checkout.repo), ruby_now.as_ref());
+            let (missing, unlocated) = index::gem_holes(&located, ruby_now.as_ref());
+            if !missing.is_empty() {
+                row["gems"]["missing"] = serde_json::to_value(missing)?;
+            }
+            if !unlocated.is_empty() {
+                row["gems"]["unlocated"] = serde_json::to_value(unlocated)?;
+            }
         }
         rows.push(row);
     }
@@ -215,16 +229,61 @@ pub(super) fn cmd_status(
             continue;
         };
         let state = match (count, indexed) {
-            (0, _) => continue,
-            (n, i) if n == i => "all indexed".to_string(),
-            (_, i) => format!("{i} of {count} indexed"),
+            (0, _) => None,
+            (n, i) if n == i => Some("all indexed".to_string()),
+            (_, i) => Some(format!("{i} of {count} indexed")),
         };
-        println!(
-            "{:>32}+ {count} gem{}, {state} ({} files)",
-            "",
-            if count == 1 { "" } else { "s" },
-            gems["files"].as_i64().unwrap_or(0)
-        );
+        if let Some(state) = state {
+            println!(
+                "{:>32}+ {count} gem{}, {state} ({} files)",
+                "",
+                if count == 1 { "" } else { "s" },
+                gems["files"].as_i64().unwrap_or(0)
+            );
+        }
+        let names = |list: &serde_json::Value, key: &str| -> Vec<String> {
+            list.as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|item| match key {
+                    "" => item.as_str(),
+                    key => item[key].as_str(),
+                })
+                .map(str::to_string)
+                .collect()
+        };
+        let missing = names(&gems["missing"], "");
+        if !missing.is_empty() {
+            println!(
+                "{:>32}! {} named but not installed: {}",
+                "",
+                missing.len(),
+                index::abridged(&missing)
+            );
+        }
+        // One line per reason, as `--index` says them.
+        let whys = names(&gems["unlocated"], "why");
+        let gems_of = names(&gems["unlocated"], "gem");
+        let mut reasons: Vec<&String> = Vec::new();
+        for why in &whys {
+            if !reasons.contains(&why) {
+                reasons.push(why);
+            }
+        }
+        for why in reasons {
+            let named: Vec<String> = whys
+                .iter()
+                .zip(&gems_of)
+                .filter(|(w, _)| *w == why)
+                .map(|(_, gem)| gem.clone())
+                .collect();
+            println!(
+                "{:>32}! {} — {why}: {}",
+                "",
+                named.len(),
+                index::abridged(&named)
+            );
+        }
     }
     let (repos, gems) = (
         others["repos"].as_u64().unwrap_or(0),

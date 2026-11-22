@@ -99,14 +99,26 @@ pub(super) fn resolve(
     let installed = Installed::scan(&[roots, fallback]);
     // A git gem is its checkout, whatever version a dependent asks for, as
     // bundler takes the Gemfile's source for every requirement on the name.
-    let git: BTreeMap<String, Result<Copy, Absence>> = declared
-        .iter()
-        .filter_map(|d| Some((d.name.clone(), d.git.as_ref()?)))
-        .map(|(name, source)| {
-            let found = git_checkout(&name, source, &[roots, fallback]);
-            (name, found)
-        })
-        .collect();
+    // With no checkout to take, the name resolves as a release does, and
+    // says why: the git line must not take away a gem the installed release
+    // answers for (DEC-871).
+    let mut git: BTreeMap<String, Copy> = BTreeMap::new();
+    let mut not_checked_out: BTreeMap<String, Absence> = BTreeMap::new();
+    for dependency in &declared {
+        let Some(source) = &dependency.git else {
+            continue;
+        };
+        match git_checkout(&dependency.name, source, &[roots, fallback]) {
+            Ok(copy) => {
+                not_checked_out.remove(&dependency.name);
+                git.insert(dependency.name.clone(), copy);
+            }
+            Err(_) if git.contains_key(&dependency.name) => {}
+            Err(absence) => {
+                not_checked_out.insert(dependency.name.clone(), absence);
+            }
+        }
+    }
     // Every requirement written for a name, merged, before any is resolved:
     // the gemspec's `< 2` and the Gemfile's `~> 1.0` both bind.
     let mut direct: BTreeMap<String, Dependency> = BTreeMap::new();
@@ -170,10 +182,8 @@ pub(super) fn resolve(
             .iter()
             .map(|(name, requirements)| (name.clone(), installed.best(name, requirements, fits)))
             .collect();
-        for (name, found) in &git {
-            if let Ok(copy) = found {
-                next.insert(name.clone(), Some(copy));
-            }
+        for (name, copy) in &git {
+            next.insert(name.clone(), Some(copy));
         }
         if next.len() == picks.len()
             && next
@@ -187,15 +197,16 @@ pub(super) fn resolve(
     }
 
     let picks_final: Vec<&Copy> = picks.values().flatten().copied().collect();
-    let mut located: Vec<Located> = picks
+    let located: Vec<Located> = picks
         .into_iter()
         .map(|(name, copy)| {
             let unread = direct
                 .get(&name)
                 .map(|d| d.unread.clone())
                 .unwrap_or_default();
-            match copy {
-                Some(copy) => Located {
+            let git_absence = not_checked_out.remove(&name);
+            match (copy, git_absence) {
+                (Some(copy), git_absence) => Located {
                     gem: Gem {
                         source: match git.contains_key(&name) {
                             true => Source::Git {
@@ -209,8 +220,24 @@ pub(super) fn resolve(
                     place: Place::Dir(copy.path.clone()),
                     unread,
                     elsewhere: copy.tier > 0,
+                    git_not_taken: git_absence,
                 },
-                None => {
+                // Nothing installed to stand in: the git source's reason is
+                // the one that says what to do.
+                (None, Some(absence)) => Located {
+                    gem: Gem {
+                        name,
+                        version: String::new(),
+                        source: Source::Git {
+                            checkout: String::new(),
+                        },
+                    },
+                    place: Place::Missing(absence),
+                    unread,
+                    elsewhere: false,
+                    git_not_taken: None,
+                },
+                (None, None) => {
                     let requirements = wanted.remove(&name).unwrap_or_default();
                     let (version, absence) =
                         match conflict(&name, &direct, &picks_final, &needs, &installed) {
@@ -229,27 +256,12 @@ pub(super) fn resolve(
                         place: Place::Missing(absence),
                         unread,
                         elsewhere: false,
+                        git_not_taken: None,
                     }
                 }
             }
         })
         .collect();
-    for (name, found) in git {
-        if let Err(absence) = found {
-            located.push(Located {
-                gem: Gem {
-                    name,
-                    version: String::new(),
-                    source: Source::Git {
-                        checkout: String::new(),
-                    },
-                },
-                place: Place::Missing(absence),
-                unread: Vec::new(),
-                elsewhere: false,
-            });
-        }
-    }
     Some(located)
 }
 
@@ -1170,6 +1182,61 @@ gem "gamma", "~> #{ENV['GAMMA']}"
             assert_eq!(beta.gem.version, "5.26.0", "declared {order:?}");
             let _ = std::fs::remove_dir_all(&base);
         }
+    }
+
+    /// A git line with no checkout to take, in the Gemfile or a file it
+    /// evals, leaves the name to the installed release, and says so; with
+    /// none installed, the git source's reason stands.
+    #[test]
+    fn a_git_gem_with_no_checkout_falls_back_to_the_installed_release() {
+        let base =
+            std::env::temp_dir().join(format!("trekr-declared-gitless-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let gems = base.join("gems");
+        std::fs::create_dir_all(gems.join("alpha-1.2.1")).unwrap();
+        std::fs::create_dir_all(gems.join("beta-2.0.0")).unwrap();
+        let repo = base.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(
+            repo.join("widget.gemspec"),
+            "Gem::Specification.new do |s|\n  s.add_dependency 'alpha'\nend\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("Gemfile"),
+            "gemspec\ngem 'beta', git: 'https://example.com/beta.git'\neval_gemfile 'Gemfile.deps'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("Gemfile.deps"),
+            "gem 'alpha', git: 'https://example.com/alpha.git'\n\
+             gem 'gamma', git: 'https://example.com/gamma.git'\n",
+        )
+        .unwrap();
+
+        let located = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
+        let by = |name: &str| located.iter().find(|l| l.gem.name == name).unwrap();
+        for (name, version) in [("alpha", "1.2.1"), ("beta", "2.0.0")] {
+            let gem = by(name);
+            assert!(
+                matches!(gem.place, Place::Dir(_)),
+                "{name}: {:?}",
+                gem.place
+            );
+            assert_eq!(gem.gem.version, version);
+            assert!(
+                matches!(gem.git_not_taken, Some(Absence::GitUnlocked(_))),
+                "{name} says its git source was not taken"
+            );
+        }
+        let gamma = by("gamma");
+        assert!(
+            matches!(gamma.place, Place::Missing(Absence::GitUnlocked(_))),
+            "{:?}",
+            gamma.place
+        );
+        assert_eq!(located.len(), 3, "{located:?}");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

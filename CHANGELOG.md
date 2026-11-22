@@ -80,6 +80,14 @@
 - **With no lockfile, `--index` resolves the gems a file the Gemfile
   evals declares** (`eval_gemfile "Gemfile.tools"`), as `--dead Gemfile`
   grades them: they were left out, so nothing of theirs was indexed.
+- **With no lockfile, a git gem with no checkout is indexed at its
+  installed release**: `gem "hashdiff", git: …` with nothing in
+  `bundler/gems` dropped hashdiff, the gemspec's dependency on it too, so
+  nothing of it was indexed. The installed release that meets the
+  requirements is, and `gems.unlocated` says the git source was not taken.
+- **`--status` names the bundle's gems the index lacks**: `gems.missing`
+  and `gems.unlocated`, as `--index` reports them. A gem not installed, or
+  a git gem not checked out, was counted nowhere ("all indexed").
 
 - **`--dead` reads an operator assignment to a call as a call of its
   reader and its writer**: `w.count ||= 0`, `w.total += 1` and

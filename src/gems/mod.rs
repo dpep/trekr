@@ -63,6 +63,9 @@ pub(crate) struct Located {
     /// Found only in another Ruby's gem directories than the checkout's
     /// own: that Ruby has no copy that would do (DEC-291).
     pub(crate) elsewhere: bool,
+    /// Without a lockfile, a git source with no checkout to take, so the
+    /// installed release meeting its requirements stands in (DEC-871).
+    pub(crate) git_not_taken: Option<Absence>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -768,6 +771,7 @@ pub(crate) fn locate(repo: &Path, gems: Vec<Gem>, ruby: Option<&stdlib::Stdlib>)
             place,
             unread: Vec::new(),
             elsewhere,
+            git_not_taken: None,
         })
         .collect()
 }

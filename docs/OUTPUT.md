@@ -795,8 +795,11 @@ was found.
 
 - `missing` — gems the lockfile wants and disk lacks: a hole in every answer
   that would have come from them.
-- `unlocated` — git and path gems that were not indexed, each with its `why`
-  (a git checkout not where bundler puts it, a path outside the checkout).
+- `unlocated` — git and path gems that were not indexed from their source,
+  each with its `why` (a git checkout not where bundler puts it, a path
+  outside the checkout). Without a lockfile, a git gem with no checkout to
+  take is indexed at the installed release that meets its requirements, when
+  one is, and listed here too, its `why` saying so (DEC-871).
 - `resolved_from` — `lockfile`, or `declared` when there was no
   `Gemfile.lock` and the gemspecs' and Gemfile's dependencies were resolved
   to the highest installed versions instead; absent, no gem was indexed.
@@ -823,7 +826,8 @@ was found.
 
 `trekr --status` shows the checkout you are in (`repo`, `files`, `blobs`,
 `indexed_at` in Unix seconds), its gems counted (`gems: {count, indexed,
-files}`), its Ruby's stdlib (`stdlib: {root, files, hidden}`), how many
+files}`, with `missing` and `unlocated` as `--index` writes them when the
+bundle has a hole, read again as the next index would find it), its Ruby's stdlib (`stdlib: {root, files, hidden}`), how many
 other checkouts are indexed (`others`, with `repos`), and `totals` over the
 whole store (`blobs`, `defs`, `const_refs`, `calls`); `--status --all`
 lists every checkout, each with `kind` (`repo`, `gem` or `stdlib`).

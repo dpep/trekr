@@ -801,6 +801,66 @@ fn with_no_lockfile_a_gemfiles_evals_are_resolved_and_its_path_blocks_are_not() 
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A git line with no checkout to take, here in a file the Gemfile evals,
+/// leaves the gemspec's dependency to the installed release, which `--index`
+/// and `--status` both say; a git gem with nothing installed is named by
+/// `--status` too, not left out of its count.
+#[test]
+fn with_no_lockfile_a_gem_whose_git_source_is_not_checked_out_is_the_installed_release() {
+    let (dir, db) = ruby_scratch("declared-gitless");
+    repo(&dir);
+    let lib = dir.join("vendor/bundle/ruby/3.3.0/gems/widget-1.0.0/lib");
+    fs::create_dir_all(&lib).unwrap();
+    fs::write(lib.join("widget.rb"), "module Widget\nend\n").unwrap();
+    fs::write(
+        dir.join("app.gemspec"),
+        "Gem::Specification.new do |s|\n  s.name = \"app\"\n  s.add_dependency \"widget\"\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Gemfile"),
+        "gemspec\neval_gemfile \"Gemfile.deps\"\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Gemfile.deps"),
+        "gem \"widget\", git: \"https://example.com/widget.git\"\n\
+         gem \"lost\", git: \"https://example.com/lost.git\"\n",
+    )
+    .unwrap();
+
+    let index = json(&trekr(&db, &dir, &["--index", "--json"]));
+    assert_eq!(
+        index["gems"]["picked"],
+        serde_json::json!(["widget 1.0.0"]),
+        "{index}"
+    );
+    let status = json(&trekr(&db, &dir, &["--status", "--json"]));
+    let gems = &status["checkouts"][0]["gems"];
+    assert_eq!(gems["count"], 1, "{status}");
+    let unlocated: Vec<(&str, &str)> = gems["unlocated"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{status}"))
+        .iter()
+        .map(|u| (u["gem"].as_str().unwrap(), u["why"].as_str().unwrap()))
+        .collect();
+    assert_eq!(unlocated.len(), 2, "{unlocated:?}");
+    assert!(
+        unlocated
+            .iter()
+            .any(|(gem, why)| *gem == "lost" && why.contains("no checkout of lost")),
+        "{unlocated:?}"
+    );
+    assert!(
+        unlocated.iter().any(|(gem, why)| *gem == "widget 1.0.0"
+            && why.contains("the installed release is indexed instead")),
+        "{unlocated:?}"
+    );
+    assert_eq!(index["gems"]["unlocated"], gems["unlocated"], "{index}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A gem's base class may reach what a subclass in the app defines by a
 /// name no call writes: a drop's `public_send(key)` runs its methods, and a
 /// dashboard's `self.class::ATTRS` reads its constant. `--dead` reads the

@@ -883,11 +883,9 @@ fn plan_gems(
     // position inside it answerable from here (DEC-029).
     let mut used: Vec<(String, String)> = Vec::new();
     let mut fresh: Vec<PathBuf> = Vec::new();
+    (report.missing, report.unlocated) = gem_holes(&located, stdlib.as_ref());
     for entry in located {
-        let named = match entry.gem.version.as_str() {
-            "" => entry.gem.name.clone(),
-            version => format!("{} {version}", entry.gem.name),
-        };
+        let named = named_gem(&entry);
         if !entry.unread.is_empty() {
             report.unread.push(Unread {
                 gem: named.clone(),
@@ -902,26 +900,14 @@ fn plan_gems(
             }
             // A default gem at the version the stdlib ships: its code is the
             // stdlib just indexed, found wherever rubygems left its directory.
-            crate::gems::Place::Missing(
-                crate::gems::Absence::NotInstalled | crate::gems::Absence::DefaultGem(_),
-            ) if stdlib
-                .as_ref()
-                .is_some_and(|s| s.ships(&entry.gem.name, &entry.gem.version)) =>
-            {
+            crate::gems::Place::Missing(_) if in_stdlib(&entry, stdlib.as_ref()) => {
                 report.found += 1;
                 report.from_stdlib += 1;
                 report.picked.push(named);
                 continue;
             }
-            crate::gems::Place::Missing(crate::gems::Absence::NotInstalled) => {
-                report.missing.push(named);
-                continue;
-            }
-            crate::gems::Place::Missing(absence) => {
-                let why = absence.why(&entry.gem.name);
-                report.unlocated.push(Unlocated { gem: named, why });
-                continue;
-            }
+            // Said by `gem_holes`.
+            crate::gems::Place::Missing(_) => continue,
         };
         report.found += 1;
         if entry.elsewhere {
@@ -1210,6 +1196,56 @@ struct StdlibReport {
     rbs: Option<crate::rbs::Report>,
 }
 
+/// `name version`, or the name alone when no version was read.
+fn named_gem(entry: &crate::gems::Located) -> String {
+    match entry.gem.version.as_str() {
+        "" => entry.gem.name.clone(),
+        version => format!("{} {version}", entry.gem.name),
+    }
+}
+
+/// A default gem at the version the stdlib ships: its code is the stdlib,
+/// found wherever rubygems left its directory.
+fn in_stdlib(entry: &crate::gems::Located, stdlib: Option<&crate::gems::stdlib::Stdlib>) -> bool {
+    matches!(
+        entry.place,
+        crate::gems::Place::Missing(
+            crate::gems::Absence::NotInstalled | crate::gems::Absence::DefaultGem(_)
+        )
+    ) && stdlib.is_some_and(|s| s.ships(&entry.gem.name, &entry.gem.version))
+}
+
+/// The bundle's gems the index lacks (`missing`: not installed), and those
+/// not indexed from their source (`unlocated`, with why): `--index` and
+/// `--status` say the same holes.
+pub(super) fn gem_holes(
+    located: &[crate::gems::Located],
+    stdlib: Option<&crate::gems::stdlib::Stdlib>,
+) -> (Vec<String>, Vec<Unlocated>) {
+    let (mut missing, mut unlocated) = (Vec::new(), Vec::new());
+    for entry in located {
+        let gem = named_gem(entry);
+        match &entry.place {
+            crate::gems::Place::Missing(_) if in_stdlib(entry, stdlib) => {}
+            crate::gems::Place::Missing(crate::gems::Absence::NotInstalled) => missing.push(gem),
+            crate::gems::Place::Missing(absence) => {
+                let why = absence.why(&entry.gem.name);
+                unlocated.push(Unlocated { gem, why });
+            }
+            _ => {
+                if let Some(absence) = &entry.git_not_taken {
+                    let why = format!(
+                        "{}, so the installed release is indexed instead",
+                        absence.why(&entry.gem.name)
+                    );
+                    unlocated.push(Unlocated { gem, why });
+                }
+            }
+        }
+    }
+    (missing, unlocated)
+}
+
 #[derive(Debug, Default, serde::Serialize)]
 struct GemReport {
     /// Whether the checkout has a `Gemfile.lock`.
@@ -1282,7 +1318,7 @@ struct Unread {
 }
 
 #[derive(Debug, serde::Serialize)]
-struct Unlocated {
+pub(super) struct Unlocated {
     /// `name version`, as `missing` writes it.
     gem: String,
     why: String,
@@ -1579,7 +1615,7 @@ fn gemfile_is_newer(root: &Path) -> bool {
 
 /// A list of gems, cut short. The full list is in `--json`; a lockfile
 /// naming every optional adapter would otherwise bury the report.
-fn abridged(gems: &[String]) -> String {
+pub(super) fn abridged(gems: &[String]) -> String {
     const SHOWN: usize = 6;
     let mut out = gems
         .iter()

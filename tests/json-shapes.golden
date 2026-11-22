@@ -340,6 +340,12 @@
 --status $.checkouts[].gems.count: int
 --status $.checkouts[].gems.files: int
 --status $.checkouts[].gems.indexed: int
+--status $.checkouts[].gems.missing: array
+--status $.checkouts[].gems.missing[]: string
+--status $.checkouts[].gems.unlocated: array
+--status $.checkouts[].gems.unlocated[]: object
+--status $.checkouts[].gems.unlocated[].gem: string
+--status $.checkouts[].gems.unlocated[].why: string
 --status $.checkouts[].indexed_at: int
 --status $.checkouts[].kind: string {repo}
 --status $.checkouts[].repo: string
