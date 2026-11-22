@@ -836,7 +836,7 @@ counts them; `free_bytes`, those free inside it — both read in one snapshot,
 with `cleanup`; `stale_snapshots`
 (`files`, `bytes`), tree snapshots no checkout's current key names (a
 query's tree over its edits is never counted: only `--gc` removes those); and
-`reclaimable_bytes`, the two together — what `--gc --vacuum` would return.
+`reclaimable_bytes`, the two together — what a compaction would return.
 `cleanup` says what the background cleanup last did: `checked_at`, when it
 last measured the store (a new store is stamped at creation), `ran_at` and
 `reclaimed_bytes`, its last pass and what that returned to the disk, and
@@ -859,12 +859,10 @@ checkout's, and `expired`: those unmapped longer than the retention.
 on a dry run too, since without it a collection scans a table per blob, and
 an index removes nothing — and names them in `indexes` (empty when none).
 It reports `reclaimed_bytes`, what it returned to the disk: the files it
-removed (`snapshots`, `overlays`, `core_files`, `kept`) and, with `--vacuum`,
-the pages the index file gave up — counted in pages, since a reader can hold
-off the file's own shrink until the log is folded back. `freed_bytes` is the pages its deletions freed
-inside the file, which later writes reuse; `free_bytes` is every free page
-left in it — `0` after `--vacuum` — which the background cleanup compacts
-once it is worth it.
+removed (`snapshots`, `overlays`, `core_files`, `kept`). `freed_bytes` is the
+pages its deletions freed inside the file, which later writes reuse;
+`free_bytes` is every free page left in it, which the background cleanup
+compacts once it is worth it.
 
 A reindex with nothing changed parses nothing (~60 ms on a 3k-file repo), and
 a second worktree of the same repo costs nothing — facts are keyed by git

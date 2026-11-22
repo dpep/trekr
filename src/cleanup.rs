@@ -2,7 +2,7 @@
 //!
 //! A rebuild or a collection leaves its old rows' pages free inside the file,
 //! and a release leaves each checkout not queried since with a tree snapshot
-//! no key names. Nobody should have to know `--gc --vacuum` exists. So an
+//! no key names. Nobody should have to run a compaction. So an
 //! index pass, once it is done, measures what could be given back — at most
 //! every [`INTERVAL`] — and when that passes the threshold it claims the
 //! store's cleanup and starts a detached `trekr --cleanup STORE`, which
@@ -54,8 +54,8 @@ pub(crate) enum Retention {
 
 pub(crate) const DEFAULT_RETENTION: Retention = Retention::For(14 * 86_400);
 
-/// The standing setting; `--retention` overrides it for one `--gc` or
-/// `--status`. Every process reads it, the background cleanup included.
+/// The setting, read by every process: `--gc`, `--status` and the
+/// background cleanup.
 pub(crate) const RETENTION_ENV: &str = "TREKR_RETENTION";
 
 impl std::str::FromStr for Retention {
@@ -72,22 +72,20 @@ impl std::str::FromStr for Retention {
 }
 
 impl Retention {
-    /// The flag, else the environment's value (empty is unset), else the
-    /// default.
-    pub(crate) fn choose(flag: Option<Retention>, env: Option<&str>) -> Result<Retention, String> {
-        match (flag, env) {
-            (Some(flag), _) => Ok(flag),
-            (None, Some(text)) if !text.is_empty() => text
+    /// The environment's value (empty is unset), else the default.
+    pub(crate) fn choose(env: Option<&str>) -> Result<Retention, String> {
+        match env {
+            Some(text) if !text.is_empty() => text
                 .parse()
                 .map_err(|why| format!("{RETENTION_ENV}: {why}")),
-            (None, _) => Ok(DEFAULT_RETENTION),
+            _ => Ok(DEFAULT_RETENTION),
         }
     }
 
     /// [`Retention::choose`] with this process's environment.
-    pub(crate) fn configured(flag: Option<Retention>) -> Result<Retention, String> {
+    pub(crate) fn configured() -> Result<Retention, String> {
         let env = std::env::var(RETENTION_ENV).ok();
-        Retention::choose(flag, env.as_deref())
+        Retention::choose(env.as_deref())
     }
 
     /// In seconds; `None` for never.
@@ -168,7 +166,7 @@ pub(crate) fn after_index(store: &mut Store) {
         return;
     };
     // One the environment cannot give is never: nothing collected on a guess.
-    let retention = Retention::configured(None).unwrap_or(Retention::Never);
+    let retention = Retention::configured().unwrap_or(Retention::Never);
     match start(store, now(), retention) {
         Ok(true) => {
             if let Err(error) = spawn(&path) {
@@ -495,7 +493,7 @@ pub(crate) fn command(path: &Path) {
             );
         }
     };
-    let retention = Retention::configured(None).unwrap_or_else(|why| {
+    let retention = Retention::configured().unwrap_or_else(|why| {
         log("cleanup_retention", serde_json::json!({ "error": why }));
         Retention::Never
     });
@@ -941,20 +939,18 @@ mod tests {
     }
 
     #[test]
-    fn the_flag_wins_then_the_environment_then_the_default() {
+    fn the_environment_wins_then_the_default() {
         let month = Retention::For(30 * 86_400);
         let cases = [
-            (Some(Retention::Never), Some("30d"), Ok(Retention::Never)),
-            (Some(Retention::Never), Some("bogus"), Ok(Retention::Never)),
-            (None, Some("30d"), Ok(month)),
-            (None, Some("never"), Ok(Retention::Never)),
-            (None, Some(""), Ok(DEFAULT_RETENTION)),
-            (None, None, Ok(DEFAULT_RETENTION)),
+            (Some("30d"), Ok(month)),
+            (Some("never"), Ok(Retention::Never)),
+            (Some(""), Ok(DEFAULT_RETENTION)),
+            (None, Ok(DEFAULT_RETENTION)),
         ];
-        for (flag, env, want) in cases {
-            assert_eq!(Retention::choose(flag, env), want, "{flag:?} {env:?}");
+        for (env, want) in cases {
+            assert_eq!(Retention::choose(env), want, "{env:?}");
         }
-        let bad = Retention::choose(None, Some("off")).unwrap_err();
+        let bad = Retention::choose(Some("off")).unwrap_err();
         assert!(
             bad.contains("TREKR_RETENTION") && bad.contains("never"),
             "{bad}"

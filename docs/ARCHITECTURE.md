@@ -597,7 +597,7 @@ an index or the editor's save records, a `--drop` — stamps it in
 `loose_blob` with when, unless another file still maps it; a write that maps
 it again (the switch back) clears the stamp, and the facts are reused. A
 query's draft is stamped as it is recorded. Past the retention — 14 days,
-`TREKR_RETENTION` or `--retention` (an age, `0`, or `never`) — the
+or `TREKR_RETENTION` (an age, `0`, or `never`) — the
 background cleanup collects it in batches of 100 per write transaction, and
 `--gc` with the rest. A blob an older trekr unmapped has no stamp; each
 background pass and `--gc` stamp every such blob as of then — once the
@@ -907,7 +907,7 @@ holding the rest of the `--json` answer and `rows`, the count (DEC-290).
 | `--ancestors NAME` | the linearized ancestor chain |
 | `Constant`, `Owner#method` | a card: the definition, a method's reference counts by tier, a constant's chain — and a model's table from the schema dump, `table` in JSON (DEC-481) |
 | `--drop [PATH]` | forget a checkout's file map, and its overlay copy in `trekr.overlays/` |
-| `--gc [--dry-run] [--older-than AGE] [--retention AGE] [--vacuum]` | remove checkouts nothing can reach again, the blobs only they mapped, the versions no checkout has mapped for the retention (DEC-651), tree snapshots no checkout's index names, and every overlay copy (`overlays` in its `--json`); `reclaimed_bytes` is what left the disk. The background cleanup (DEC-650) does the safe part of this on its own |
+| `--gc [--dry-run] [--older-than AGE]` | remove checkouts nothing can reach again, the blobs only they mapped, the versions no checkout has mapped for the retention (DEC-651), tree snapshots no checkout's index names, and every overlay copy (`overlays` in its `--json`); `reclaimed_bytes` is what left the disk. The background cleanup (DEC-650) does the safe part of this on its own |
 | `--usage [--days N]` | which commands and editor features get used, by whom, how often empty, how slow (see below) |
 | `--dead PATH…` | (or `--dead Gemfile`: the gems it declares) methods, then example groups' members and shared groups, then classes, modules and constants, in scope that nothing appears to use, tiered and graded (see below) |
 
@@ -1063,7 +1063,7 @@ usage_daily(day, surface, feature, flags, origin, outcome, latency, cold, versio
   `session`, `resume`, `reload`, `reload-failed`, `retire`, `index`.
 - `flags` names the knobs and variants reached for (`json`, `explain`, `bare`,
   `by-name`, `snapped`, `stale`, `require`, `cut`, `gems` for `--dead` on a
-  bundle file, `all` for `--status --all`, `retention`, `older-than`, `jobs`,
+  bundle file, `all` for `--status --all`, `older-than`, `jobs`,
   and `tree-built` when the operation had to assemble the tree rather than
   map its snapshot), never their values.
 - `origin` is rq's caller taxonomy (`claude-code`, `cursor`, `ci`, `human`,

@@ -47,7 +47,7 @@
   rows carry `version` (`+dev` for a cargo build, `""` for counts from
   before), and the summary ends with a `trekr versions:` line. `--dead` on
   a bundle file counts as `dead gems`, `--status --all` as `status all`,
-  and `--retention`, `--older-than` and `--jobs` are counted when given.
+  and `--older-than` and `--jobs` are counted when given.
   The counts file is migrated in place on first use; nothing to do.
 - **A query that builds the tree no longer loads every `initialize` to
   place class macros' mixins**: on discourse a tree-needing `--def` or
@@ -56,6 +56,15 @@
   longer loads every `initialize`, nor rescans each class's concerns, so
   a `--def` or `--ancestors` that needs the tree, and the language
   server's first answer, shed most of that build on a large app.
+
+### Removed
+
+- **`trekr --gc --vacuum` and `--retention` are gone.** Compaction is
+  automatic: the background cleanup hands free pages back, so there is
+  nothing to run. For one `--gc` or `--status` with another retention, set
+  `TREKR_RETENTION` (`TREKR_RETENTION=0 trekr --gc`). `--gc --json` no
+  longer carries `vacuumed`. Either flag is now an unknown-flag error
+  (exit 64).
 
 ### Fixed
 

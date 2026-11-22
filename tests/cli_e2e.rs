@@ -449,7 +449,12 @@ fn a_replaced_version_is_kept_for_the_retention_then_collected() {
     );
     assert_eq!(json(&kept)["blobs"], 0, "never keeps every version");
     assert_eq!(json(&kept)["retention"], serde_json::Value::Null);
-    let status = trekr(&db, &dir, &["--status", "--json", "--retention", "30d"]);
+    let status = trekr_env(
+        &db,
+        &dir,
+        &["--status", "--json"],
+        &[("TREKR_RETENTION", "30d")],
+    );
     assert_eq!(
         json(&status)["storage"]["retained"]["retention"],
         30 * 86_400
@@ -1969,13 +1974,15 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
             "usage",
             "TREKR_RETENTION",
         ),
+        // Removed for TREKR_RETENTION and the background compaction: unknown now.
+        (&dir, &["--gc", "--vacuum"], &[], 64, "usage", "--vacuum"),
         (
             &dir,
-            &["--gc", "--retention", "off"],
+            &["--gc", "--retention", "30d"],
             &[],
             64,
             "usage",
-            "never",
+            "--retention",
         ),
         (
             &dir,
@@ -1992,14 +1999,6 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
             64,
             "usage",
             "too long",
-        ),
-        (
-            &dir,
-            &["--index", "--retention", "30d"],
-            &[],
-            64,
-            "usage",
-            "--retention",
         ),
         (
             &dir,
@@ -2517,7 +2516,6 @@ fn usage_tells_modes_and_knobs_apart_and_records_the_version() {
         &["--dead", "Gemfile"],
         &["--status"],
         &["--status", "--all"],
-        &["--status", "--retention", "30d"],
         &["--gc", "--dry-run"],
         &["--gc", "--dry-run", "--older-than", "1d"],
         &["--index", "--jobs", "1"],
@@ -2537,7 +2535,7 @@ fn usage_tells_modes_and_knobs_apart_and_records_the_version() {
         flags
     };
     assert_eq!(flags("dead"), ["", "gems"], "{rows:?}");
-    assert_eq!(flags("status"), ["", "all", "retention"], "{rows:?}");
+    assert_eq!(flags("status"), ["", "all"], "{rows:?}");
     assert_eq!(flags("gc"), ["dry-run", "dry-run,older-than"], "{rows:?}");
     assert!(flags("index").contains(&"jobs"), "{rows:?}");
     // A test binary runs from cargo's target/, so it counts as a dev build.
@@ -5191,8 +5189,8 @@ fn gc_says_which_index_it_added_even_on_a_dry_run() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// `--gc` says what it returned to the disk — the files it removed, and the
-/// file's own shrink once vacuumed — apart from the pages it freed inside.
+/// `--gc` says what it returned to the disk — the files it removed — apart
+/// from the pages it freed inside, which the background cleanup hands back.
 #[test]
 fn gc_reports_the_bytes_it_returned_to_the_disk() {
     let (dir, db) = ruby_scratch("gc-bytes");
@@ -5205,13 +5203,6 @@ fn gc_reports_the_bytes_it_returned_to_the_disk() {
     assert_eq!(gc["reclaimed_bytes"], snapshot, "{gc}");
     assert!(gc["free_bytes"].as_i64().unwrap() >= 40_000_000, "{gc}");
     assert_eq!(gc["freed_bytes"], 0, "{gc}");
-
-    let vacuumed = json(&trekr(&db, &dir, &["--gc", "--vacuum", "--json"]));
-    assert!(
-        vacuumed["reclaimed_bytes"].as_i64().unwrap() >= 40_000_000,
-        "{vacuumed}"
-    );
-    assert_eq!(vacuumed["free_bytes"], 0, "{vacuumed}");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -5339,12 +5330,11 @@ fn gc_collects_a_gem_version_no_bundle_names_and_an_index_brings_it_back() {
     assert_eq!(dry["dry_run"], true);
     assert_eq!(blobs(), 4, "a dry run removes nothing");
 
-    let done = json(&run(&["--gc", "--older-than", "0", "--vacuum", "--json"]));
+    let done = json(&run(&["--gc", "--older-than", "0", "--json"]));
     assert_eq!(
         (done["files"].clone(), done["blobs"].clone()),
         (2.into(), 1.into())
     );
-    assert_eq!(done["vacuumed"], true);
     assert_eq!(
         blobs(),
         3,

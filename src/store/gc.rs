@@ -404,7 +404,8 @@ impl Store {
 
     /// Rewrite the database without its free pages, and fold the WAL back in
     /// so the file on disk actually shrinks. Seconds on a large store and it
-    /// holds the write lock throughout, so it is asked for, never implied.
+    /// holds the write lock throughout, so the cleanup runs it once, on a
+    /// store from before incremental vacuuming.
     ///
     /// The copy SQLite builds on the way goes to a temporary file, not to
     /// memory as this connection's own temporary tables do: it is the whole

@@ -24,7 +24,7 @@ belongs to:
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563, 812, 855, 856 |
 | `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 670, 680, 690, 720, 721, 730, 750, 751, 760, 762, 770, 771, 772, 791, 792, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 815, 816, 817, 818, 819, 820, 821, 822, 842, 843, 845, 846, 857, 858 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646, 810, 811, 836 |
-| Scope and housekeeping | 030, 063, 640, 835, 838, 860 |
+| Scope and housekeeping | 030, 063, 640, 835, 838, 860, 863 |
 
 A few revisits are subsections filed under a neighbouring entry, as they
 were appended: DEC-022's (session 35) and DEC-033's (session 30) under
@@ -2809,6 +2809,9 @@ collects everything anyway (DEC-009).
 later indexes reuse, so the store stops growing without it. Shrinking the file
 is a `VACUUM` — 5.6 s here, holding the write lock — plus a WAL checkpoint so
 the bytes actually leave the disk.
+
+*Reversed by DEC-863:* `--vacuum` is gone; the background cleanup
+(DEC-650) compacts.
 
 **The dry run is the real run, rolled back**, so the size it reports is
 measured, not estimated; on this store it cost 0.9 s.
@@ -14794,6 +14797,9 @@ refused on `--index` and queries rather than silently not reaching the pass.
   variable); the background pass, which has nobody to tell, logs
   `cleanup_retention` and collects nothing: a guess never deletes.
 
+*Revisited by DEC-863:* `--retention` is gone; `TREKR_RETENTION` is the
+one setting.
+
 **Why 14 days.** Collecting is undone by reading the file again, and that
 is cheap (below): two seconds for a large switch back. Two weeks covers a
 branch parked for a sprint or a vacation; 30 days was the other candidate
@@ -18544,3 +18550,29 @@ requirements and a `git:` source; `gemfile.rs` keeps every line with its
 groups, platforms and position. One reader would carry both, a larger
 change than this fix asks; the eval list was the knowledge one had and the
 other lacked.
+
+## DEC-863 — `--gc --vacuum` and `--retention` removed; `--older-than` kept
+
+**Decided.** `--vacuum` goes: the background cleanup (DEC-650) already
+hands free pages back, a chunk at a time on an incremental store and by
+one full rewrite on an older one, and the product review found it unused
+(its own module said nobody should have to know it exists). `--retention`
+goes too: it overrode `TREKR_RETENTION` for one `--gc` or `--status`,
+which `TREKR_RETENTION=… trekr --gc` does the same, and the environment is
+what the cleanup reads anyway (DEC-651). Nothing outside the repo named
+either flag: no skill, script, or the VS Code extension. `--gc --json`
+drops `vacuumed`, and `reclaimed_bytes` counts only the files removed: a
+delete frees pages inside the file, it never shrinks it. Pre-1.0, so no
+alias; an unknown flag is clap's usage error (exit 64).
+
+**`--older-than` stays.** The cleanup never removes a checkout: only
+`--gc` drops one whose root is gone or a gem version no bundle names, and
+`--older-than` is its spare window. `--older-than 0` is the only way to
+drop a worktree just deleted, or a gem version a lockfile just moved past,
+without waiting the default week; nothing else covers it.
+
+Tests: `an_error_exits_on_its_own_code_and_speaks_json_when_asked`
+(`--gc --vacuum` and `--gc --retention 30d` are
+unknown), `a_replaced_version_is_kept_for_the_retention_then_collected`
+(`TREKR_RETENTION` on `--status`), `gc_reports_the_bytes_it_returned_to_the_disk`,
+`the_environment_wins_then_the_default`.
