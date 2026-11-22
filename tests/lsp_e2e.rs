@@ -6491,6 +6491,48 @@ fn a_definition_asked_before_the_index_waits_for_it_while_the_loop_serves() {
     let _ = fs::remove_dir_all(dir.with_extension("gated-git"));
 }
 
+/// Parked references are searched again only once the index is whole, not
+/// at each step it takes: many of them held meanwhile leave the loop free
+/// for a hover, and each is searched when asked and once more at the end.
+#[test]
+fn parked_references_are_searched_again_only_when_the_index_is_whole() {
+    // Each step of the first index held long enough for the loop to see it:
+    // the first part, the rest, and the tree prepared after the mark clears.
+    let stalls = [
+        ("TREKR_TEST_STALL_MS", "600"),
+        ("TREKR_TEST_STALL_BULK_MS", "600"),
+        ("TREKR_TEST_STALL_TREE_MS", "600"),
+    ];
+    let (dir, gate, mut session) = unindexed_session("wait-whole", &stalls);
+    let at = serde_json::json!({
+        "textDocument": {"uri": uri_of(&dir, "app.rb")},
+        "position": {"line": 1, "character": 6},
+        "context": {"includeDeclaration": false},
+    });
+    let parked: Vec<i64> = (0..10)
+        .map(|_| send_request(&mut session, "textDocument/references", at.clone()))
+        .collect();
+    let hover = send_request(&mut session, "textDocument/hover", save_at(&dir));
+    let (_, before) = answer_to(&mut session, hover);
+    assert!(before.is_empty(), "the hover waited behind {before:?}");
+
+    fs::write(&gate, "").unwrap();
+    for id in &parked {
+        let (answer, _) = answer_to(&mut session, *id);
+        let found = answer["result"].as_array().map(Vec::len);
+        assert_eq!(found, Some(1), "Widget#save's call in Job#run: {answer}");
+    }
+    session.stop();
+    let db = dir.with_extension("store").join("trekr.db");
+    let searched = log_lines(&db)
+        .iter()
+        .filter(|l| l["event"] == "request" && l["op"] == "textDocument/references")
+        .count();
+    assert!(searched <= 2 * parked.len(), "searched {searched} times");
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(dir.with_extension("gated-git"));
+}
+
 /// A request parked for the index whose document then changes is refused
 /// with `ContentModified`, not answered for whatever the new text holds at
 /// its position: the client asked about the old one.

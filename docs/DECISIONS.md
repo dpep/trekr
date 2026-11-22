@@ -18105,8 +18105,10 @@ the index is held, off the serve loop, by the rule the CLI already follows
   after it only when it found nothing. What it found in the first part is
   answered, and DEC-331's message says it is partial.
 
-A held request is retried each time the checkout's index moves (a commit,
-its end, or the index no longer coming) and answered when the index ends.
+A held position is retried each time the checkout's index moves (a commit,
+its end, or the index no longer coming), a held whole-checkout question
+only when the index is whole or no longer coming (DEC-867), and either is
+answered when the index ends.
 Its end, for this session's own first index, is the child's exit, not the
 mark's clearing: the child goes on to prepare the tree (DEC-192), and in
 that window a cold Spoom run still got empty answers.
@@ -18651,3 +18653,30 @@ files come from their current text, which is what the client has now. A
 workspace symbol has no position, and is never refused for it.
 
 Test: `a_parked_request_whose_document_changes_is_refused_as_modified`.
+
+## DEC-867 — A parked whole-checkout question is retried only when the index is whole
+
+**Decided.** A request held for the whole index (DEC-811: references,
+implementation, incoming calls, workspace symbols) is tried again only
+when the checkout's index has become whole, or is no longer coming. A
+held position (definition, declaration, the call hierarchy's prepare and
+outgoing calls) is still tried at every move, since the first part may
+answer it.
+
+**Why.** Every parked request was retried at each move of the index, and
+DEC-811's verdict holds a whole-checkout answer until the index is whole,
+so each of those retries was a full references search thrown away. With
+40 references parked on mastodon, a hover waited 10 s behind them. A
+whole-checkout question's answer cannot be sent before that point, so
+nothing is lost by not computing it.
+
+**Whole by the store.** "Whole" is read from the store: the checkout in
+it, its mark cleared, this session's index child done. The session's view
+of the mark keeps the count the answering tree was built at until a
+request rebuilds the tree, so a request waiting on that view to clear
+before it runs never ran (`answers_from_a_partial_index_say_so_and_references_wait_for_the_whole`
+caught it).
+
+Test: `parked_references_are_searched_again_only_when_the_index_is_whole`
+(ten parked, a hover answered ahead of them, at most two searches each:
+when asked, and when whole).

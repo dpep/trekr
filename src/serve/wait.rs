@@ -79,6 +79,23 @@ struct Seen {
     finishing: bool,
 }
 
+impl Seen {
+    /// Indexed, and nothing more to come: every answer is whole.
+    fn whole(&self) -> bool {
+        self.indexed && self.warming.is_none() && !self.finishing
+    }
+}
+
+/// The store holds the whole index: the checkout in it, its mark cleared,
+/// and this session's own index done. Read from the store, not through
+/// `Session::warming`, which keeps the mark the answering tree was built at
+/// until a request rebuilds it: a request waiting for this to change before
+/// it runs would wait forever.
+fn stored_whole(session: &Session, root: &std::path::Path) -> bool {
+    let mark = session.main_store().warming(&root.to_string_lossy());
+    session.indexed(root) && matches!(mark, Ok(None)) && !session.background.first_running(root)
+}
+
 fn seen(session: &Session, root: &std::path::Path) -> Seen {
     Seen {
         indexed: session.indexed(root),
@@ -120,7 +137,7 @@ pub(super) fn verdict(
         return Verdict::Answer;
     };
     let now = seen(session, &root);
-    if now.indexed && now.warming.is_none() && !now.finishing {
+    if now.whole() {
         return Verdict::Answer;
     }
     let empty = match result {
@@ -198,12 +215,14 @@ pub(super) struct Parked {
     pub(super) since: Instant,
     seen: Seen,
     read: Option<Origin>,
+    need: Option<Need>,
 }
 
 impl Parked {
     pub(super) fn new(session: &mut Session, request: Request, root: PathBuf) -> Parked {
         Parked {
             read: read_of(session, &request),
+            need: need_of(&request.method),
             seen: seen(session, &root),
             root,
             request,
@@ -217,13 +236,21 @@ impl Parked {
         read_of(session, &self.request) != self.read
     }
 
-    /// The index moved since this was last tried, or is no longer coming:
-    /// try again.
+    /// The index moved in a way that may change the answer since this was
+    /// last tried, or is no longer coming: try again. A question about the
+    /// whole checkout is answered only once the index is whole (DEC-867),
+    /// so each step before that would be a whole search for nothing.
     pub(super) fn moved(&mut self, session: &Session) -> bool {
         let now = seen(session, &self.root);
         let moved = now != self.seen;
         self.seen = now;
-        moved || !coming(session, &self.root)
+        if !coming(session, &self.root) {
+            return true;
+        }
+        match self.need {
+            Some(Need::Whole) => stored_whole(session, &self.root),
+            _ => moved,
+        }
     }
 
     /// Waited as long as a request waits: the refusal to send, if so.
