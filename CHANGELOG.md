@@ -193,7 +193,8 @@
   `shutdown` are served meanwhile. A request still waiting after 30 s or
   at shutdown is refused with `RequestFailed`, saying the checkout is being
   indexed; with indexing turned off (`trekr.index: false`), at once,
-  naming `trekr --index`.
+  naming `trekr --index`. A local variable's definition and references
+  read only the file, and are answered at once.
 - **`--no-index` beside another trekr's first index says it is under
   way**: its `not_indexed` reason was "this checkout has never been
   indexed"; it is "another trekr is indexing it now (…)".

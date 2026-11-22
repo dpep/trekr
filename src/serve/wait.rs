@@ -30,6 +30,21 @@ fn wait() -> Duration {
     })
 }
 
+thread_local! {
+    static FROM_THE_FILE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The handler answered from the open file alone — a local variable's
+/// writes or mentions — so no index would change it, found or not.
+pub(super) fn from_the_file() {
+    FROM_THE_FILE.with(|f| f.set(true));
+}
+
+/// Take and clear the mark, so the next request starts without it.
+pub(super) fn take_from_the_file() -> bool {
+    FROM_THE_FILE.with(|f| f.replace(false))
+}
+
 /// What a request needs of the index before its answer is whole.
 #[derive(Clone, Copy, PartialEq)]
 enum Need {
@@ -82,12 +97,12 @@ pub(super) enum Verdict {
 }
 
 /// Whether `response` to `request` is whole, or waits for `root`'s index.
-/// `why` is the handler's reason for an empty answer.
+/// `index_free` is the handler saying no index would change it.
 pub(super) fn verdict(
     session: &mut Session,
     request: &Request,
     response: &Response,
-    why: Option<&str>,
+    index_free: bool,
 ) -> Verdict {
     let Some(need) = need_of(&request.method) else {
         return Verdict::Answer;
@@ -95,8 +110,9 @@ pub(super) fn verdict(
     let Some(result) = &response.result else {
         return Verdict::Answer;
     };
-    // Nothing at the position, or a file trekr cannot read: no index helps.
-    if why.is_some_and(super::handlers::index_free) {
+    // Nothing at the position, a file trekr cannot read, or a local: no
+    // index helps.
+    if index_free {
         return Verdict::Answer;
     }
     let Some(root) = root_of(session, request) else {

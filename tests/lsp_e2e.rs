@@ -6527,6 +6527,69 @@ fn a_request_the_index_outlasts_is_refused_saying_why() {
     let _ = fs::remove_dir_all(dir.with_extension("gated-git"));
 }
 
+/// A local's definition and references, at `total` in `local.rb`, under
+/// `dir`: (definition lines, reference lines), or the error each got.
+fn local_answers(session: &mut Session, dir: &Path) -> (serde_json::Value, serde_json::Value) {
+    let uri = uri_of(dir, "local.rb");
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri, "languageId": "ruby", "version": 1,
+            "text": "def run\n  total = 1\n  total + 2\nend\n"
+        }}),
+    );
+    let at = serde_json::json!({
+        "textDocument": {"uri": uri},
+        "position": {"line": 2, "character": 3},
+        "context": {"includeDeclaration": true},
+    });
+    let lines = |answer: serde_json::Value| match answer["result"].as_array() {
+        Some(found) => serde_json::json!(
+            found
+                .iter()
+                .map(|l| l["range"]["start"]["line"].clone())
+                .collect::<Vec<_>>()
+        ),
+        None => answer,
+    };
+    let definition = lines(session.request("textDocument/definition", at.clone()));
+    let references = lines(session.request("textDocument/references", at));
+    (definition, references)
+}
+
+/// A local's definition and references read the open file alone: answered
+/// with indexing off, and while the first index is held, not refused or
+/// waited on.
+#[test]
+fn a_locals_definition_and_references_need_no_index() {
+    let (dir, db) = ruby_scratch("wait-local-off");
+    repo(&dir);
+    fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    let mut session = Session::start(&db, &dir);
+    session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": format!("file://{}", dir.display()),
+            "capabilities": {},
+            "initializationOptions": {"index": false},
+        }),
+    );
+    session.notify("initialized", serde_json::json!({}));
+    let expected = (serde_json::json!([1]), serde_json::json!([1, 2]));
+    assert_eq!(local_answers(&mut session, &dir), expected, "indexing off");
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+
+    // Cold: the gate holds the index for as long as the test runs.
+    let (dir, gate, mut session) = unindexed_session("wait-local-cold", &[]);
+    assert_eq!(local_answers(&mut session, &dir), expected, "cold");
+    fs::write(&gate, "").unwrap();
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(dir.with_extension("gated-git"));
+}
+
 /// With background indexing turned off, a request that would answer empty
 /// from a checkout nobody indexed is refused at once, saying how to index it.
 #[test]

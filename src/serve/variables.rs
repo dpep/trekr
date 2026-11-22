@@ -81,6 +81,7 @@ impl Found {
 /// instance variable is set — `initialize` first. Empty when none is found.
 pub(super) fn definition(session: &mut Session, under: &Under) -> Vec<Location> {
     if under.occurrence.sigil == Sigil::Local {
+        super::wait::from_the_file();
         let Some(uri) = under.uri() else {
             return Vec::new();
         };
@@ -105,7 +106,10 @@ pub(super) fn definition(session: &mut Session, under: &Under) -> Vec<Location> 
 /// across its class's files.
 pub(super) fn references(session: &mut Session, under: &Under) -> Vec<Location> {
     let found = match under.occurrence.sigil {
-        Sigil::Local => here(under),
+        Sigil::Local => {
+            super::wait::from_the_file();
+            here(under)
+        }
         Sigil::Instance | Sigil::Class => members(session, under),
     };
     found.iter().filter_map(Found::location).collect()

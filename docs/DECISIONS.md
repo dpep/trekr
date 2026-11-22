@@ -18114,9 +18114,10 @@ It is refused with `RequestFailed` and a message saying how far the index
 has got — "trekr has no whole answer for ~/app yet: it is still being
 indexed (812 of 4000 files read, counting its gems and Ruby's)" — after 30 s, at `shutdown`, or at
 once when the session indexes nothing (`initializationOptions.index:
-false`), where the message names `trekr --index`. An empty answer the
+false`), where the message names `trekr --index`. An answer the
 handler says no index would change (no name at the caret, an unreadable
-file, a file in no checkout) is answered at once, and an index that failed
+file, a file in no checkout, a local variable: DEC-865) is answered at
+once, and an index that failed
 leaves answers as they were: it says so itself (DEC-039).
 
 **Why.** On a first launch definition answered `null` and references the
@@ -18597,3 +18598,26 @@ bytes, and it is the limit HTTP servers commonly put on a header line
 
 Tests: `a_header_section_past_its_cap_is_refused_not_scanned_toward`,
 `whitespace_between_messages_is_dropped_not_held`.
+
+## DEC-865 — A local variable's answers wait for no index
+
+**Decided.** Go to Definition and Find References on a local variable are
+answered at once, found or not, whatever the index's state: the handler
+marks the answer as read from the file alone (`wait::from_the_file`), and
+DEC-811's wait lets it through as it does an empty answer with no name at
+the caret.
+
+**Why.** A local's writes and mentions come whole from the open file's
+parse (`resolve::vars`); no index adds or removes one. DEC-811 held any
+definition or references answer while the checkout was unindexed, so with
+`index: false` a local's definition was refused with `RequestFailed`, and
+on a cold start it waited out the whole index.
+
+**Not marked.** An instance or class variable's answers read its class's
+files through the tree, so they still wait. A `require`'s target reads the
+load path the store's gems make, and a template's partial the tree. A
+method definition in the open file, as the call hierarchy prepares it, is
+behind the example-group member lookup, which reads the checkout, so it is
+not marked either.
+
+Test: `a_locals_definition_and_references_need_no_index`.

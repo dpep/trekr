@@ -339,12 +339,7 @@ fn serve(
                 turn.refuse(&held.request, held.since, why, &mut first_request)?;
             } else if held.moved(&session) {
                 let (response, mut counted) = turn.respond(&mut session, &held.request);
-                match wait::verdict(
-                    &mut session,
-                    &held.request,
-                    &response,
-                    counted.why.as_deref(),
-                ) {
+                match wait::verdict(&mut session, &held.request, &response, counted.index_free) {
                     Verdict::Answer => {
                         counted.latency = Some(held.since.elapsed());
                         turn.deliver(&mut session, response, counted, &mut first_request)?;
@@ -444,7 +439,7 @@ fn serve(
                 }
                 let started = std::time::Instant::now();
                 let (response, counted) = turn.respond(&mut session, &request);
-                match wait::verdict(&mut session, &request, &response, counted.why.as_deref()) {
+                match wait::verdict(&mut session, &request, &response, counted.index_free) {
                     Verdict::Answer => {
                         turn.deliver(&mut session, response, counted, &mut first_request)?;
                     }
@@ -594,7 +589,7 @@ impl Turn<'_> {
                 outcome: Outcome::Cancelled,
                 latency: None,
                 miss: None,
-                why: None,
+                index_free: false,
             };
             return (cancelled(id), counted);
         }
@@ -889,8 +884,9 @@ struct Counted {
     /// A definition or hover that came back empty or unsure, logged once the
     /// answer is sent (DEC-083).
     miss: Option<miss::Miss>,
-    /// The handler's reason for an empty answer, if it gave one.
-    why: Option<String>,
+    /// No index would change the answer (DEC-811): nothing at the position,
+    /// an unreadable file, or a local read from the file alone.
+    index_free: bool,
 }
 
 /// The operation, without the protocol's namespace: `definition`, `hover`,
@@ -927,7 +923,7 @@ fn dispatch(
             outcome: Outcome::Error("internal"),
             latency: None,
             miss: None,
-            why: None,
+            index_free: false,
         };
         let code = lsp_server::ErrorCode::InternalError as i32;
         (Response::new_err(id, code, panicked.to_string()), counted)
@@ -957,6 +953,7 @@ fn answer(
     // Whatever an earlier operation noted and nobody took is not this one's.
     let _ = crate::usage::take();
     let _ = miss::take_why();
+    let _ = wait::take_from_the_file();
     let result = unwinding(|| route(session, request, out, cancel));
     let elapsed = started.elapsed();
     let note = crate::usage::take();
@@ -995,6 +992,7 @@ fn answer(
         (None, _) => Outcome::Error("internal"),
     };
     let why = miss::take_why();
+    let index_free = wait::take_from_the_file() || why.as_deref().is_some_and(handlers::index_free);
     let missed = matches!(outcome, Outcome::Empty | Outcome::Uncertain);
     let miss = clicked
         .filter(|_| missed)
@@ -1003,7 +1001,7 @@ fn answer(
             path,
             position,
             outcome: outcome.label(),
-            why: why.clone(),
+            why,
         });
     let counted = Counted {
         feature: feature_of(&method),
@@ -1011,7 +1009,7 @@ fn answer(
         outcome,
         latency: Some(elapsed),
         miss,
-        why,
+        index_free,
     };
 
     let response = match (result, code) {
