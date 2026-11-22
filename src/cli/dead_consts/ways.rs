@@ -307,8 +307,7 @@ impl Ways<'_> {
             if !crate::core::shape_matches(shape, fqn) {
                 continue;
             }
-            let (before, after) = shape.split_once('*').unwrap_or((shape, ""));
-            let Some(built) = fqn.strip_prefix(before).and_then(|r| r.strip_suffix(after)) else {
+            let Some(built) = last_star(shape, fqn) else {
                 continue;
             };
             if let Some(from) = named.symbol_outside(&plain(built), relative) {
@@ -328,12 +327,11 @@ impl Ways<'_> {
             if !crate::core::shape_matches(shape, fqn) {
                 continue;
             }
-            let (before, after) = shape.split_once('*').unwrap_or((shape, ""));
-            let Some(built) = fqn.strip_prefix(before).and_then(|r| r.strip_suffix(after)) else {
+            let Some(built) = last_star(shape, fqn) else {
                 continue;
             };
             let class = built.rsplit("::").next().unwrap_or(built);
-            if !after.is_empty() && self.classes.contains(&plain(class)) {
+            if !shape.ends_with('*') && self.classes.contains(&plain(class)) {
                 return convention(
                     "constantize",
                     format!(
@@ -894,4 +892,38 @@ fn underscore(word: &str) -> String {
         out.push(c.to_ascii_lowercase());
     }
     out
+}
+
+/// What a shape's last `*` stands for in `fqn`, which the shape matches:
+/// the text between the literal before that star and the one after it.
+/// `*::*Assignment` on `Notifier::Create::GroupAssignment` is `Group`; with
+/// one star, everything the star spans. None for `**`, which has no edge.
+fn last_star<'a>(shape: &str, fqn: &'a str) -> Option<&'a str> {
+    let (head, after) = shape.rsplit_once('*')?;
+    let rest = fqn.strip_suffix(after)?;
+    match head.rsplit_once('*') {
+        None => rest.strip_prefix(head),
+        Some((_, "")) => None,
+        Some((_, literal)) => rest.rsplit_once(literal).map(|(_, built)| built),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_last_star_of_a_shape_is_the_part_it_spans() {
+        assert_eq!(last_star("Jobs::*", "Jobs::Purge"), Some("Purge"));
+        assert_eq!(
+            last_star("*Drop", "Admin::WidgetDrop"),
+            Some("Admin::Widget")
+        );
+        assert_eq!(
+            last_star("*::*Assignment", "A::B::GroupAssignment"),
+            Some("Group")
+        );
+        assert_eq!(last_star("*::*Assignment", "A::B::Other"), None);
+        assert_eq!(last_star("**Drop", "WidgetDrop"), None);
+    }
 }

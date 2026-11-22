@@ -16,6 +16,7 @@
 1012-a-def-on-a-constant-is-the-constants d46c1360876074af
 1021-a-latin-1-byte-leaves-a-view-or-config-read 1a8f014e5915d5cc
 1022-a-text-reader-reads-a-non-ascii-identifier-whole 2da52fdd5df9c74f
+1023-a-two-star-shape-is-built-from-a-class-by-its-last-star a38e4f52a6beffca
 122-a-class-eval-string-is-read-as-code 3977f0a5676a712e
 126-a-call-typed-as-an-ancestor-reaches-an-override 90aee89b5713b83c
 130-a-string-of-code-is-read-with-the-names-it-is-handed 1fba2bb7631967d1

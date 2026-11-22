@@ -84,6 +84,10 @@
   config and a constantized string**: `= hlp_slim_ü`, `class:
   TrabajoAñoJob` and `Object.const_get("Ñu")` named nothing, so each left
   its method or class `unreferenced`, `clear`.
+- **`--dead` reads a constantized name with two interpolations by its
+  last one**: `"#{self.class}::#{@target.class}Assignment".constantize`
+  left `GroupAssignment` `unreferenced` though a class `Group` spells it;
+  it is `convention-only`.
 
 - **With no lockfile, `--index` resolves the gems a file the Gemfile
   evals declares** (`eval_gemfile "Gemfile.tools"`), as `--dead Gemfile`

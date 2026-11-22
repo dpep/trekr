@@ -18456,6 +18456,9 @@ key, and a deny there buys churn, not safety.
 
 Test: testbed 999; `core::text`'s unit tests.
 
+**Correction (DEC-874).** d108f331's "no behaviour change" was wrong for
+`ways.rs`: its `strip_suffix` never matched a shape with two `*`s.
+
 ## DEC-836 — A `Content-Length` past what a message may be is refused
 
 **Decided.** The wire refuses a `Content-Length` longer than 256 MiB, or one
@@ -18899,3 +18902,19 @@ a YAML scalar's constant (`class: TrabajoAñoJob`) and method failed
 other identifier character but a digit. `named.rs`' `word_at`, which the
 heredoc and `::` readers use, is left ASCII: outside this reader.
 Testbed 1022.
+
+## DEC-874 — A shape built from a class's name is matched by its last `*`
+
+**Decided.** `--dead`'s constantize reader takes, of a shape it matched,
+what its last `*` spans — the text between the literal before that star
+and the one after it — and asks whether a class of the checkout spells it
+(a class shape) or a symbol written elsewhere does. `"#{self.class}::
+#{@target.class}Assignment".constantize` is `*::*Assignment`;
+`Notifier::Create::GroupAssignment` is built from `Group`. The first
+reader cut at the first `*` by byte length, so a two-star shape's built
+part was the head of the name (`Notifier::Create::Gr`), right only by
+accident (discourse's `GroupAssignment` row, beside a class `Gr…`);
+d108f331 replaced the cut with `strip_suffix("::*Assignment")`, which never
+matches a literal `*`, so no two-star shape reached a convention and the
+row went `unreferenced`, lower (the final perf hunt). A one-star shape
+reads as before. Testbed 1023, `the_last_star_of_a_shape_is_the_part_it_spans`.

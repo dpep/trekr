@@ -1,0 +1,7 @@
+# `"#{self.class}::#{@target.class}Assignment".constantize` is the shape
+# `*::*Assignment`, built from a class's name by its last `*`. A text
+# reader's slice once took `Gr` from `GroupAssignment` by accident, and its
+# replacement (`strip_suffix("::*Assignment")`) never matched a two-star
+# shape, so `GroupAssignment` was `unreferenced`. The last `*` is matched
+# against a class now; `Lonely` is no class, so `LonelyAssignment` stays.
+dead lib/notifier/create.rb Notifier::Create::GroupAssignment=convention-only Notifier::Create::LonelyAssignment=unreferenced
