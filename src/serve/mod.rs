@@ -155,7 +155,11 @@ pub(crate) fn run(verbose: bool) -> anyhow::Result<()> {
     // and none to leave parked in a read an editor holds open, which is what
     // once made retiring hang on Linux.
     writer.finish();
-    result
+    if matches!(result, Ok(Ended::ExitWithoutShutdown)) {
+        drop(log);
+        std::process::exit(1);
+    }
+    result.map(|_| ())
 }
 
 /// The handshake: wait for `initialize`, answer it with our capabilities, and
@@ -206,7 +210,7 @@ fn serve(
     log: &Log,
     mut launched: Option<reload::Launched>,
     resumed: Option<reload::Handoff>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Ended> {
     let resuming = resumed.is_some();
     // A resumed session skips the handshake: the client did it with the
     // process this one replaced, and will not do it again.
@@ -386,7 +390,7 @@ fn serve(
                 writer,
             };
             if swap(watch, stamp, current, log) == Swap::Retire {
-                return Ok(());
+                return Ok(Ended::Cleanly);
             }
         }
         // Nothing to answer: build what the first questions would otherwise
@@ -436,7 +440,7 @@ fn serve(
                     writer.send(Response::new_ok(request.id, ()).into())?;
                     log.event("shutdown", serde_json::json!({}));
                     await_exit(writer, inbox);
-                    return Ok(());
+                    return Ok(Ended::Cleanly);
                 }
                 let started = std::time::Instant::now();
                 let (response, counted) = turn.respond(&mut session, &request);
@@ -461,7 +465,7 @@ fn serve(
                     // Exit without shutdown: the protocol says stop, and so we
                     // do — there is no state here worth refusing to lose.
                     log.event("exit", serde_json::json!({ "shutdown": false }));
-                    return Ok(());
+                    return Ok(Ended::ExitWithoutShutdown);
                 }
                 let method = notification.method.clone();
                 let published = unwinding(|| Ok(notify(&mut session, &mut indexer, notification)));
@@ -493,7 +497,15 @@ fn serve(
         }
     }
     // The pipe closed: the client went away without a shutdown request.
-    Ok(())
+    Ok(Ended::Cleanly)
+}
+
+/// How a session ended, for the exit code.
+#[derive(PartialEq)]
+enum Ended {
+    Cleanly,
+    /// `exit` with no `shutdown` before it, which the spec answers with 1.
+    ExitWithoutShutdown,
 }
 
 /// How much of the root's state has been built ahead of being asked for.

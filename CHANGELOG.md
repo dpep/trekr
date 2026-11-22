@@ -209,6 +209,8 @@
   a line indented with a space beside one indented with U+3000 made every
   hover on that method an internal error. The comment is dedented by
   characters.
+- **`trekr --lsp` exits 1 on `exit` with no `shutdown` before it**, as
+  the spec says; it exited 0.
 - **`--lsp` no longer dies on a bad `Content-Length`**: one past
   addressable memory panicked the server. It, any longer than 256 MiB,
   and a header section longer than 8 KiB are refused as other bad framing

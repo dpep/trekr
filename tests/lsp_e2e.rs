@@ -3306,23 +3306,34 @@ fn a_file_read_from_disk_is_reread_after_it_changes() {
 }
 
 /// `exit` ends the process whether or not `shutdown` came first — a client
-/// that skips it must not leave a server behind.
+/// that skips it must not leave a server behind — and, as the spec says,
+/// with code 1 when it did skip it, 0 when it did not.
 #[test]
 fn exit_without_shutdown_still_stops_the_server() {
     let (dir, db) = ruby_scratch("exit");
     repo(&dir);
-    let mut session = Session::start(&db, &dir);
-    session.initialize(&dir);
-    session.notify("exit", serde_json::json!(null));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while session.child.try_wait().unwrap().is_none() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the server ignored exit"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    session.stdin.take();
+    let stopped = |shutdown: bool| {
+        let mut session = Session::start(&db, &dir);
+        session.initialize(&dir);
+        if shutdown {
+            session.request("shutdown", serde_json::Value::Null);
+        }
+        session.notify("exit", serde_json::json!(null));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Some(status) = session.child.try_wait().unwrap() {
+                session.stdin.take();
+                return status.code();
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the server ignored exit"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    assert_eq!(stopped(false), Some(1), "exit with no shutdown");
+    assert_eq!(stopped(true), Some(0), "shutdown, then exit");
     let _ = fs::remove_dir_all(&dir);
 }
 
