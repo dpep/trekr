@@ -1313,11 +1313,13 @@ enum DefinerTarget {
 fn definer<'pr>(call: &ruby_prism::CallNode<'pr>) -> Option<Definer<'pr>> {
     let mut name = method_name(call)?;
     let mut args = arg_nodes(call);
-    if matches!(name.as_str(), "send" | "__send__" | "public_send") {
-        name = literal_name(args.first()?)?;
+    let sent;
+    if matches!(name, "send" | "__send__" | "public_send") {
+        sent = literal_name(args.first()?)?;
+        name = &sent;
         args.remove(0);
     }
-    if !matches!(name.as_str(), "define_method" | "define_singleton_method") {
+    if !matches!(name, "define_method" | "define_singleton_method") {
         return None;
     }
     let on = match call.receiver() {
@@ -1325,23 +1327,28 @@ fn definer<'pr>(call: &ruby_prism::CallNode<'pr>) -> Option<Definer<'pr>> {
         Some(r) if r.as_self_node().is_some() => DefinerTarget::Own,
         Some(r)
             if r.as_call_node().is_some_and(|c| {
-                on_self(&c)
-                    && method_name(&c).as_deref() == Some("singleton_class")
-                    && c.arguments().is_none()
+                on_self(&c) && method_name(&c) == Some("singleton_class") && c.arguments().is_none()
             }) =>
         {
             DefinerTarget::OwnSingleton
         }
         Some(r) => DefinerTarget::Constant(const_name(&r)?),
     };
-    Some(Definer { name, args, on })
+    Some(Definer {
+        name: name.to_owned(),
+        args,
+        on,
+    })
 }
 
 /// The method a name argument calls on `self` to build the name:
 /// `define_method(_renderer_name(key))`.
 fn shaping_call(node: &Node<'_>) -> Option<String> {
     let call = node.as_call_node()?;
-    on_self(&call).then(|| method_name(&call)).flatten()
+    on_self(&call)
+        .then(|| method_name(&call))
+        .flatten()
+        .map(str::to_owned)
 }
 
 /// What each parameter of a method is of the names its caller hands it:
@@ -1377,7 +1384,7 @@ fn handed_part(part: &Node<'_>, handed: &[(String, String)]) -> String {
             let [only] = body.as_slice() else { return None };
             match only.as_call_node() {
                 Some(call)
-                    if method_name(&call).is_some_and(|m| RENDERS.contains(&m.as_str()))
+                    if method_name(&call).is_some_and(|m| RENDERS.contains(&m))
                         && call.arguments().is_none() =>
                 {
                     call.receiver()?.as_local_variable_read_node()
@@ -1507,7 +1514,7 @@ fn def_first_param(node: &ruby_prism::DefNode<'_>) -> Option<String> {
 /// `RSpec.configure do |config|` — the name its block gives the
 /// configuration.
 fn rspec_configure_param(call: &ruby_prism::CallNode<'_>) -> Option<String> {
-    if method_name(call).as_deref() != Some("configure")
+    if method_name(call) != Some("configure")
         || call
             .receiver()
             .and_then(|r| const_name(&r))
@@ -1553,7 +1560,7 @@ fn block_self(call: &ruby_prism::CallNode<'_>) -> ruby::BlockSelf {
         (Some(constant), _) => ruby::Recv::Const(constant.trim_start_matches("::")),
         (None, _) => ruby::Recv::Other,
     };
-    ruby::block_self(recv, &name)
+    ruby::block_self(recv, name)
 }
 
 /// A block evaluated with some object other than `self` as its `self`:
@@ -1580,7 +1587,7 @@ fn runs_on_singleton_class(call: &ruby_prism::CallNode<'_>) -> bool {
     } else {
         receiver
             .as_call_node()
-            .is_some_and(|c| on_self(&c) && method_name(&c).as_deref() == Some("singleton_class"))
+            .is_some_and(|c| on_self(&c) && method_name(&c) == Some("singleton_class"))
     };
     evaluates && own_singleton
 }
@@ -2080,7 +2087,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
     fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
         // `with_options if: :x do … end` hands its block's macros to the
         // class with the options merged: they are the body's own.
-        if method_name(node).as_deref() == Some("with_options")
+        if method_name(node) == Some("with_options")
             && self.class_level(node)
             && let Some(block) = node.block().and_then(|b| b.as_block_node())
         {
@@ -2152,9 +2159,8 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             let iterates = self.constant_each(node).inspect(|binding| {
                 self.constant_loops.push(binding.clone());
             });
-            let included = method_name(node).as_deref() == Some("included")
-                && on_self(node)
-                && !self.in_method_body();
+            let included =
+                method_name(node) == Some("included") && on_self(node) && !self.in_method_body();
             self.included_depth += usize::from(included);
             // At `do`, where no name is: a declaration at `included` would
             // answer a click on the call with the module.
@@ -2173,8 +2179,8 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             let owner = node.message_loc().map(|m| self.pos(m.start_offset()));
             match self.defined_method(node) {
                 Some(DefinedBy::Scope(method)) => {
-                    let singleton = method_name(node).as_deref() == Some("define_singleton_method")
-                        || self.in_singleton();
+                    let singleton =
+                        method_name(node) == Some("define_singleton_method") || self.in_singleton();
                     self.enter(None, Opens::Method { singleton });
                     self.frame().method = method;
                     self.visit(&block);
@@ -2202,8 +2208,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                         if let Some(class) = described {
                             self.facts.described.push((self.nesting.clone(), class));
                         }
-                        if method_name(node)
-                            .is_some_and(|name| SHARED_METHODS.contains(&name.as_str()))
+                        if method_name(node).is_some_and(|name| SHARED_METHODS.contains(&name))
                             && let Some(name) = arg_nodes(node).first().and_then(literal_name)
                         {
                             let module = crate::core::rspec::shared_module(
@@ -2260,8 +2265,8 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                     }
                     Some(SpecBlock::Example) => {
                         self.enter(None, Opens::Method { singleton: false });
-                        self.frame().example = method_name(node)
-                            .is_some_and(|name| !INHERITED_BLOCKS.contains(&name.as_str()));
+                        self.frame().example =
+                            method_name(node).is_some_and(|name| !INHERITED_BLOCKS.contains(&name));
                         self.visit(&block);
                         self.leave();
                     }
@@ -2655,12 +2660,18 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         let old = node.old_name();
         // `alias a b` writes bare names; `alias :a :b` writes symbols.
         let name = literal_name(&new)
-            .or_else(|| new.as_call_node().and_then(|c| method_name(&c)))
+            .or_else(|| {
+                new.as_call_node()
+                    .and_then(|c| method_name(&c).map(str::to_owned))
+            })
             .or_else(|| {
                 Some(self.text(new.location().start_offset(), new.location().end_offset()))
             });
         let target = literal_name(&old)
-            .or_else(|| old.as_call_node().and_then(|c| method_name(&c)))
+            .or_else(|| {
+                old.as_call_node()
+                    .and_then(|c| method_name(&c).map(str::to_owned))
+            })
             .or_else(|| {
                 Some(self.text(old.location().start_offset(), old.location().end_offset()))
             });
@@ -2817,10 +2828,7 @@ impl Made {
     fn by(call: &ruby_prism::CallNode<'_>) -> Option<Made> {
         let receiver = const_name(&call.receiver()?)?;
         Some(
-            match (
-                receiver.trim_start_matches("::"),
-                method_name(call)?.as_str(),
-            ) {
+            match (receiver.trim_start_matches("::"), method_name(call)?) {
                 ("Struct", "new") => Made::Struct,
                 ("Data", "define") => Made::Data,
                 ("Class", "new") => Made::Class,
@@ -2837,12 +2845,14 @@ fn is_lambda(node: &Node<'_>) -> bool {
         || node.as_call_node().is_some_and(|call| {
             call.receiver().is_none()
                 && call.block().is_some()
-                && matches!(method_name(&call).as_deref(), Some("lambda" | "proc"))
+                && matches!(method_name(&call), Some("lambda" | "proc"))
         })
 }
 
-fn method_name(call: &ruby_prism::CallNode<'_>) -> Option<String> {
-    String::from_utf8(call.name().as_slice().to_vec()).ok()
+/// Borrowed from the parse: it is read several times per call node, and
+/// most reads only compare it.
+fn method_name<'pr>(call: &ruby_prism::CallNode<'pr>) -> Option<&'pr str> {
+    std::str::from_utf8(call.name().as_slice()).ok()
 }
 
 /// Is this call sent to `ActiveSupport`?
@@ -2856,7 +2866,7 @@ fn on_active_support(call: &ruby_prism::CallNode<'_>) -> bool {
 /// and whether it yields: with `yield: true` the class is the block's
 /// argument instead, and `self` is the caller's.
 fn load_hook(call: &ruby_prism::CallNode<'_>) -> Option<(String, bool)> {
-    if method_name(call).as_deref() != Some("on_load") || !on_active_support(call) {
+    if method_name(call) != Some("on_load") || !on_active_support(call) {
         return None;
     }
     let args = arg_nodes(call);
@@ -2913,40 +2923,38 @@ impl<'pr> Extractor<'_> {
             return false;
         }
         let args = arg_nodes(call);
-        match name.as_str() {
+        match name {
             "attr_reader" | "attr_writer" | "attr_accessor" | "attr" => {
-                self.handle_attr(call, &name, &args)
+                self.handle_attr(call, name, &args)
             }
-            "include" | "prepend" | "extend" => self.handle_mixin(&name, &args),
+            "include" | "prepend" | "extend" => self.handle_mixin(name, &args),
             "concerning" => self.handle_concerning(call, &args),
             "class_methods" => self.handle_class_methods(call, &args),
             "alias_method" => self.handle_alias_method(call, &args),
             "def_delegator" | "def_instance_delegator" | "def_single_delegator" => {
-                self.handle_forwardable(&name, &args, false)
+                self.handle_forwardable(name, &args, false)
             }
             "def_delegators" | "def_instance_delegators" | "def_single_delegators" => {
-                self.handle_forwardable(&name, &args, true)
+                self.handle_forwardable(name, &args, true)
             }
             "enum" => self.handle_enum(call, &args),
-            "store" | "store_accessor" => self.handle_store(call, &name, &args),
+            "store" | "store_accessor" => self.handle_store(call, name, &args),
             "delegate_missing_to" => self.handle_delegate_missing(&args),
             // Any macro the expansion table knows. The probe argument only
             // asks "is this a macro we model" — the real names come below.
-            _ if !macros::generated(&name, "probe").is_empty() => {
-                self.handle_dsl(call, &name, &args)
-            }
+            _ if !macros::generated(name, "probe").is_empty() => self.handle_dsl(call, name, &args),
             "private" | "protected" | "public" | "module_function" => {
-                self.handle_visibility(call, &name, &args)
+                self.handle_visibility(call, name, &args)
             }
             "private_class_method" | "public_class_method" => {
-                self.handle_class_visibility(&name, &args)
+                self.handle_class_visibility(name, &args)
             }
             _ if !self.in_method_body()
                 && self
                     .definers
-                    .contains_key(&(self.nesting.clone(), name.clone())) =>
+                    .contains_key(&(self.nesting.clone(), name.to_owned())) =>
             {
-                self.handle_definer_call(call, &name, &args);
+                self.handle_definer_call(call, name, &args);
                 false
             }
             _ => false,
@@ -3180,7 +3188,7 @@ impl<'pr> Extractor<'_> {
     /// hook's `on_load` blocks (DEC-098). The class is a constant, looked up
     /// as a sent mixin's receiver is, or `self` in its own body.
     fn handle_run_load_hooks(&mut self, call: &ruby_prism::CallNode<'pr>) {
-        if method_name(call).as_deref() != Some("run_load_hooks") || !on_active_support(call) {
+        if method_name(call) != Some("run_load_hooks") || !on_active_support(call) {
             return;
         }
         let args = arg_nodes(call);
@@ -3227,7 +3235,7 @@ impl<'pr> Extractor<'_> {
     fn evaluated_in_mixer(&self, call: &ruby_prism::CallNode<'pr>) -> Option<Relation> {
         let name = method_name(call)?;
         let evaluates = matches!(
-            name.as_str(),
+            name,
             "class_eval" | "class_exec" | "module_eval" | "module_exec"
         );
         if !evaluates || !arg_nodes(call).is_empty() {
@@ -3256,7 +3264,7 @@ impl<'pr> Extractor<'_> {
     /// constant this file assigns such a list: the block's parameter and the
     /// constants it takes in turn.
     fn constant_each(&self, call: &ruby_prism::CallNode<'pr>) -> Option<(String, Vec<String>)> {
-        if !matches!(method_name(call)?.as_str(), "each" | "reverse_each") {
+        if !matches!(method_name(call)?, "each" | "reverse_each") {
             return None;
         }
         let receiver = call.receiver()?;
@@ -3276,7 +3284,7 @@ impl<'pr> Extractor<'_> {
             return;
         };
         let args = arg_nodes(call);
-        let (relation, args) = match name.as_str() {
+        let (relation, args) = match name {
             "send" | "__send__" => match args.split_first() {
                 Some((first, rest)) => (
                     literal_name(first).and_then(|sent| mixin_relation(&sent)),
@@ -3286,14 +3294,14 @@ impl<'pr> Extractor<'_> {
             },
             // On `self`, these are the macros `handle_mixin` reads.
             _ if on_self(call) => return,
-            _ => (mixin_relation(&name), &args[..]),
+            _ => (mixin_relation(name), &args[..]),
         };
         let Some(mut relation) = relation else {
             return;
         };
         // `Adapter.singleton_class.prepend(Retrying)` (DEC-101).
         let singleton = call.receiver().and_then(|r| r.as_call_node()).filter(|r| {
-            method_name(r).as_deref() == Some("singleton_class")
+            method_name(r) == Some("singleton_class")
                 && r.arguments().is_none()
                 && r.block().is_none()
         });
@@ -3500,7 +3508,7 @@ impl<'pr> Extractor<'_> {
         };
         // `instance_eval` on a class makes class methods, whatever its `def`s
         // say; `eval` in a body runs there, as `class_eval` does.
-        let class_side = match name.as_str() {
+        let class_side = match name {
             "class_eval" | "module_eval" => false,
             "eval" if call.receiver().is_none() => false,
             "instance_eval" => true,
@@ -3530,13 +3538,13 @@ impl<'pr> Extractor<'_> {
                         && let Some(pieces) = code_pieces(&code)
                         && let Some(handed) = self.handed_locals(&pieces)
                     {
-                        self.keep_macro(&name, pieces, handed, None);
+                        self.keep_macro(name, pieces, handed, None);
                     }
                     let handed = self.handed();
                     let src = self.evals.last().map_or(self.src, |eval| &eval.src[..]);
                     for (singleton, shape) in string_defs(&code, src, &handed) {
                         let maker = Maker {
-                            by: name.clone(),
+                            by: name.to_owned(),
                             singleton: if class_side { Some(true) } else { singleton },
                             shape,
                             via: Some(via.clone()),
@@ -3622,7 +3630,7 @@ impl<'pr> Extractor<'_> {
             self.mark_string(&unread, &first, at);
             return;
         };
-        let Some(mentions) = self.read_code(&name, &pieces, &[], None) else {
+        let Some(mentions) = self.read_code(name, &pieces, &[], None) else {
             self.mark_string(&unread, &first, at);
             return;
         };
@@ -3634,7 +3642,7 @@ impl<'pr> Extractor<'_> {
         if self.in_method_body()
             && let Some(handed) = self.handed_locals(&pieces)
         {
-            self.keep_macro(&name, pieces.clone(), handed, Some(mentions.clone()));
+            self.keep_macro(name, pieces.clone(), handed, Some(mentions.clone()));
         }
         let locals = locals_of(&pieces);
         let values = match locals.as_slice() {
@@ -3648,7 +3656,7 @@ impl<'pr> Extractor<'_> {
         };
         let Some(values) = values else {
             if !mentions.defs.is_empty() {
-                self.mark_string(&name, &first, at);
+                self.mark_string(name, &first, at);
             }
             self.facts.unread_calls.extend(mentions.call_shapes);
             return;
@@ -3665,7 +3673,7 @@ impl<'pr> Extractor<'_> {
         self.expanded += making;
         let local = locals[0].clone();
         for value in values {
-            self.read_code(&name, &pieces, &[(local.clone(), value)], Some(&mentions));
+            self.read_code(name, &pieces, &[(local.clone(), value)], Some(&mentions));
         }
     }
 
@@ -3728,7 +3736,7 @@ impl<'pr> Extractor<'_> {
         let Some(name) = method_name(call) else {
             return;
         };
-        let Some(macros) = self.string_macros.get(&name).cloned() else {
+        let Some(macros) = self.string_macros.get(name).cloned() else {
             return;
         };
         let args: Vec<Option<String>> = arg_nodes(call)
@@ -4049,7 +4057,7 @@ impl<'pr> Extractor<'_> {
     /// a looped name that spells several.
     fn defined_method(&self, call: &ruby_prism::CallNode<'pr>) -> Option<DefinedBy> {
         if !matches!(
-            method_name(call)?.as_str(),
+            method_name(call)?,
             "define_method" | "define_singleton_method"
         ) {
             return None;
@@ -4093,7 +4101,7 @@ impl<'pr> Extractor<'_> {
     /// block parameter, and a list every element of which is a literal name.
     /// A constant another file assigns is that blob's fact, and not read.
     fn literal_each(&self, call: &ruby_prism::CallNode<'pr>) -> Option<(String, Vec<String>)> {
-        if !matches!(method_name(call)?.as_str(), "each" | "reverse_each") {
+        if !matches!(method_name(call)?, "each" | "reverse_each") {
             return None;
         }
         let receiver = call.receiver()?;
@@ -4107,7 +4115,7 @@ impl<'pr> Extractor<'_> {
     /// `attrs.each do |name|` over a method's splat: the block variable,
     /// and the names the splat is handed (DEC-162).
     fn splat_each(&self, call: &ruby_prism::CallNode<'pr>) -> Option<(String, String)> {
-        if method_name(call)?.as_str() != "each" {
+        if method_name(call)? != "each" {
             return None;
         }
         let read = call.receiver()?.as_local_variable_read_node()?;
@@ -4136,7 +4144,7 @@ impl<'pr> Extractor<'_> {
     /// Helpers into every example group, and `config.extend` extends them
     /// (DEC-088). A metadata filter after the module is not read.
     fn handle_configure_mixin(&mut self, call: &ruby_prism::CallNode<'pr>) {
-        let Some(relation) = method_name(call).and_then(|name| mixin_relation(&name)) else {
+        let Some(relation) = method_name(call).and_then(mixin_relation) else {
             return;
         };
         let on_config = call
@@ -4186,7 +4194,7 @@ impl<'pr> Extractor<'_> {
         let Some(name) = method_name(call).filter(|_| hands_param) else {
             return;
         };
-        let singleton = match name.as_str() {
+        let singleton = match name {
             "define_singleton_method" => Some(true),
             "define_method" => Some(self.singleton_exec > 0),
             other => self
@@ -4234,7 +4242,7 @@ impl<'pr> Extractor<'_> {
     /// a lookup can say which constant it is (DEC-086, DEC-653).
     fn evaluated_in(&self, call: &ruby_prism::CallNode<'pr>) -> Option<(String, bool)> {
         let name = method_name(call)?;
-        let defs_singleton = match name.as_str() {
+        let defs_singleton = match name {
             "class_eval" | "class_exec" | "module_eval" | "module_exec" => false,
             "instance_eval" | "instance_exec" => true,
             _ => return None,
@@ -4269,7 +4277,6 @@ impl<'pr> Extractor<'_> {
             return None;
         }
         let name = method_name(call)?;
-        let name = name.as_str();
         let on_rspec = call
             .receiver()
             .and_then(|r| const_name(&r))
@@ -4325,7 +4332,7 @@ impl<'pr> Extractor<'_> {
     /// The shared group a call in a group's body includes, as its module: a
     /// literal name, since that is RSpec's key for it (DEC-092).
     fn shared_included(&self, call: &ruby_prism::CallNode<'pr>) -> Option<String> {
-        if call.receiver().is_some() || !SHARED_INCLUDERS.contains(&method_name(call)?.as_str()) {
+        if call.receiver().is_some() || !SHARED_INCLUDERS.contains(&method_name(call)?) {
             return None;
         }
         let name = literal_name(arg_nodes(call).first()?)?;
@@ -4362,14 +4369,11 @@ impl<'pr> Extractor<'_> {
     /// group into the group they are written in (DEC-092).
     fn handle_shared_include(&mut self, call: &ruby_prism::CallNode<'pr>) {
         let name = method_name(call);
-        let into_this_group = name
-            .as_deref()
-            .is_some_and(|name| matches!(name, "include_context" | "include_examples"));
+        let into_this_group =
+            name.is_some_and(|name| matches!(name, "include_context" | "include_examples"));
         // With a block it is a group of the file's own (`SpecBlock::Group`).
-        let into_a_nested_group = call.block().is_none()
-            && name
-                .as_deref()
-                .is_some_and(|name| NESTED_GROUP_METHODS.contains(&name));
+        let into_a_nested_group =
+            call.block().is_none() && name.is_some_and(|name| NESTED_GROUP_METHODS.contains(&name));
         if into_a_nested_group && self.writes_group_members() {
             if let Some(module) = self.shared_included(call) {
                 self.facts
@@ -4397,7 +4401,7 @@ impl<'pr> Extractor<'_> {
             return;
         }
         let Some(via) = method_name(call) else { return };
-        if !MATCHER_DEFINERS.contains(&via.as_str()) {
+        if !MATCHER_DEFINERS.contains(&via) {
             return;
         }
         let on_matchers = call
@@ -4462,7 +4466,7 @@ impl<'pr> Extractor<'_> {
             node.as_call_node().is_some_and(|c| {
                 c.receiver().is_none()
                     && c.arguments().is_none()
-                    && method_name(&c).as_deref() == Some("described_class")
+                    && method_name(&c) == Some("described_class")
             })
         };
         if let Some(class) = described {
@@ -4470,7 +4474,7 @@ impl<'pr> Extractor<'_> {
                 return ValueShape::Const(class);
             }
             if let Some(call) = value.as_call_node()
-                && method_name(&call).as_deref() == Some("new")
+                && method_name(&call) == Some("new")
                 && call.receiver().is_some_and(|r| is_described_class(&r))
             {
                 return ValueShape::New(class);
@@ -4491,7 +4495,7 @@ impl<'pr> Extractor<'_> {
         let Some(name) = method_name(call) else {
             return;
         };
-        let subject = match name.as_str() {
+        let subject = match name {
             "to" | "not_to" | "to_not" => {
                 let Some(target) = call.receiver().and_then(|r| r.as_call_node()) else {
                     return;
@@ -4499,7 +4503,7 @@ impl<'pr> Extractor<'_> {
                 if target.receiver().is_some() || target.block().is_some() {
                     return;
                 }
-                match method_name(&target).as_deref() {
+                match method_name(&target) {
                     Some("expect") => match arg_nodes(&target).as_slice() {
                         [value] => self.subject_of(value),
                         _ => return,
@@ -4551,8 +4555,8 @@ impl<'pr> Extractor<'_> {
             return;
         }
         let Some(via) = method_name(call) else { return };
-        if !matches!(via.as_str(), "let" | "let!" | "subject" | "subject!")
-            && !MATCHER_DEFINERS.contains(&via.as_str())
+        if !matches!(via, "let" | "let!" | "subject" | "subject!")
+            && !MATCHER_DEFINERS.contains(&via)
         {
             return;
         }
@@ -4579,7 +4583,7 @@ impl<'pr> Extractor<'_> {
             ));
         }
         let (start, end) = (call.location().start_offset(), call.location().end_offset());
-        let value = matches!(via.as_str(), "let" | "let!" | "subject" | "subject!")
+        let value = matches!(via, "let" | "let!" | "subject" | "subject!")
             .then(|| {
                 let body = call.block()?.as_block_node()?.body()?;
                 let last = body.as_statements_node()?.body().iter().last()?;
@@ -4592,7 +4596,7 @@ impl<'pr> Extractor<'_> {
                 Some(arg_end) => self.spanning(&mut def, at, arg_end),
                 None => def.pos = self.pos(at),
             }
-            def.via = Some(via.clone());
+            def.via = Some(via.to_owned());
             def.value = value.clone();
             self.push_def(def);
         }
@@ -4753,7 +4757,7 @@ impl<'pr> Extractor<'_> {
     /// schema is a different blob, and only an assembled namespace can put them
     /// together (the same shape as a concern's `ClassMethods`).
     fn handle_table_name(&mut self, call: &ruby_prism::CallNode<'pr>) {
-        if method_name(call).as_deref() != Some("table_name=") {
+        if method_name(call) != Some("table_name=") {
             return;
         }
         if !call.receiver().is_some_and(|r| r.as_self_node().is_some()) {
@@ -5479,7 +5483,7 @@ impl<'pr> Extractor<'_> {
         let pos = self.pos(message.start_offset());
         let block = call.block().is_some();
         let stands_for = (call.receiver().is_none() && rspec::in_group(&self.nesting))
-            .then(|| rspec::predicate(&name))
+            .then(|| rspec::predicate(name))
             .flatten()
             .map(|predicate| {
                 let subject = self
@@ -5489,7 +5493,7 @@ impl<'pr> Extractor<'_> {
                 self.sent(predicate, subject, pos, argc, block)
             });
         let fact = self.call_fact(
-            name,
+            name.to_owned(),
             call.receiver().as_ref(),
             main,
             &message,
@@ -5618,7 +5622,7 @@ impl<'pr> Extractor<'_> {
         };
         // A Rails macro trekr declares by name already says what it makes
         // (DEC-111); its string of code would only hedge those names.
-        if !macros::generated(&name, "x").is_empty() {
+        if !macros::generated(name, "x").is_empty() {
             return;
         }
         let args = arg_nodes(call)
@@ -5628,7 +5632,7 @@ impl<'pr> Extractor<'_> {
             .collect();
         let line = self.pos(call.location().start_offset()).line;
         self.facts.body_calls.push(BodyCall {
-            name,
+            name: name.to_owned(),
             nesting: self.nesting.clone(),
             args,
             line,
@@ -5716,7 +5720,7 @@ impl<'pr> Extractor<'_> {
     /// `alias_method :new, :old`, `private :x`).
     fn symbol_receiver(&self, call: &ruby_prism::CallNode<'pr>, index: usize) -> Option<Sent> {
         let name = method_name(call)?;
-        if ruby::names_a_method(&name) {
+        if ruby::names_a_method(name) {
             if index > 0 {
                 return None;
             }
@@ -5728,7 +5732,7 @@ impl<'pr> Extractor<'_> {
         if !self.class_level(call) {
             return None;
         }
-        match name.as_str() {
+        match name {
             "private_class_method" | "public_class_method" => Some(Sent::to_self(true)),
             // These name a callback chain, which is not the method of that name.
             "define_callbacks" | "define_model_callbacks" | "set_callback" | "skip_callback" => {
@@ -5967,7 +5971,7 @@ impl<'pr> Extractor<'_> {
         }
         let on_self = call.receiver().is_none_or(|r| r.as_self_node().is_some());
         for (index, arg) in arg_nodes(call).into_iter().enumerate() {
-            if on_self && names_what_it_defines(&macro_name, index) {
+            if on_self && names_what_it_defines(macro_name, index) {
                 continue;
             }
             if let Some(options) = arg.as_keyword_hash_node() {
@@ -5977,7 +5981,7 @@ impl<'pr> Extractor<'_> {
                 // :y?` is a serializer's, whose options DEC-340 reads.
                 if call.receiver().is_none()
                     && self.nesting.is_empty()
-                    && RENAMES_BY_KEY.contains(&macro_name.as_str())
+                    && RENAMES_BY_KEY.contains(&macro_name)
                 {
                     for element in options.elements().iter() {
                         if let Some(key) = element
@@ -6011,7 +6015,7 @@ impl<'pr> Extractor<'_> {
         let Some(name) = method_name(call) else {
             return;
         };
-        if !matches!(name.as_str(), "render" | "extends" | "partial") {
+        if !matches!(name, "render" | "extends" | "partial") {
             return;
         }
         let args = arg_nodes(call);
@@ -6053,7 +6057,7 @@ impl<'pr> Extractor<'_> {
                         .as_symbol_node()
                         .and_then(|k| String::from_utf8(k.unescaped().to_vec()).ok());
                     let value = assoc.value();
-                    match (name.as_str(), key.as_deref()) {
+                    match (name, key.as_deref()) {
                         ("render", Some("partial")) => match string(&value) {
                             Some(s) => {
                                 partial = Some(s.clone());
@@ -6117,7 +6121,7 @@ impl<'pr> Extractor<'_> {
             if index > 0 {
                 continue;
             }
-            match (name.as_str(), string(arg)) {
+            match (name, string(arg)) {
                 ("render", Some(s)) => found.push((span(arg), Named::Render(s))),
                 ("extends", Some(s)) => found.push((span(arg), Named::Template(s))),
                 ("partial", Some(s)) => found.push((span(arg), Named::Template(s))),
@@ -6218,7 +6222,7 @@ impl<'pr> Extractor<'_> {
             // graphql-ruby: `field … method: :x` calls `x` on the field's
             // object, which may not be `self`; `argument … prepare: :x` on
             // `self` (DEC-712).
-            if matches!(macro_name.as_str(), "field" | "argument") {
+            if matches!(macro_name, "field" | "argument") {
                 let to = match key.as_str() {
                     "method" => None,
                     "prepare" => Some(to_self.clone()),
@@ -6232,7 +6236,7 @@ impl<'pr> Extractor<'_> {
             // `validates :x, exclusion: { unless: :skip? }`: each validator's
             // options take a guard, and numericality's bounds a method. Only
             // `validates` and `validates!` merge that hash (DEC-711).
-            if matches!(macro_name.as_str(), "validates" | "validates!") {
+            if matches!(macro_name, "validates" | "validates!") {
                 let Some(hash) = value.as_hash_node() else {
                     continue;
                 };
@@ -6497,7 +6501,7 @@ fn literal_class(node: &Node<'_>) -> Option<&'static str> {
 /// would generate half a set of definitions while looking like a whole one.
 fn every_element_literal(node: &Node<'_>) -> Option<Vec<String>> {
     if let Some(call) = node.as_call_node() {
-        if !crate::core::IDENTITY.contains(&method_name(&call)?.as_str()) {
+        if !crate::core::IDENTITY.contains(&method_name(&call)?) {
             return None;
         }
         return every_element_literal(&call.receiver()?);
@@ -6539,12 +6543,12 @@ fn code_pieces(node: &Node<'_>) -> Option<Vec<Piece>> {
         let (read, render) = match statement.as_call_node() {
             Some(call) => {
                 let method = method_name(&call)?;
-                if !RENDERS.contains(&method.as_str()) || call.arguments().is_some() {
+                if !RENDERS.contains(&method) || call.arguments().is_some() {
                     return None;
                 }
                 (
                     call.receiver()?.as_local_variable_read_node()?,
-                    Some(method),
+                    Some(method.to_owned()),
                 )
             }
             None => (statement.as_local_variable_read_node()?, None),
@@ -6562,7 +6566,7 @@ fn code_pieces(node: &Node<'_>) -> Option<Vec<Piece>> {
 /// `self.class`.
 fn is_self_class(node: &Node<'_>) -> bool {
     node.as_call_node().is_some_and(|call| {
-        method_name(&call).as_deref() == Some("class")
+        method_name(&call) == Some("class")
             && call.receiver().is_some_and(|r| r.as_self_node().is_some())
     })
 }
@@ -6575,7 +6579,7 @@ fn spelled_code(arg: Node<'_>) -> Option<Node<'_>> {
     }
     let call = arg.as_call_node()?;
     let keeps = matches!(
-        method_name(&call)?.as_str(),
+        method_name(&call)?,
         "strip" | "lstrip" | "rstrip" | "chomp" | "squish" | "freeze" | "dup" | "to_s"
     );
     if !keeps || call.arguments().is_some() || call.block().is_some() {
@@ -6590,9 +6594,7 @@ fn spelled_code(arg: Node<'_>) -> Option<Node<'_>> {
 /// `[<<-RUBY, __FILE__, __LINE__ + 1].freeze`, `class_eval`'s arguments.
 fn code_value(value: Node<'_>) -> Option<Node<'_>> {
     let list = match value.as_call_node() {
-        Some(call)
-            if method_name(&call).as_deref() == Some("freeze") && call.arguments().is_none() =>
-        {
+        Some(call) if method_name(&call) == Some("freeze") && call.arguments().is_none() => {
             call.receiver()?
         }
         _ => value,
@@ -6912,7 +6914,7 @@ fn made_kind(value: &Node<'_>) -> Option<String> {
         return Some("super".to_string());
     }
     let call = value.as_call_node()?;
-    if method_name(&call).as_deref() != Some("new") {
+    if method_name(&call) != Some("new") {
         return None;
     }
     const_name(&call.receiver()?)
@@ -6987,7 +6989,7 @@ fn sole_block_param(call: &ruby_prism::CallNode<'_>) -> Option<String> {
 /// written, or no list at all — half a list would look like a whole one.
 fn literal_constant_array(node: &Node<'_>) -> Option<Vec<String>> {
     if let Some(call) = node.as_call_node() {
-        if !crate::core::IDENTITY.contains(&method_name(&call)?.as_str()) {
+        if !crate::core::IDENTITY.contains(&method_name(&call)?) {
             return None;
         }
         return literal_constant_array(&call.receiver()?);
@@ -7007,7 +7009,7 @@ fn literal_symbol_array(node: &Node<'_>) -> Option<Vec<String>> {
         return (!symbols.is_empty()).then_some(symbols);
     }
     let call = node.as_call_node()?;
-    if !crate::core::IDENTITY.contains(&method_name(&call)?.as_str()) {
+    if !crate::core::IDENTITY.contains(&method_name(&call)?) {
         return None;
     }
     literal_symbol_array(&call.receiver()?)
@@ -7032,9 +7034,9 @@ fn value_shape(node: &Node<'_>) -> ValueShape {
         return ValueShape::Other;
     };
     match call.receiver() {
-        None => ValueShape::SelfCall(name),
+        None => ValueShape::SelfCall(name.to_owned()),
         Some(receiver) => {
-            if crate::core::IDENTITY.contains(&name.as_str()) {
+            if crate::core::IDENTITY.contains(&name) {
                 // Whatever the receiver was, this still is.
                 return value_shape(&receiver);
             }
@@ -7051,7 +7053,7 @@ fn value_shape(node: &Node<'_>) -> ValueShape {
                 } else {
                     ValueShape::ConstCall {
                         recv,
-                        name,
+                        name: name.to_owned(),
                         at: None,
                     }
                 };
@@ -7062,7 +7064,7 @@ fn value_shape(node: &Node<'_>) -> ValueShape {
                 Some(local) => match String::from_utf8(local.name().as_slice().to_vec()) {
                     Ok(recv) => ValueShape::LocalCall {
                         recv,
-                        name,
+                        name: name.to_owned(),
                         at: None,
                     },
                     Err(_) => ValueShape::Other,

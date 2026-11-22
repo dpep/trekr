@@ -15,7 +15,7 @@ belongs to:
 | --- | --- |
 | Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651, 873, 878, 882 |
 | Indexing and freshness | 014, 035, 041, 043, 046, 047, 048, 049, 055, 066, 139, 171, 195, 232, 320, 400, 500, 501, 512 |
-| Extraction: macros, made methods, schema | 022, 033, 069, 070, 085, 086, 094, 110, 111, 130, 131, 132, 160, 161, 162, 163, 164, 212, 310, 312, 480, 561, 643, 645, 710, 711, 712, 740, 741 |
+| Extraction: macros, made methods, schema | 022, 033, 069, 070, 085, 086, 094, 110, 111, 130, 131, 132, 160, 161, 162, 163, 164, 212, 310, 312, 480, 561, 643, 645, 710, 711, 712, 740, 741, 883 |
 | Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841, 871 |
 | Resolve: the receiver ladder, confidence, residue | 008, 010, 011, 019, 020, 027, 028, 031, 068, 071, 077, 081, 082, 089, 093, 112, 116, 126, 127, 133, 136, 137, 140, 165, 166, 172, 211, 213, 214, 260, 261, 280, 311, 314, 340, 341, 342, 350, 351, 380, 390, 391, 392, 401, 440, 441, 442, 444, 445, 541, 795, 796, 797, 798, 825, 826, 827, 828, 837, 868, 869, 872 |
 | Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610, 847, 876, 879 |
@@ -19047,3 +19047,28 @@ table. The rest of the `IN` shape stays, measured on the discourse store
   ms per call, but by name alone the call takes 29 ms for `initialize`
   (13k defs), against 0.03–0.3 ms for a rare name. A per-checkout "has an
   `.rbi`" would take both; that is a different change.
+
+## DEC-883 — `extract::method_name` borrows the name from the parse
+
+**Decided.** `method_name` returns `Option<&'pr str>` borrowed from Prism's
+constant pool rather than a fresh `String`. It is read several times per
+call node, mostly to compare (`matches!`, a table's `contains`), and only
+the fact that keeps a name (a call, a def's `via`, a body call, a value
+shape) copies it now. In round 2's `--refs Post#user` profile it was 11 %
+of all CPU, two thirds of that `from_utf8`, malloc and memmove.
+
+Release builds, interleaved run by run against the commit before, best of
+3, load 13–18:
+
+| run | instructions | user+sys CPU |
+| --- | ---: | ---: |
+| discourse `--refs`, 10 names (sums of bests) | 102.2 → 87.9 G (−14 %) | 13.2 → 12.1 s |
+| discourse `--dead app lib plugins` | 150.0 → 137.9 G (−8 %) | 19.0 → 18.8 s |
+| rails cold `--index` | 62.0 → 57.4 G (−7 %) | 8.8 → 8.7 s |
+
+The cold index's wall does not move: the single writer sets it (round 2).
+Outputs byte-identical to the base build over the DEC-882 battery; the
+extraction golden is unchanged, and so is the store's logical content
+(every fact table by oid, the maps, checkouts, gem and default-gem rows,
+signatures, the index list) after a cold index of rails, and of discourse
+and rails into one store.
