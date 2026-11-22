@@ -477,6 +477,16 @@ receiver shape as the reason, plus candidates ordered by named tiers a reader
 can check — owner in the enclosing class's ancestors, then shares a namespace,
 then same file, then arity fits, then arity does not. No invented weights.
 
+**A top-level `def` is a private method of Object.** It comes before
+Kernel's of the same name (`def format` is not `Kernel#format`; DEC-868),
+and a `class Object` def of the name is the same method, both listed as its
+definition (DEC-869). Private, it answers a receiverless call, and an
+explicit receiver's only where a site makes it public: a top-level
+`public`, a `class Object` def, or `Object.class_eval` (DEC-891). A
+`def CONST.x`, or `def (CONST).x`, is the constant's object's wherever it
+is written (DEC-870), and a call in a module's own `def self.x` runs on the
+module (DEC-872).
+
 Two things a naive implementation gets wrong here:
 
 - **A bare call in a class body dispatches on the class.** `validates :name`,
@@ -629,7 +639,10 @@ auto-vacuum mode — every new store — and by one full rewrite on an older
 store, which switches it (the copy in a temporary file, the disks holding the
 live pages twice). It also builds any fact-table index the schema gained
 since the store was laid down (`body_call_blob`), which `--gc` does first
-too. `--status` reports it as `storage`.
+too. `--status` reports it as `storage`. A `--gc` that frees pages hands
+them back itself, before it reports, once the file's free pages come to
+32 MB — the quarter-of-the-file rule aside, since the user asked
+(DEC-878).
 
 A gem the lockfile names and disk does not have is **reported**, in the text
 output and as `gems.missing` in `--json`; a git or path gem that was not
@@ -925,7 +938,8 @@ is in a test is `test-only`, as a class is (DEC-652; a test is under a
 constants (`cli::dead_consts`, DEC-420) by the `const_ref` rows that
 resolve to them through Ruby's lookup, a namespace by what it holds. Around both, readers of what the index does not hold, each
 a module of `cli`: the Slim, Jbuilder and Builder views and the
-extensionless Ruby scripts (`views`; ERB, Haml and RABL are indexed, DEC-520, DEC-658), names the checkout builds (`built`),
+extensionless Ruby scripts (`views`, a Slim view's Ruby read by
+`extract/slim.rs`, DEC-846; ERB, Haml and RABL are indexed, DEC-520, DEC-658), names the checkout builds (`built`),
 the routes (`routes`), YAML config (`config`), generated files
 (`generated`), and for constants the checkout's Ruby, templates and scripts
 as text (`dead_consts::named`) and the conventions that find a class by its
@@ -937,7 +951,10 @@ called on a typed receiver that lacks it is `lower`, since a module mixed
 in at runtime may supply it (DEC-661). Last, `entry_points` (DEC-657) marks
 a row reached from outside the repo — a library's public API, a routed
 action or controller, a job class — and grades it `lower` whatever its
-tier, naming the evidence that would settle it.
+tier, naming the evidence that would settle it. Two fields help a deletion
+along: `cascaded_from` names the `clear` candidate whose deletion frees a
+`single-caller` row (DEC-680), and `test_sites` lists a `test-only`
+method's tests, each with its example and group (DEC-730).
 
 **`--dead Gemfile` weighs the bundle instead** (`cli::dead_gems`,
 DEC-670): each gem a Gemfile or gemspec declares (`gems::gemfile` reads
@@ -1098,7 +1115,7 @@ the new binary in place (DEC-050).
 | module | owns |
 |---|---|
 | `mod.rs` | the loop: initialize, dispatch, shutdown/exit, error codes, idle warm-up, answers rewritten into the client's path spelling |
-| `wire.rs` | stdio framing, read leniently (DEC-810): stdin read on the loop's own thread from the raw descriptor (no hidden read-ahead), stdout written by a thread |
+| `wire.rs` | stdio framing, read leniently (DEC-810): stdin read on the loop's own thread from the raw descriptor (no hidden read-ahead), stdout written by a thread; a header section past 8 KiB or a `Content-Length` past 256 MiB is refused as bad framing (DEC-864) |
 | `inbox.rs` | reading the wire ahead, so `$/cancelRequest` is seen before the request it withdraws is reached, and mid-scan |
 | `state.rs` | per-checkout trees, mapped from their snapshots and reloaded when the tree key — checkout and gems — moves; completion listings; documents — the editor's copy, or a disk read revalidated by mtime+length |
 | `handlers.rs` | the nine agent operations, syntax diagnostics, `require` strings as links |
@@ -1188,12 +1205,18 @@ calls and workspace symbols wait for the whole index; definition,
 declaration and the call hierarchy's prepare and outgoing calls wait for
 the checkout's first part, and after it only when they found nothing. A
 waiting request is parked, not served: the loop keeps answering other
-requests, `$/cancelRequest` and `shutdown`, and tries it again each time
-the index commits. When the index ends it is answered; after 30 s, at
-shutdown, or at once when this session indexes nothing, it is refused with
-`RequestFailed` (-32803) and a message saying how far the index has got.
-An empty answer no index would change — no name at the caret, an
-unreadable file — goes out at once.
+requests, `$/cancelRequest` and `shutdown`. A parked position is tried
+again each time the index commits; a whole-checkout question only once the
+index is whole, or no longer coming (DEC-867). When the index ends it is
+answered; after 30 s, at shutdown, or at once when this session indexes
+nothing, it is refused with `RequestFailed` (-32803) and a message saying
+how far the index has got. A parked request whose document changed
+meanwhile — the editor's version, or the disk's mtime and length — is
+refused `ContentModified` (-32801), since its position names text the
+client no longer shows (DEC-866). An empty answer no index would change —
+no name at the caret, an unreadable file — goes out at once, and so does a
+local variable's definition and references, read from the file alone
+(DEC-865).
 
 **Hover is for a person reading code** (DEC-052), so it shows what the
 definition is and leaves out how it was found:
