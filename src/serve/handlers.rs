@@ -893,14 +893,9 @@ fn asked_method(
     path: &str,
 ) -> Option<(refs::Query, Vec<crate::tree::Site>)> {
     match under {
-        Under::Definition(def) if def.kind == Kind::Method => Some((
-            refs::Query {
-                owner: tree.scope_fqn(&def.nesting),
-                singleton: def.singleton,
-                name: def.name.clone(),
-            },
-            Vec::new(),
-        )),
+        Under::Definition(def) if def.kind == Kind::Method => {
+            Some((query_refs::def_query(tree, def), Vec::new()))
+        }
         Under::Call(call) => {
             let answer = crate::resolve::method_at(tree, facts, call, path);
             let (name, singleton) = crate::resolve::asked_at(tree, call, &answer);

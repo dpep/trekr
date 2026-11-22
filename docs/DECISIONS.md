@@ -18780,10 +18780,12 @@ which every front tiers through, reads `Object` as the top-level key
 **Why.** `--dead` graded `CONF.alpha` `unreferenced`, `clear`, while
 `--refs CONF.alpha` found its call: a silent wrong answer, in 0.10.2 too.
 
-**Editor.** Find References and incoming calls at a top-level def still
-build their query from the scope alone (`serve::handlers::asked_method`),
-an owner of none, and list by name: incoming calls there confirm a class's
-call that `--refs` calls `possible`. The serve lane takes `def_query` there.
+**Editor.** Find References and incoming calls at a def ask through
+`def_query` too (`serve::handlers::asked_method`). They built the query
+from the scope alone, an owner of none, and listed by name: at a
+top-level def, incoming calls confirmed a class's call that `--refs`
+calls `possible`, and Find References left out a call in a module's
+`def self.go` that `--refs` lists (testbed 868).
 
 Testbed 1012.
 

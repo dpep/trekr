@@ -11,3 +11,9 @@ dead lib/top.rb #format=none
 # includes it: the residue said "no class the index knows of mixes it in".
 def lib/top.rb:13:5 status=residue reason=ancestors
 refs Object#helper_top status=resolved possible=1 sites=lib/top.rb:13:5
+# Asked at the defs, from either front: the editor built its query from
+# the scope alone, an owner of none, so incoming calls confirmed the
+# class's `format` and Find References left out `helper_top`'s call in
+# `def self.go`, which `--refs` lists.
+refs lib/top.rb:1:5 status=resolved confirmed=1 possible=1 excluded=0 resolves_to=Object#format sites=app/models/user.rb:3:5,lib/top.rb:5:1
+refs lib/top.rb:7:5 status=resolved possible=1 resolves_to=Object#helper_top sites=lib/top.rb:13:5

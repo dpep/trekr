@@ -232,6 +232,10 @@
   `unreferenced`, `clear`, while `CONF.alpha` called it, and one in a
   module was named `Settings.gamma`. `--refs` at such a def answers, where
   it exited 64.
+- **The editor's Find References and incoming calls at a top-level def
+  list what `--refs` at it lists**: they asked by name, so
+  incoming calls confirmed a class's call `--refs` calls possible, and
+  Find References left out a call in a module's `def self.x`.
 - **A concern included through a plain module no longer puts its
   `ClassMethods` on the class**: `module Outer; include Inner; end` gave a
   class including `Outer` Inner's class methods, which Ruby does not.
