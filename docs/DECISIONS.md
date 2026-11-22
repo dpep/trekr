@@ -18884,3 +18884,18 @@ are not indexed. Changing that is an extraction change — the store version
 moves, and the testbed input lands a commit earlier — and their output
 keeps the template's byte offsets, which a lossy decode would move; left
 for its own change.
+
+## DEC-873 — `--dead`'s text readers read an identifier as `is_ident` does
+
+**Decided.** DEC-835 made a name read by a run helper `is_ident`, Ruby's
+rule, but three readers kept ASCII: a Slim view's `words()` read
+`hlp_slim_ü` as `hlp_slim_`, so the method stayed `unreferenced`, clear;
+a YAML scalar's constant (`class: TrabajoAñoJob`) and method failed
+`config.rs`' ASCII `is_word`; and the string-constant reader's
+`is_constant_path` and `const_get(` argument wanted an ASCII capital, so
+`Object.const_get("Ñu")` named nothing (hunt 4's lsp-uni). Each takes
+`core::text::is_ident`, a constant starting with any uppercase character
+(`char::is_uppercase`, as Ruby's constant rule) and a method with any
+other identifier character but a digit. `named.rs`' `word_at`, which the
+heredoc and `::` readers use, is left ASCII: outside this reader.
+Testbed 1022.

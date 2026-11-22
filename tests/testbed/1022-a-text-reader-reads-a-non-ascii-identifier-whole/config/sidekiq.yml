@@ -1,0 +1,4 @@
+:schedule:
+  limpieza:
+    cron: "0 * * * *"
+    class: TrabajoAñoJob

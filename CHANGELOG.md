@@ -80,6 +80,10 @@
   byte that is not UTF-8**: one Latin-1 `é` left the whole file unread, so
   a method only it named was `unreferenced`, `clear`. The byte reads as
   U+FFFD, as `--dead Gemfile` already read such a view.
+- **`--dead` reads a non-ASCII identifier whole in a Slim view, a YAML
+  config and a constantized string**: `= hlp_slim_ü`, `class:
+  TrabajoAñoJob` and `Object.const_get("Ñu")` named nothing, so each left
+  its method or class `unreferenced`, `clear`.
 
 - **With no lockfile, `--index` resolves the gems a file the Gemfile
   evals declares** (`eval_gemfile "Gemfile.tools"`), as `--dead Gemfile`

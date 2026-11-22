@@ -12,6 +12,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::core::text::is_ident;
+
 #[derive(Default)]
 pub(super) struct Config {
     /// Each name, with the first file (relative to the checkout) and line
@@ -106,7 +108,7 @@ fn method_named(value: &str) -> Option<&str> {
         let constant = receiver
             .trim_start_matches("::")
             .split("::")
-            .all(|part| part.starts_with(|c: char| c.is_ascii_uppercase()) && is_word(part));
+            .all(|part| part.starts_with(char::is_uppercase) && is_word(part));
         return (constant && is_method(method)).then_some(method);
     }
     let core = value.trim_end_matches(['?', '!']);
@@ -124,17 +126,19 @@ fn constant_named(value: &str) -> Option<&str> {
     (!constant.is_empty()
         && constant
             .split("::")
-            .all(|part| part.starts_with(|c: char| c.is_ascii_uppercase()) && is_word(part)))
+            .all(|part| part.starts_with(char::is_uppercase) && is_word(part)))
     .then_some(constant)
 }
 
 fn is_method(name: &str) -> bool {
     let core = name.strip_suffix(['?', '!']).unwrap_or(name);
-    core.starts_with(|c: char| c.is_ascii_lowercase() || c == '_') && is_word(core)
+    core.starts_with(|c: char| is_ident(c) && !c.is_ascii_digit() && !c.is_uppercase())
+        && is_word(core)
 }
 
+/// An identifier as Ruby reads one, any non-ASCII character in it (DEC-835).
 fn is_word(text: &str) -> bool {
-    !text.is_empty() && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    !text.is_empty() && text.chars().all(is_ident)
 }
 
 #[cfg(test)]

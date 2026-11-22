@@ -252,6 +252,11 @@ ruby tests/testbed/1013-a-plain-module-keeps-a-concerns-class-methods/app/models
 ruby tests/testbed/1013-a-plain-module-keeps-a-concerns-class-methods/app/models/klasses.rb b2b11902475c84e2
 ruby tests/testbed/1013-a-plain-module-keeps-a-concerns-class-methods/lib/active_support/concern.rb bc5787832735dd67
 ruby tests/testbed/1021-a-latin-1-byte-leaves-a-view-or-config-read/app/models/widget.rb 919d3a4a7ff3bdf5
+ruby tests/testbed/1022-a-text-reader-reads-a-non-ascii-identifier-whole/app/helpers/widgets_helper.rb 891dc110bb08de71
+ruby tests/testbed/1022-a-text-reader-reads-a-non-ascii-identifier-whole/app/jobs/trabajo_año_job.rb 052a6d575beab08d
+ruby tests/testbed/1022-a-text-reader-reads-a-non-ascii-identifier-whole/app/models/widget.rb f85a3a853f29fc89
+ruby tests/testbed/1022-a-text-reader-reads-a-non-ascii-identifier-whole/app/models/ñandu.rb 53e8bb40e0eb97b1
+ruby tests/testbed/1022-a-text-reader-reads-a-non-ascii-identifier-whole/app/models/ñu.rb daf866e48d89d76c
 ruby tests/testbed/120-a-method-made-from-an-unnamed-name-is-not-absent/app.rb b1e220695c537f1f
 ruby tests/testbed/121-define-method-over-a-constant-list-defines-each-name/app.rb e7e8d445dc4ad5f0
 ruby tests/testbed/122-a-class-eval-string-is-read-as-code/app.rb fad3b1c5e17ce63b

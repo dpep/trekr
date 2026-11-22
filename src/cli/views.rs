@@ -13,6 +13,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::core::text::is_ident;
+
 /// Template extensions whose Ruby a view runs, and the index does not read.
 const TEMPLATES: [&str; 3] = ["*.slim", "*.jbuilder", "*.builder"];
 
@@ -295,13 +297,13 @@ fn words(ruby: &str) -> Vec<String> {
             found.extend(words(&code));
             continue;
         }
-        if !(c.is_ascii_alphabetic() || c == '_') {
+        if !is_ident(c) || c.is_ascii_digit() {
             continue;
         }
         let mut end = start + c.len_utf8();
         while let Some(&(at, next)) = chars.peek() {
-            if next.is_ascii_alphanumeric() || next == '_' {
-                end = at + 1;
+            if is_ident(next) {
+                end = at + next.len_utf8();
                 chars.next();
             } else {
                 if next == '?' || next == '!' {

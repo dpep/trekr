@@ -10,7 +10,7 @@
 #![deny(clippy::string_slice)]
 
 use super::super::built::{TEMPLATES, Texts};
-use crate::core::text::{is_ident, trailing_run};
+use crate::core::text::{is_ident, leading_run, trailing_run};
 use crate::core::{RecvShape, RecvValue};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -245,9 +245,9 @@ impl Named {
         }
         if let Some(open) = line.find("const_get(") {
             let arg = line[open + 10..].trim_start_matches([':', '"', '\'']);
-            if arg.starts_with(|c: char| c.is_ascii_uppercase()) {
+            if arg.starts_with(char::is_uppercase) {
                 self.dynamic
-                    .entry(word_at(arg, 0).to_string())
+                    .entry(leading_run(arg, is_ident).to_string())
                     .or_insert_with(|| (path.to_string(), line_no));
             }
         }
@@ -539,16 +539,14 @@ fn word_at(line: &str, at: usize) -> &str {
     crate::core::text::leading_run(rest, |c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// `Widget`, `::Admin::Widget`: a capitalised name, and segments of one.
+/// `Widget`, `::Admin::Widget`, `Ñu`: a capitalised name, and segments of
+/// one, read as Ruby reads a constant (DEC-835).
 fn is_constant_path(text: &str) -> bool {
     let text = text.strip_prefix("::").unwrap_or(text);
     !text.is_empty()
-        && text.split("::").all(|segment| {
-            segment.starts_with(|c: char| c.is_ascii_uppercase())
-                && segment
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        })
+        && text
+            .split("::")
+            .all(|segment| segment.starts_with(char::is_uppercase) && segment.chars().all(is_ident))
 }
 
 /// `auth/passwords`: a controller's path as a route writes it.

@@ -1,0 +1,5 @@
+# Ruby reads any non-ASCII character as part of an identifier (DEC-835),
+# but `--dead`'s text readers read ASCII only: a Slim view's
+# `hlp_slim_ü` was read as `hlp_slim_`, a YAML `class: TrabajoAñoJob` and
+# `Object.const_get("Ñu")` named nothing, each left `unreferenced`, clear.
+dead app WidgetsHelper#hlp_slim_ü=unreferenced~edit.html.slim WidgetsHelper#lonely_ü=unreferenced~ TrabajoAñoJob=convention-only Ñu=convention-only Ñandu=unreferenced

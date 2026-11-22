@@ -1,0 +1,2 @@
+class Ñandu
+end
