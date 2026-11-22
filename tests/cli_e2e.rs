@@ -2467,7 +2467,7 @@ fn usage_counts_each_command_by_caller_and_outcome() {
 /// across releases.
 #[test]
 fn usage_tells_modes_and_knobs_apart_and_records_the_version() {
-    let (dir, db) = scratch("usage-modes");
+    let (dir, db) = ruby_scratch("usage-modes");
     repo(&dir);
     fs::write(
         dir.join("Gemfile"),
