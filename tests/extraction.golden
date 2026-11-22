@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 77
+version 78
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -267,7 +267,7 @@ ruby tests/testbed/1024-an-eval-gemfile-path-built-from-dir-is-followed/gems/mor
 ruby tests/testbed/1025-a-later-mixin-on-the-class-side-comes-first/app/models/mixins.rb 1ad190ad96faca29
 ruby tests/testbed/1025-a-later-mixin-on-the-class-side-comes-first/app/models/records.rb e89ca3bee27e636b
 ruby tests/testbed/1025-a-later-mixin-on-the-class-side-comes-first/lib/active_support/concern.rb bc5787832735dd67
-ruby tests/testbed/1042-a-def-on-a-parenthesised-constant/lib/a.rb 4fe11f87330f314d
+ruby tests/testbed/1042-a-def-on-a-parenthesised-constant/lib/a.rb 5cb1a5a919a652fd
 ruby tests/testbed/120-a-method-made-from-an-unnamed-name-is-not-absent/app.rb b1e220695c537f1f
 ruby tests/testbed/121-define-method-over-a-constant-list-defines-each-name/app.rb e7e8d445dc4ad5f0
 ruby tests/testbed/122-a-class-eval-string-is-read-as-code/app.rb fad3b1c5e17ce63b

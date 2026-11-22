@@ -1176,6 +1176,23 @@ fn const_name(node: &Node<'_>) -> Option<String> {
     path_name(&node.as_constant_path_node()?)
 }
 
+/// A constant path, read through parentheses: `def (CONST).x` is
+/// `def CONST.x`.
+fn unparenthesised_const(node: &Node<'_>) -> Option<String> {
+    let Some(parens) = node.as_parentheses_node() else {
+        return const_name(node);
+    };
+    let body = parens.body()?;
+    let Some(statements) = body.as_statements_node() else {
+        return unparenthesised_const(&body);
+    };
+    let mut body = statements.body().iter();
+    match (body.next(), body.next()) {
+        (Some(only), None) => unparenthesised_const(&only),
+        _ => None,
+    }
+}
+
 fn path_name(path: &ruby_prism::ConstantPathNode<'_>) -> Option<String> {
     let last = String::from_utf8(path.name()?.as_slice().to_vec()).ok()?;
     match path.parent() {
@@ -1903,7 +1920,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         if let Some(r) = receiver.as_ref()
             && r.as_self_node().is_none()
         {
-            def.target = const_name(r);
+            def.target = unparenthesised_const(r);
         }
         if self.nesting.is_empty() && self.open_blocks.iter().any(Option::is_some) {
             def.via = Some(crate::core::TOP_LEVEL_BLOCK.to_string());

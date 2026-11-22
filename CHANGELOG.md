@@ -259,11 +259,12 @@
 - **`--dead` counts a call Kernel answers as a possible call of a
   top-level def of the name**, which comes before Kernel's once its file
   is loaded; it excluded the call, and could call the def `unreferenced`.
-- **`--dead` asks about `def CONF.alpha` as `CONF`'s**: it took the scope
+- **`--dead` asks about `def CONF.alpha` as `CONF`'s**, and about
+  `def (CONF).alpha` and `def (Mod::CONF).alpha` too: it took the scope
   the def is written in for its owner, so a top-level one was
   `unreferenced`, `clear`, while `CONF.alpha` called it, and one in a
   module was named `Settings.gamma`. `--refs` at such a def answers, where
-  it exited 64.
+  it exited 64. The store version moves, so the next run re-indexes.
 - **The editor's Find References and incoming calls at a top-level def
   list what `--refs` at it lists**: they asked by name, so
   incoming calls confirmed a class's call `--refs` calls possible, and

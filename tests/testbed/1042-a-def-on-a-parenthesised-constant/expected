@@ -1,2 +1,7 @@
-# `def (CONST).x` is `def CONST.x` (DEC-870) written in parentheses.
-def lib/a.rb:17:19 name=ix
+# `def (CONST).x` is `def CONST.x` (DEC-870) written in parentheses. The
+# extractor named no target for a parenthesised receiver, so `--dead`
+# graded both `unreferenced`, clear, while `App.run` calls them, and
+# `--refs` at the def refused, "no method at".
+dead lib/a.rb Outer::INNER#ix=single-caller LOOSE#px=single-caller
+refs lib/a.rb:5:20 status=resolved possible=1 sites=lib/a.rb:17:19
+refs lib/a.rb:11:13 status=resolved possible=1 sites=lib/a.rb:17:29

@@ -18790,7 +18790,13 @@ top-level def, incoming calls confirmed a class's call that `--refs`
 calls `possible`, and Find References left out a call in a module's
 `def self.go` that `--refs` lists (testbed 868).
 
-Testbed 1012.
+**In parentheses.** `def (CONST).x` and `def (Mod::CONST).x` are the same
+def: the extractor reads the constant through the parentheses
+(`unparenthesised_const`). It named no target for a `ParenthesesNode`, so
+`--dead` graded both `unreferenced`, clear, while called, and `--refs` at
+the def refused (hunt 5's c3; 0.10.2 too). Store version 78.
+
+Testbed 1012, 1042.
 
 ## DEC-871 — A concern's `ClassMethods` reach through concerns only
 
