@@ -319,21 +319,12 @@ locations means the list was cut.
 
 `--dead` grades candidates for deletion; it never calls anything dead. It
 checks every method defined in scope against references from the whole
-checkout (not other indexed repos, so the answer does not depend on them);
+checkout (not other indexed repos, so the answer does not depend on them),
 then a spec's `let`s, `subject`s, group `def`s (`kind: let|subject|method`,
-with `group`) and shared groups (`kind: shared_group`); then every class,
+with `group`) and shared groups (`kind: shared_group`), then every class,
 module and constant (`kind: class|module|constant`) no constant reference
-resolves to.
-
-What a grade is worth was measured by reading rows by hand: an
-`unreferenced`, `clear` row was truly unused 79 % of the time on mastodon's
-app code and 89 % on discourse app rows held out from the rules, but less
-on `lib/` (DEC-372, [below](#confidence-and-caveats)); a `test-only`, `clear` method was
-only tests' 21 times in 26 (DEC-652). Git history is no stand-in: discourse
-deleted 2.5 % of its methods in a year, and no tool's candidates — trekr's,
-Spoom's or sorbet-deadcode's — are told apart from that base rate
-([COMPARISON](COMPARISON.md#--dead-against-spoom-and-sorbet-deadcode--discourse-by-git-history)).
-Hence the grading, and why trekr never says "dead".
+resolves to. Each row says how much evidence of use was found and how far
+to trust it; [what a grade is worth](#what-a-grade-is-worth) was measured.
 
 ### Tiers
 
@@ -360,87 +351,140 @@ From least evidence of use to most:
 - `single-caller` — one reference: an inlining candidate. `caller` says
   where, with its own `tier`: whether it certainly reaches the method.
 
-A method whose only caller is itself a candidate stays `single-caller`, and
-its `reason` says the caller is a candidate — unless the innermost `def`
-around the call is not a candidate, or two `def`s on the call's line may
-each hold it, or a `def` around it ends on the call's line (the call may
-follow its `end`), when it names none. When that caller is a `clear`
-`unreferenced` or `test-only` method and the row is `clear` too, with no
-`super_refs` or `symbol_refs` besides, deleting
-the caller leaves this one unreferenced (or reached only by tests): the
-row carries `cascaded_from` (`name`, `path`, `line`, `tier`, `root`), naming it,
-and its reason says "its caller, build, is itself unreferenced". Delete the
-root first, then this. One step only: a method freed through another
-candidate, or two that call only each other, carry none — run `--dead`
-again after deleting (DEC-680). An `initialize` is reported only when
-nothing constructs its class.
+An `initialize` is reported only when nothing constructs its class.
 
-### Confidence and caveats
+### Cascades: `cascaded_from`
+
+A method whose only caller is itself a candidate stays `single-caller`,
+and its `reason` names that caller. It names none when which `def` holds
+the call is unsure: the innermost `def` around it is not a candidate, two
+`def`s on its line may each hold it, or a `def` around it ends on its line
+(the call may follow its `end`).
+
+When the caller is a `clear` `unreferenced` or `test-only` method, and the
+row is `clear` too with no `super_refs` or `symbol_refs`, deleting the
+caller leaves this one unreferenced (or reached only by tests). The row
+carries `cascaded_from` (`name`, `path`, `line`, `tier`, `root`), and its
+reason says "its caller, build, is itself unreferenced". Delete the root
+first, then this one. Only one step is named: a method freed through
+another candidate, or two that call only each other, carry none, so run
+`--dead` again after deleting (DEC-680).
+
+### Caveats
 
 Each row is `clear` or `lower` confidence, and says why in words; a `lower`
 row's `caveat` names what may still reach it. Any tier other than `override`
-that overrides a method is `lower`, and so is a `single-caller` row whose
-caller is `possible`.
+that overrides a method is `lower` ("overrides …"), and so is a
+`single-caller` row whose caller is `possible` ("untyped caller"). A file
+read here is one the index would list, untracked ones git does not ignore
+included (DEC-845).
 
-A row is `lower` when one of these may reach it, and its caveat
-names which (a file read here is one the index would list, untracked
-ones git does not ignore included; DEC-845):
+A method row is `lower` when one of these may reach it:
 
-- a Slim, Jbuilder or Builder template that writes the name ("named in a
-  view (…), which is not read"; a Slim view's Ruby is taken as `--dead
-  Gemfile` takes it, DEC-846; ERB, Haml and RABL templates are read, and
-  their calls counted);
-- a Ruby script with no extension (`exe/tool`, `bin/x`: "named in a script
-  (…), which is not read");
-- Ruby or Rails calling a protocol hook by name — `marshal_load`,
-  `to_partial_path`, `each`, a job's `perform` ("a hook … calls by name";
-  DEC-315);
-- a symbol in the method's own file that trekr does not read as a call
-  (`only: [:archive]`), or, for a controller action, a route built at
-  runtime (DEC-343, DEC-344);
-- a computed name sent anywhere in its file (`send(name)`, `__send__`,
-  `public_send`, `try`, or `method(name).call`; a symbol is a reference
-  instead), or spelled in any string of the file (code it may evaluate),
-  the caveat naming the call (DEC-631, DEC-662); or its own name sent there,
-  as a string or symbol (`send("archive")`, `&method(:archive)`), which
-  says so beside a call too;
-- a name of its shape the checkout builds (`:"report_#{type}"`, or a string
-  or symbol its class is sent, `Q.new.public_send("list_#{kind}")`,
-  `"#{kind}_attrs"`; DEC-655, DEC-663), or a computed name sent to its
-  class (`Mailer.public_send(type)`), in a Ruby file or an ERB or Haml
-  template;
-- its name, or an alias's, sent from another file as a string or an
-  operator, which trekr records no symbol for (`send("archive")`,
-  `send(:[], 1)`: "… is sent by name at …"; DEC-666), on its class or its
-  relatives, or on any class when sent to a value;
-- for a `single-caller` row, a macro of its own class that names it
-  (`before_action :x`, `validate :x`, a serializer's `attributes :x`: "a
-  macro names it too, at …"; DEC-666);
-- a writer `assign_attributes` reaches, an ancestor trekr has not indexed,
-  a gem of the bundle that calls the name, a helper another helper calls
-  (DEC-363–368, DEC-370);
-- a YAML config that writes the name (`generator: pay_schedule_resources`,
-  `Pkg::Sanitizer.clean_uid`: "named in config (…), which is not read";
-  locale files aside, DEC-402);
-- a file a generator wrote (`linguist-generated`, a `generated/` directory,
-  a "DO NOT EDIT" header; DEC-403);
-- for a module's method, `unreferenced` or `test-only`, a call of its name
-  on a typed receiver with no such method ("called on TopicQuery (…), where
-  trekr finds no such method; a module mixed in at runtime may supply it"):
-  a module mixed in from a block — a plugin's `after_initialize` — is no
-  edge the index records (DEC-097, DEC-661);
-- an entry point ([below](#entry-points)).
+| what may reach it | the caveat says | DEC |
+| --- | --- | --- |
+| a Slim, Jbuilder or Builder view that writes the name | "named in a view (…), which is not read" | 846 |
+| a Ruby script with no extension | "named in a script (…), which is not read" | |
+| a YAML config that writes the name | "named in config (…), which is not read" | 402 |
+| Ruby or Rails calling a protocol hook by name | "a hook … calls by name" | 315 |
+| a symbol in its file not read as a call, or a route built at runtime | "`x` at line N is not read as a call" | 343, 344 |
+| a computed name sent in its file, or its own name sent there | the call | 631, 662 |
+| a name of its shape the checkout builds | the shape | 655, 663 |
+| its name sent from another file | "… is sent by name at …" | 666 |
+| for `single-caller`, a macro of its own class naming it | "a macro names it too, at …" | 666 |
+| a writer `assign_attributes` reaches, an unindexed ancestor, a gem of the bundle, a helper another helper calls | what it is | 363–368, 370 |
+| a file a generator wrote | "in generated code (…), which its runtime may call generically" | 403 |
+| for a module's method, a call on a typed receiver with no such method | "called on TopicQuery (…), where trekr finds no such method; …" | 097, 661 |
+| an entry point | the evidence that would settle it | 657 |
 
-`clear` on an `unreferenced` row means none of those was found. Measured by
-hand on mastodon and discourse (DEC-372), such rows were truly dead 79 % and
-100 % of the time where the rules were fitted, and 89 % on discourse rows
-held out; on forem, an app no rule was fitted on, 55 of 70 (79 %) — a
-Pundit, an algoliasearch callback, a serializer block made most of the
-rest (DEC-450). On code unlike an app's (`lib/`), less — read DEC-372 before
-trusting it on a CLI or a library.
+In detail:
 
+- **Views.** A Slim, Jbuilder or Builder template that writes the name; a
+  Slim view's Ruby is taken as `--dead Gemfile` takes it. ERB, Haml and
+  RABL templates are read, and their calls counted.
+- **Scripts.** A Ruby script with no extension (`exe/tool`, `bin/x`).
+- **YAML.** A config that writes the name (`generator:
+  pay_schedule_resources`, `Pkg::Sanitizer.clean_uid`); locale files aside.
+- **Protocol hooks.** `marshal_load`, `to_partial_path`, `each`, a job's
+  `perform`.
+- **Symbols not read as calls.** A symbol in the method's own file that
+  trekr does not read as a call (`only: [:archive]`), or, for a controller
+  action, a route built at runtime.
+- **Computed sends in its file.** A computed name sent anywhere in its file
+  (`send(name)`, `__send__`, `public_send`, `try`, or `method(name).call`;
+  a symbol is a reference instead), or spelled in any string of the file
+  (code it may evaluate), the caveat naming the call. Its own name sent
+  there, as a string or symbol (`send("archive")`, `&method(:archive)`),
+  says so beside a call too.
+- **Built shapes.** A name of its shape the checkout builds
+  (`:"report_#{type}"`, or a string or symbol its class is sent,
+  `Q.new.public_send("list_#{kind}")`, `"#{kind}_attrs"`), or a computed
+  name sent to its class (`Mailer.public_send(type)`), in a Ruby file or an
+  ERB or Haml template.
+- **Sent from another file.** Its name, or an alias's, sent as a string or
+  an operator, which trekr records no symbol for (`send("archive")`,
+  `send(:[], 1)`), on its class or its relatives, or on any class when sent
+  to a value.
+- **A macro beside one call.** For a `single-caller` row, a macro of its own
+  class that names it (`before_action :x`, `validate :x`, a serializer's
+  `attributes :x`).
+- **Reached by name elsewhere.** A writer `assign_attributes` reaches, an
+  ancestor trekr has not indexed, a gem of the bundle that calls the name,
+  a helper another helper calls.
+- **Generated code.** `linguist-generated`, a `generated/` directory, a
+  "DO NOT EDIT" header.
+- **Runtime mixins.** For a module's method, `unreferenced` or `test-only`,
+  a call of its name on a typed receiver with no such method: a module
+  mixed in from a block — a plugin's `after_initialize` — is no edge the
+  index records.
+- **Entry points.** See [below](#entry-points).
+
+`clear` on an `unreferenced` row means none of those was found.
 `visibility` (`public`, `protected`, `private`) says how complete the
 evidence is: a private candidate's is complete, a public one's is not.
+Classes, modules and constants carry caveats of their own
+([below](#classes-modules-and-constants)), and a spec's members are always
+`lower` ([below](#example-groups-members)).
+
+### What a grade is worth
+
+Measured by reading rows by hand, or against what ran:
+
+| row | measured | on | DEC |
+| --- | --- | --- | --- |
+| method, `unreferenced`, `clear` | truly unused 79 % | mastodon (rules fitted there) | 372 |
+| | 100 % fitted, 89 % held out | discourse | 372 |
+| | 55 of 70 (79 %) | forem (no rule fitted there) | 450 |
+| | less | code unlike an app's (`lib/`) | 372 |
+| method, `test-only` | `clear`: reached only by tests 21 of 26; `lower`: 7 of 25 | mastodon, discourse | 652 |
+| class or constant, `unreferenced`, `clear` | truly unused 25 of 26 (`test-only`: 21 of 26) | gems held out | 654 |
+| class or constant in an app (`lower`) | truly unused 19 of 50 | forem | 450 |
+| spec `let` and `subject` | every row listed never ran; 86 of the 96 that never ran listed | mastodon, traced | 492–496 |
+| | 20 of 20 unused | discourse, sampled | 492–496 |
+| | with no caveat: 79 %, 47 %, 0.2 % unused | three held-out batches | 496 |
+| gem, `unreferenced`, `clear` | 10 of 10 unused (in-sample) | ten checkouts, 508 gems | |
+| gem, `lower` | 8 of 12 in use, 3 not, 1 unsettled | the same | |
+
+- On forem, a Pundit policy, an algoliasearch callback and a serializer
+  block made most of the misses. Read DEC-372 before trusting a grade on a
+  CLI or a library.
+- `test-only`'s misses were names built at runtime
+  (`public_send("list_#{action}")`), which trekr reads (DEC-655).
+- An app nearly always looks up a computed constant name, so its class
+  rows stay `lower`: read one as a lead to check, not a verdict.
+- Each held-out spec suite found a way in the rules did not yet read — a
+  shared context included by metadata, a shared group written inside a
+  module, a string `eval`ed — hence every spec row is `lower`.
+- The gem checkouts: mastodon, discourse, rails, sidekiq, rubocop, faraday,
+  graphql, flipper, webmock, widget_shop. The ten `clear` rows were
+  octokit, aws-sdk-sns, flamegraph and seven another gem keeps in the
+  bundle (`needed_by`). The rules were fitted on these checkouts.
+
+Git history is no stand-in: discourse deleted 2.5 % of its methods in a
+year, and no tool's candidates — trekr's, Spoom's or sorbet-deadcode's —
+are told apart from that base rate
+([COMPARISON](COMPARISON.md#--dead-against-spoom-and-sorbet-deadcode--discourse-by-git-history)).
+Hence the grading, and why trekr never says "dead".
 
 ### `test-only`
 
@@ -453,14 +497,10 @@ package's (`plugins/chat/spec/`), not one inside `lib/` or `app/`
 an override, a `super` into a method trekr has not indexed, or a protocol
 hook outranks the tests: such a method keeps the tier it would have without
 them. A script or a view that writes the name does not: the row stays
-`test-only`, graded `lower`, and says so. A spec's own helper is never `test-only`.
-
-Graded as the other method tiers are: measured by hand on mastodon and
-discourse (DEC-652), a `clear` one was reached only by tests 21 times in 26
-(81 %), the misses all names built at runtime
-(`public_send("list_#{action}")`), which are now read (DEC-655); a `lower`
-one 7 in 25. A public `test-only` method in a library's `lib/` is usually
+`test-only`, graded `lower`, and says so. A spec's own helper is never
+`test-only`. A public `test-only` method in a library's `lib/` is usually
 its API, so it is graded `lower` as an entry point (below).
+[What it is worth](#what-a-grade-is-worth).
 
 **Its tests** (DEC-730). A `test-only` method row carries `test_sites`:
 each call, symbol and `super` a test writes (`path`, `line`, `col`), with
@@ -523,7 +563,7 @@ A mark reaches as far as its tool reads it:
   after `public` or `protected` it is an instance method that is API.
 
 An app's own public methods are not entry points: their callers are in the
-checkout. Hand-checked on six gems, 36 of 43 rows it moved from `clear`
+checkout. Hand-checked on six gems, 36 of 43 rows marked as entry points
 were API a user could call.
 
 ### Classes, modules and constants
@@ -550,11 +590,7 @@ an ancestor, an STI subclass, a gem's routes — is a `caveat`, and grades it
 `lower`. So does a lookup of a name computed whole anywhere in the checkout
 (`name.constantize`, `Object.const_get(x)`, `klass.const_get(x)`), which may
 return any constant; the caveat names where it is. A row with no such
-evidence is `clear` (DEC-654): on gems held out, an `unreferenced`, clear
-row was truly unused 25 times in 26, a `test-only` one 21 in 26. An app
-nearly always has such a lookup, so its rows stay `lower` — forem's were
-truly unused 19 times in 50 (DEC-450). Read a constant row as a lead to
-check, not a verdict.
+evidence is `clear` (DEC-654). [What it is worth](#what-a-grade-is-worth).
 
 ### Example groups' members
 
@@ -578,18 +614,8 @@ where it was found (`from`), from the same reader.
 **Every such row is `lower`** (DEC-496), and its `caveat` says why: a name
 sent at runtime in its reach (`send("item_#{n}")`), a group macro trekr does
 not read, a string of code it evaluates — or, with none of those, that
-held-out suites showed `clear` is not earned here.
-
-Measured against what ran (DEC-492 to DEC-496): mastodon's suite, with
-every `let`, `subject` and group `def` traced, then scored. Every `let` and
-`subject` row trekr listed never ran in a group that passed an example, and
-trekr listed 86 of the 96 `let`s that never did; 20 of 20 of discourse's
-rows, sampled and read by hand, were unused too. But each suite held out
-from the rules found a way in they did not yet read — a shared context
-included by metadata, a shared group written inside a module, a string
-`eval`ed — and a row with no caveat was truly unused 79 %, 47 % and 0.2 %
-of the time on three such batches before each was read. So every row is
-`lower`: run the spec file after deleting one.
+held-out suites showed `clear` is not earned here. Run the spec file after
+deleting one. [What it is worth](#what-a-grade-is-worth).
 
 ### Fields per row
 
@@ -598,8 +624,8 @@ of the time on three such batches before each was read. So every row is
 - Per tier: `overridden_by` (`shadowed`), `overrides` (`override`),
   `super_from` (`super-only`), `convention.by` (`convention-only`),
   `caller` with its own `tier` (`single-caller`), `cascaded_from`
-  when deleting that caller frees it, and `test_sites` (`test-only`
-  methods).
+  when deleting that caller frees it ([above](#cascades-cascaded_from)),
+  and `test_sites` (`test-only` methods).
 - `visibility`, and `entry_point` when there is one.
 - The evidence counted: a method row's `confirmed`/`possible` callers,
   `symbol_refs` (its name as a symbol), `super_refs`, `mentions_by_name`
@@ -614,122 +640,137 @@ of the time on three such batches before each was read. So every row is
 
 ### Gems: `--dead Gemfile`
 
-Handed a `Gemfile`, `gems.rb` or `*.gemspec` at the checkout's root
-(alone: code and gems are graded apart), `--dead` grades the gems it
-declares instead (DEC-670), one row per `gem` line (`kind: gem`, `path`
-and `line` the declaration). A Gemfile's `gemspec` adds the gemspecs'
-dependencies, from the directory its `path:` names. A gem only the
-lockfile names is not the app's to remove: it is never a row, and
-`summary.transitive` counts them. A lockfile, a second bundle's manifest
-or lock beside the root's (`Gemfile.next`, Appraisal's
-`gemfiles/*.gemfile`; DEC-806), or a manifest in a subdirectory (whose own
-bundle the index did not locate) is a usage error, exit 64 (DEC-771) —
-except a gemspec in the directory of a path gem the root's lockfile
-names, or with none its Gemfile (rails'
-`activesupport/activesupport.gemspec`; DEC-821), which is graded
-against the root bundle and the whole checkout (DEC-807). A root
-`Gemfile` that links elsewhere is the root's. A file the root's Gemfile
-reads with `eval_gemfile` (`Gemfile.tools`), directly or through
-another, is the root bundle's: `--dead Gemfile` grades its gems too, each
-`path` the file declaring it, and naming the file grades its own
-(DEC-820).
+Handed a `Gemfile`, `gems.rb` or `*.gemspec` at the checkout's root,
+`--dead` grades the gems it declares instead of code (DEC-670), one row per
+`gem` line (`kind: gem`, `path` and `line` the declaration).
+[What it is worth](#what-a-grade-is-worth).
 
-A gem is used — not listed, and in `referenced` with the first evidence
-(`by`: `constant`, `require`, `method`, `declaration`, `dependency`;
-`what`, `path`, `line`) — when the checkout names a constant the gem owns,
-requires one of its files, calls a method a module of its own (or a class
-it reopens) defines that no more than three gems and neither the checkout
-nor Ruby define, reopens a class it owns, or uses a gem only it brings.
-The checkout here is what the index reads — tracked files and untracked
-ones git does not ignore (DEC-803) — plus the Ruby it does not
-(DEC-770): any file with no extension that Prism parses without an
-error (a script, `Dangerfile`, `Vagrantfile`, `fastlane/Fastfile`,
-`Steepfile`; DEC-804) and that holds code, not only bare words (a
-`TODO` reading "remove Tomlrb" is prose; DEC-819), Builder, Arbre, Jb, axlsx and Prawn views, Thor
-files, Capistrano `.cap` tasks, `.irbrc` and `.pryrc`, parsed; and Slim
-views, whose Ruby — a `-` or `=` line, a tag's `=` output, an unquoted
-attribute or a splat, a `ruby:` block, a `#{}` — is read by its words: a constant
-path, a method name, a `require "…"`; its text, `/` comments and quoted
-attributes are not (DEC-808). A line is split as Slim 5 splits it: a
-whitespace modifier after a tag, a namespaced tag, spaces around an
-attribute's `=`, and a conditional comment's children, which are Slim
-(DEC-815). A constant several gems declare is the one whose
-`lib/` has its file, else the one named for it, else the one the others
-depend on; a module none of those picks is no gem's. A `require: false`
-gem's methods count only once a require of it is seen. Ruby's methods
-include those the bundle's own rbs describes under `core/`, though core
-was read from an older one.
+**What is read.** The root manifest, and with it:
 
-A path gem inside the checkout (a lockfile `PATH` spec, `path:` or a
-`path "dir" do` block, not the checkout itself) is graded as a gem: its
-files are its, so a use of its constants counts, and its own files naming it do not. Its code is still
-the checkout's for every other gem: an engine's use of a gem counts,
-and its `require` does once the engine is not itself a row (DEC-802) —
-as a use by the tests when only the tests use the engine (DEC-818). Its
-gemspec is the one in the source whose `name` is the gem's, as Bundler
-picks it (`billing_engine.gemspec` for billing-engine), else the file
-named for the gem when the name is computed (DEC-800). Two gems found in
-one directory are told apart from neither: each is a row, `lower`, "it
-is found in DIR with …". A gem in a `path` block with a source of its
-own (`git:`, `github:`, `source:`) is not a path gem, and a block's gem
-no gemspec there names is not found (DEC-816).
+- the gemspecs a Gemfile's `gemspec` adds, from the directory its `path:`
+  names;
+- each file the root Gemfile reads with `eval_gemfile` (`Gemfile.tools`),
+  directly or through another: its gems are the root bundle's, each `path`
+  the file declaring it, and naming the file grades its own (DEC-820);
+- a gemspec in the directory of a path gem the root's lockfile names, or
+  with none its Gemfile (rails' `activesupport/activesupport.gemspec`;
+  DEC-821), graded against the root bundle and the whole checkout
+  (DEC-807);
+- a root `Gemfile` that links elsewhere, as the root's.
 
-The rows, from least evidence to most:
+A gem only the lockfile names is not the app's to remove: it is never a
+row, and `summary.transitive` counts them.
+
+**Refused.** Each is a usage error, exit 64 (DEC-771):
+
+| handed | why | the message says |
+| --- | --- | --- |
+| a lockfile | the manifest declares the gems | pass the manifest, not the lockfile |
+| a second bundle's manifest or lock beside the root's (`Gemfile.next`, Appraisal's `gemfiles/*.gemfile`; DEC-806) | its gems were not located | pass the root's Gemfile |
+| a manifest in a subdirectory | its own bundle was not located | it is in a subdirectory |
+| a manifest beside a code path | code and gems are graded apart | `--dead Gemfile`, then `--dead PATH` |
+
+**What counts as a use.** A gem is used — not listed, and in `referenced`
+with the first evidence (`by`: `constant`, `require`, `method`,
+`declaration`, `dependency`; `what`, `path`, `line`) — when the checkout
+names a constant the gem owns, requires one of its files, calls a method a
+module of its own (or a class it reopens) defines that no more than three
+gems and neither the checkout nor Ruby define, reopens a class it owns, or
+uses a gem only it brings.
+
+- The checkout here is what the index reads — tracked files and untracked
+  ones git does not ignore (DEC-803) — plus the Ruby it does not
+  (DEC-770).
+- That Ruby: any file with no extension that Prism parses without an error
+  (a script, `Dangerfile`, `Vagrantfile`, `fastlane/Fastfile`,
+  `Steepfile`; DEC-804) and that holds code, not only bare words (a `TODO`
+  reading "remove Tomlrb" is prose; DEC-819); Builder, Arbre, Jb, axlsx and
+  Prawn views, Thor files, Capistrano `.cap` tasks, `.irbrc` and `.pryrc`,
+  parsed.
+- Slim views, whose Ruby — a `-` or `=` line, a tag's `=` output, an
+  unquoted attribute or a splat, a `ruby:` block, a `#{}` — is read by its
+  words: a constant path, a method name, a `require "…"`; its text, `/`
+  comments and quoted attributes are not (DEC-808). A line is split as
+  Slim 5 splits it: a whitespace modifier after a tag, a namespaced tag,
+  spaces around an attribute's `=`, and a conditional comment's children,
+  which are Slim (DEC-815).
+- A constant several gems declare is the one whose `lib/` has its file,
+  else the one named for it, else the one the others depend on; a module
+  none of those picks is no gem's.
+- A `require: false` gem's methods count only once a require of it is seen.
+- Ruby's methods include those the bundle's own rbs describes under
+  `core/`, though core was read from an older one.
+
+**Path gems.** A path gem inside the checkout (a lockfile `PATH` spec,
+`path:` or a `path "dir" do` block, not the checkout itself) is graded as a
+gem: its files are its, so a use of its constants counts, and its own files
+naming it do not. Its code is still the checkout's for every other gem: an
+engine's use of a gem counts, and its `require` does once the engine is not
+itself a row (DEC-802) — as a use by the tests when only the tests use the
+engine (DEC-818). Its gemspec is the one in the source whose `name` is the
+gem's, as Bundler picks it (`billing_engine.gemspec` for billing-engine),
+else the file named for the gem when the name is computed (DEC-800). Two
+gems found in one directory are told apart from neither: each is a row,
+`lower`, "it is found in DIR with …". A gem in a `path` block with a source
+of its own (`git:`, `github:`, `source:`) is not a path gem, and a block's
+gem no gemspec there names is not found (DEC-816).
+
+**Tiers**, from least evidence to most:
 
 - `unreferenced` — none of that, and nothing below names it.
 - `test-only` — only tests use it, but it is in the default group: move it
   to the test group.
 - `convention-only` — no Ruby uses it, but something loads it by name
-  (`convention.by`, with `path`, `line` and `text`): `gem`, another gem
-  of the bundle, not itself a row (a row's require only lowers it) or a
-  row such a gem requires, requires it without depending on it in
-  the lockfile (or, with none, its specification) — lograge's
-  `require "logstash-event"`; a `require_relative` loads the requirer's
-  own file; `symbol`, a symbol naming it to the gem it
-  plugs into (`provider :saml`); `config`, a config, CI file, Procfile or
-  a Ruby string in `config/` names it, an adapter `database.yml` names
-  (`postgresql` for pg), or a file in `config/` is named for it
-  (`config/puma.rb`); `command`, a line runs one of its commands. A name
-  after a `.` is a path's, not the gem's (`.yardoc` names no yard).
+  (`convention.by`, with `path`, `line` and `text`):
+  - `gem`: another gem of the bundle, not itself a row (a row's require
+    only lowers it), or a row such a gem requires, requires it without
+    depending on it in the lockfile (or, with none, its specification) —
+    lograge's `require "logstash-event"`; a `require_relative` loads the
+    requirer's own file;
+  - `symbol`: a symbol naming it to the gem it plugs into
+    (`provider :saml`);
+  - `config`: a config, CI file, Procfile or a Ruby string in `config/`
+    names it, an adapter `database.yml` names (`postgresql` for pg), or a
+    file in `config/` is named for it (`config/puma.rb`). A name after a
+    `.` is a path's, not the gem's (`.yardoc` names no yard);
+  - `command`: a line runs one of its commands.
 
-Each is `clear`, or `lower` with a `caveat` naming what may use it with
-nothing naming it, and what would settle it: not installed (its files
-were not read), or a path or git gem; declared for some platforms only;
-a Railtie or Engine, which runs at boot through `Bundler.require`; a
-method it defines on a class it does not own, a module it mixes into one,
-or an `on_load` hook (a class it declares beside a constant of the same
-name, `class PReadFile` by `PReadFile = ::File`, is its own); a command
-its specification installs that nothing read runs (one that lists none
-installs none, whatever `bin/` holds; a list written any way but one
-literal array, `s.executables << "x"`, is read from `exe/` or `bin/`); a
-compiled extension; rake tasks or generators it ships; a name that makes
-it a plugin of a bundled gem (`rubocop-rails`); the development group; a
-gem it brings that the app uses, which others bring too.
+**Caveats.** Each row is `clear`, or `lower` with a `caveat` naming what
+may use it with nothing naming it, and what would settle it:
 
-Per row: `version` and `gem_dir` (`null` when not installed), `groups`,
-`bundler_require` (`name`, `paths`, or `off` for `require: false`),
-`needed_by` (gems that depend on it, so removing the line keeps it in the
-bundle; not the gem whose gemspec declares it, by its `name` or, computed,
-the file's), `executables`, `test_refs`. A gem line several manifests
-reach is one row (DEC-822). `summary` counts `declared`,
-`referenced` (gems found in use that are not rows: a `test-only` row is
-not one), `transitive`, the rows per tier and per confidence; text lists
-`referenced` with `--explain`. `summary.unread_evals` lists each
-`eval_gemfile` not followed, whose gems are not graded: `file` (the one
-writing it), `eval` (as written) and `why` — `computed`, a path trekr
-cannot read without running Ruby (a literal, `File.expand_path(literal,
-__dir__)`, `File.join(__dir__, literal)` and `File.expand_path("../x",
-__FILE__)` are read), or `missing`, no such file; absent when every eval
-was followed. Text says each on a line of its own (DEC-876).
+- not installed (its files were not read), or a path or git gem;
+- declared for some platforms only;
+- a Railtie or Engine, which runs at boot through `Bundler.require`;
+- a method it defines on a class it does not own, a module it mixes into
+  one, or an `on_load` hook (a class it declares beside a constant of the
+  same name, `class PReadFile` by `PReadFile = ::File`, is its own);
+- a command its specification installs that nothing read runs (one that
+  lists none installs none, whatever `bin/` holds; a list written any way
+  but one literal array, `s.executables << "x"`, is read from `exe/` or
+  `bin/`);
+- a compiled extension;
+- rake tasks or generators it ships;
+- a name that makes it a plugin of a bundled gem (`rubocop-rails`);
+- the development group;
+- a gem it brings that the app uses, which others bring too.
 
-Hand-checked on ten checkouts (mastodon, discourse, rails, sidekiq,
-rubocop, faraday, graphql, flipper, webmock, widget_shop; 508 declared
-gems), every `clear` `unreferenced` row — 10 — was used by none of the
-checkout's code: octokit (its last use removed in 2026, the line left),
-aws-sdk-sns (Rails removed the SES ingress in 2019), flamegraph, and
-seven another gem keeps in the bundle (`needed_by`). The rules were fitted
-on these checkouts, so read it as in-sample. A `lower` row is usually a
-gem in use: of 12 sampled, 8 were, 3 were not, and 1 is unsettled.
+**Fields.** Per row: `version` and `gem_dir` (`null` when not installed),
+`groups`, `bundler_require` (`name`, `paths`, or `off` for
+`require: false`), `needed_by` (gems that depend on it, so removing the
+line keeps it in the bundle; not the gem whose gemspec declares it, by its
+`name` or, computed, the file's), `executables`, `test_refs`. A gem line
+several manifests reach is one row (DEC-822).
+
+`summary` counts `declared`, `referenced` (gems found in use that are not
+rows: a `test-only` row is not one), `transitive`, the rows per tier and
+per confidence; text lists `referenced` with `--explain`.
+`summary.unread_evals` lists each `eval_gemfile` not followed, whose gems
+are not graded: `file` (the one writing it), `eval` (as written) and `why`
+— `computed`, a path trekr cannot read without running Ruby (a literal,
+`File.expand_path(literal, __dir__)`, `File.join(__dir__, literal)` and
+`File.expand_path("../x", __FILE__)` are read), or `missing`, no such file;
+absent when every eval was followed. Text says each on a line of its own
+(DEC-876).
 
 ## Classes split by their superclass
 
@@ -845,30 +886,43 @@ lists every checkout, each with `kind` (`repo`, `gem` or `stdlib`).
 `status: not_indexed`, exit 2 — `checkouts` is empty and `others` counts the
 rest. Outside any checkout the repos are listed.
 
-`storage` is the index's size (DEC-650): `bytes`, its pages as SQLite
-counts them; `free_bytes`, those free inside it — both read in one snapshot,
-with `cleanup`; `stale_snapshots`
-(`files`, `bytes`), tree snapshots no checkout's current key names (a
-query's tree over its edits is never counted: only `--gc` removes those); and
-`reclaimable_bytes`, the two together — what a compaction would return.
+A reindex with nothing changed parses nothing (~60 ms on a 3k-file repo), and
+a second worktree of the same repo costs nothing — facts are keyed by git
+blob.
+
+## `--gc` and storage
+
+`--status`'s `storage` is the index's size (DEC-650): `bytes`, its pages as
+SQLite counts them; `free_bytes`, those free inside it — both read in one
+snapshot, with `cleanup`; `stale_snapshots` (`files`, `bytes`), tree
+snapshots no checkout's current key names (a query's tree over its edits is
+never counted: only `--gc` removes those); and `reclaimable_bytes`, the two
+together — what a compaction would return.
+
 `cleanup` says what the background cleanup last did: `checked_at`, when it
 last measured the store (a new store is stamped at creation), `ran_at` and
 `reclaimed_bytes`, its last pass and what that returned to the disk, and
 `skipped`, why the last pass left free pages it meant to hand back —
-`no_room` (a full rewrite would not fit twice on the disk) or `busy` — all `null`
-until there is one.
+`no_room` (a full rewrite would not fit twice on the disk) or `busy` — all
+`null` until there is one.
+
 `retained` counts the versions of files no checkout maps any more — one an
-edit, a branch switch or `--drop` left, or a query's draft — kept so a switch
-back reuses them (DEC-651): `blobs`, stamped or not (one an older trekr
-unmapped is stamped by the next background pass); `expired`, those unmapped
-longer than the retention, which the next
-`--gc` or background cleanup collects; and `retention`, in seconds, `null`
-for `never`.
+edit, a branch switch or `--drop` left, or a query's draft — kept so a
+switch back reuses them (DEC-651): `blobs`, stamped or not (one an older
+trekr unmapped is stamped by the next background pass); `expired`, those
+unmapped longer than the retention, which the next `--gc` or background
+cleanup collects; and `retention`, in seconds, `null` for `never`.
 
 `--gc` collects a checkout by `--older-than` (`older_than`, seconds) and a
 version no checkout maps by the retention (`retention`, seconds or `null`
-for `never`; DEC-651). `blobs` is every blob it removed — a collected
-checkout's, and `expired`: those unmapped longer than the retention.
+for `never`; DEC-651). `dry_run` says nothing was removed. `checkouts`
+lists each checkout collected (`repo`, `kind`, `reason`: `vanished` or
+`unclaimed`, `last_seen`), and `files` their file-map rows. `blobs` is
+every blob it removed — a collected checkout's, and `expired`: those
+unmapped longer than the retention — and `facts` the rows they held.
+`signatures` counts the Rubies' signatures no surviving stdlib is served
+with.
+
 `--gc` first adds any index this version's schema has and the store lacks —
 on a dry run too, since without it a collection scans a table per blob, and
 an index removes nothing — and names them in `indexes` (empty when none).
@@ -878,8 +932,16 @@ file's shrink. `freed_bytes` is the pages its deletions freed inside the
 file; when it freed any and the file's free pages come to 32 MB, `--gc`
 hands them back before it reports (DEC-878). `free_bytes` is every free
 page left in it, which later writes reuse and the background cleanup
-compacts once it is worth it.
+compacts once it is worth it; `db_bytes` is the index file's size after.
 
-A reindex with nothing changed parses nothing (~60 ms on a 3k-file repo), and
-a second worktree of the same repo costs nothing — facts are keyed by git
-blob.
+## `--usage`
+
+`--usage --json` (or `--ndjson`) emits the stored rows themselves, one per
+day and combination: `day`, `surface` (`cli` or `lsp`), `feature` (the
+command or LSP operation), `flags` (the knobs reached for, never their
+values), `origin` (who called), `outcome` (`hit`, `uncertain`, `empty`,
+`not-indexed`, `cancelled`, `error:<kind>`), `latency` (a decade bucket,
+`<1ms` … `10s+`), `cold` (an LSP session's first request), `version` (the
+counting trekr's, `+dev` for a cargo build, `""` for older rows) and
+`count`; none, exit 1. [ARCHITECTURE](ARCHITECTURE.md#usage-counts) says what each
+holds.
