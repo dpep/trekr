@@ -283,6 +283,12 @@
   said no class mixes the module in, as if the call ran on one.
 - **Answers that rest on `helper_method` and other class-body macros no
   longer vary between fresh indexes** of the same checkout.
+- **`--dead` and `--refs` let an explicit receiver call a top-level def
+  that a site makes public**: after a top-level `public`, or beside a
+  `class Object` def (or `Object.class_eval`) of the name. `o.pub_top` and
+  `User.new.dual` were excluded as calls of a private method, so `--dead`
+  graded the def `unreferenced`, `clear`, while `--refs` at a `class
+  Object` def confirmed the call.
 
 ## 0.10.2 — 2026-11-20
 

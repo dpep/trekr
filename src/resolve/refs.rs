@@ -478,8 +478,13 @@ fn tier(tree: &Tree, facts: &Facts, call: &Call, path: &str, asked: &Target) -> 
             .as_ref()
             .and_then(|receiver| super::lookup_on(tree, call, receiver));
         let receiver_type = receiver.map(|receiver| receiver.fqn);
+        // Private unless a site makes it public: a top-level `public`, or a
+        // `class Object` body's def, which is the same method (DEC-869).
+        let private = super::object_defs(tree, &call.name)
+            .iter()
+            .all(|d| d.visibility == "private");
         return match found {
-            _ if explicit => here(
+            _ if explicit && private => here(
                 Tier::Excluded,
                 receiver_type,
                 None,

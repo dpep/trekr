@@ -1,0 +1,8 @@
+# A top-level def is private, so DEC-311 excluded every call with an
+# explicit receiver. Not when a site makes the method public: a
+# `class Object` body's def (one method with it, DEC-869), or a top-level
+# `public` before it. `--dead` graded both `unreferenced`, clear, while
+# `User.new.dual` and `o.pub_top` call them.
+dead lib/top.rb #dual=single-caller
+dead lib/pub.rb #pub_top=single-caller
+refs lib/pub.rb:3:5 status=resolved possible=1 excluded=0 sites=app/models/user.rb:7:7

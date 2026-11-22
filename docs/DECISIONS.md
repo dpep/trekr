@@ -19236,3 +19236,34 @@ built once per tree, dropped with the tree it came from, and the previous
 tree's listing is kept only until the new one is listed (`Checkout::
 replace`, `listed`): held exactly as long as completion can read it.
 DEC-044/045's streaming listing remains the lever.
+
+## DEC-891 — An explicit receiver reaches a top-level def a site makes public
+
+**Decided.** DEC-311 excluded every call with an explicit receiver from a
+top-level def, since Ruby makes such a def private. It now does so only
+when every definition of the method is private: the top-level defs and a
+`class Object` body's (or `Object.class_eval`'s), which DEC-869 makes one
+method (`resolve::object_defs`). A top-level `public` before the def, or a
+public `class Object` def of the name, lets the call through to the arms
+below it: `confirmed` when the lookup lands on Object's def, `possible`
+when it finds nothing.
+
+**Why.** hunt 5's a6: `def dual` at the top level beside `class Object;
+def dual`, called only as `User.new.dual`. `--refs` listed both defs and
+the call `confirmed`; `--dead` graded the top-level def `unreferenced`,
+clear, because the private arm ran before the Object one. a8: `public;
+def pub_top`, called as `o.pub_top`, excluded by `--refs` and
+`unreferenced`, clear, by `--dead`, though the extractor already recorded
+it public.
+
+**One method, one visibility question.** Which site's visibility holds is
+the later one to load, which the index cannot order; a call that may run
+is not one to exclude.
+
+**Not done: the summary's reason.** The private exclusion is still counted
+under "resolve to a different owner" in `--refs`' summary. Its own count is
+a new `counts` field in `--json`, which is a feature, not a fix-round
+change.
+
+Testbed 1040, 1045 (the `Object.class_eval` form, which already answered
+as DEC-869's `class Object`).

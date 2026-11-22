@@ -1,0 +1,5 @@
+# `Object.class_eval { def dual }` is `class Object; def dual` (DEC-869):
+# one method with the top-level def.
+refs lib/top.rb:1:5 status=resolved confirmed=1 resolves_to=Object#dual sites=app/models/user.rb:3:14
+refs lib/top.rb:6:7 status=resolved confirmed=1 resolves_to=Object#dual sites=app/models/user.rb:3:14
+dead lib/top.rb #dual=single-caller
