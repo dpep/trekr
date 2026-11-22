@@ -22,8 +22,8 @@ belongs to:
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563, 812, 855, 856, 870 |
-| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 670, 680, 690, 720, 721, 730, 750, 751, 760, 762, 770, 771, 772, 791, 792, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 815, 816, 817, 818, 819, 820, 821, 822, 842, 843, 845, 846, 857, 858, 874, 875, 877, 880, 881 |
-| LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646, 810, 811, 836, 864, 865, 866, 867 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 670, 680, 690, 720, 721, 730, 750, 751, 760, 762, 770, 771, 772, 791, 792, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 815, 816, 817, 818, 819, 820, 821, 822, 842, 843, 845, 846, 857, 858, 874, 875, 877, 880, 881, 887 |
+| LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646, 810, 811, 836, 864, 865, 866, 867, 888 |
 | Scope and housekeeping | 030, 063, 640, 835, 838, 860, 863 |
 
 A few revisits are subsections filed under a neighbouring entry, as they
@@ -19148,3 +19148,50 @@ peak footprint
 1,502–1,552 → 1,454–1,479 MB on `--dead app lib plugins` (discourse),
 722–730 → 683–696 MB on `--dead activerecord` (rails), two interleaved
 runs each, instructions 1–2.5 % fewer, output byte-identical.
+
+## DEC-887 — `--dead`'s held facts: what holds the peak, and the one lever worth pulling
+
+**Measured, not landed.** `--dead app lib plugins` on discourse peaks at
+1.50–1.55 GB footprint (`/usr/bin/time -l`, steady to ±15 MB run to run).
+At the end of the run `cli::refs::Parsed` holds every file's facts,
+11,760 files; `malloc_size` over them, by part: the `Call` buffers 387 MB
+(1.54 M calls, 168 B each plus `Vec` growth), call nesting 174 MB (3.2 M
+segment strings, but only 37k distinct stacks summed per file), call
+names 44 MB, defs 114 MB, const refs 50 MB, assigns 33 MB, sources 55 MB.
+
+- **Sharing a call's scope stack** (`Call::nesting` as an
+  `Arc<[String]>` newtype, every equal stack of a held file pointed at one
+  copy): 1,499–1,501 → 1,263–1,297 MB on discourse, 675–683 →
+  612–628 MB on rails `--dead activerecord`, output byte-identical,
+  instructions within 1 %. A symmetric probe agreed first: holding a
+  second copy of every call's stack added 200 MB. **Not landed here**: the
+  type is written by the extractor (`src/extract/mod.rs`, five
+  construction sites) and copied out by the store (`src/store/mod.rs`, one
+  `to_vec`), which another lane owned at the time; the stored format does
+  not move (`join_nesting` writes the same text), so no store bump.
+- **`shrink_to_fit` on held facts: dropped.** −33 MB (1,508 → 1,475),
+  2 %, under the 5 % bar. The freed slack sits in malloc's small zone,
+  which the memos' tiny allocations do not reuse.
+- **Holding no facts beyond the scope's: rejected.** Re-reading a caller
+  file on each use instead of holding it: −330 MB (1,508 → 1,180), but
+  3.2× the instructions (170 → 537 G). The memo is the point (DEC-541).
+- **Holding only what later phases read: not attempted.** Tiering takes
+  `&Facts` whole and reads most of it; slimming it is a second shape of
+  `Facts`, a drift risk for no measured number.
+
+## DEC-888 — The method memo's strings stay `String`; completion's listing stays as held
+
+**Dropped: interning `MethodDef`'s strings.** After DEC-885 and DEC-886
+the discourse LSP's live heap after references is 138 MB; round 2
+attributed about 14 MB of what remains to the memo's strings (an
+absolute `site.path` per definition, `owner`, `name`, `visibility`,
+`site.kind`). Interning them would save an estimated 9–10 MB, about 4 % of
+the session's footprint, and the largest part, the path, lives in `Site`,
+which 34 sites in 11 files construct, the extractor among them. Not worth
+that reach; revisit if session memory becomes a complaint.
+
+**Looked at: completion's member listing** (about 50 MB, round 2). It is
+built once per tree, dropped with the tree it came from, and the previous
+tree's listing is kept only until the new one is listed (`Checkout::
+replace`, `listed`): held exactly as long as completion can read it.
+DEC-044/045's streaming listing remains the lever.
