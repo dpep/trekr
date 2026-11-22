@@ -245,6 +245,11 @@ ruby tests/testbed/1010-an-untracked-file-is-read-as-a-tracked-one/app/controlle
 ruby tests/testbed/1010-an-untracked-file-is-read-as-a-tracked-one/app/models/widget.rb 7c6869f9a01933c9
 ruby tests/testbed/1010-an-untracked-file-is-read-as-a-tracked-one/untracked/config/routes.rb ff347232cc92ebae
 ruby tests/testbed/1011-a-slim-views-ruby-keeps-a-method-as-slim-5-reads-it/app/models/widget.rb 1ef1a29f0db04792
+ruby tests/testbed/1013-a-plain-module-keeps-a-concerns-class-methods/app/models/concerns/dependent.rb 17ce6c9dd7520f54
+ruby tests/testbed/1013-a-plain-module-keeps-a-concerns-class-methods/app/models/concerns/inner.rb cce7a6b342773917
+ruby tests/testbed/1013-a-plain-module-keeps-a-concerns-class-methods/app/models/concerns/outer.rb 00733667aff906a1
+ruby tests/testbed/1013-a-plain-module-keeps-a-concerns-class-methods/app/models/klasses.rb b2b11902475c84e2
+ruby tests/testbed/1013-a-plain-module-keeps-a-concerns-class-methods/lib/active_support/concern.rb bc5787832735dd67
 ruby tests/testbed/120-a-method-made-from-an-unnamed-name-is-not-absent/app.rb b1e220695c537f1f
 ruby tests/testbed/121-define-method-over-a-constant-list-defines-each-name/app.rb e7e8d445dc4ad5f0
 ruby tests/testbed/122-a-class-eval-string-is-read-as-code/app.rb fad3b1c5e17ce63b

@@ -3640,7 +3640,11 @@ impl Tree {
             if !as_self && self.is_concern(&class) {
                 continue;
             }
+            let reached = self.concerns_reaching(&class);
             for module_name in &self.ancestors(&class).chain {
+                if !reached.contains(module_name) {
+                    continue;
+                }
                 let Some(class_methods) = self.concern_class_methods(module_name) else {
                     continue;
                 };
@@ -3668,6 +3672,40 @@ impl Tree {
             }
         }
         chain
+    }
+
+    /// The modules whose `ClassMethods` a concern extends into `class`: the
+    /// class itself, what it mixes in, and through a concern what that
+    /// concern mixes in, which it hands on. Not through a plain module: a
+    /// concern it includes extends the module itself (DEC-871).
+    fn concerns_reaching(&self, class: &str) -> HashSet<String> {
+        let mut reached = HashSet::from([class.to_string()]);
+        let mut stack = vec![class.to_string()];
+        while let Some(module) = stack.pop() {
+            let entry = self.names.get(&module);
+            let mut written: Vec<Written<'_>> = entry
+                .map(EntryRef::mixins)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(_, target)| target)
+                .collect();
+            for how in [
+                crate::core::Relation::Include,
+                crate::core::Relation::Prepend,
+            ] {
+                written.extend(self.macro_mixins_of(&module, how));
+            }
+            for target in written {
+                let Some(fqn) = self.resolve_lexical(target.name, &target.nesting) else {
+                    continue;
+                };
+                let fqn = self.namespace_of(&fqn);
+                if reached.insert(fqn.clone()) && self.is_concern(&fqn) {
+                    stack.push(fqn);
+                }
+            }
+        }
+        reached
     }
 
     /// Does this module extend `ActiveSupport::Concern`? As it resolves, or,

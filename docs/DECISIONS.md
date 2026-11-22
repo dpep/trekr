@@ -16,7 +16,7 @@ belongs to:
 | Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651, 873 |
 | Indexing and freshness | 014, 035, 041, 043, 046, 047, 048, 049, 055, 066, 139, 171, 195, 232, 320, 400, 500, 501, 512 |
 | Extraction: macros, made methods, schema | 022, 033, 069, 070, 085, 086, 094, 110, 111, 130, 131, 132, 160, 161, 162, 163, 164, 212, 310, 312, 480, 561, 643, 645, 710, 711, 712, 740, 741 |
-| Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841 |
+| Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841, 871 |
 | Resolve: the receiver ladder, confidence, residue | 008, 010, 011, 019, 020, 027, 028, 031, 068, 071, 077, 081, 082, 089, 093, 112, 116, 126, 127, 133, 136, 137, 140, 165, 166, 172, 211, 213, 214, 260, 261, 280, 311, 314, 340, 341, 342, 350, 351, 380, 390, 391, 392, 401, 440, 441, 442, 444, 445, 541, 795, 796, 797, 798, 825, 826, 827, 828, 837 |
 | Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610, 847 |
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
@@ -18684,6 +18684,22 @@ caught it).
 Test: `parked_references_are_searched_again_only_when_the_index_is_whole`
 (ten parked, a hover answered ahead of them, at most two searches each:
 when asked, and when whole).
+
+## DEC-871 — A concern's `ClassMethods` reach through concerns only
+
+**Decided.** ActiveSupport::Concern extends `M::ClassMethods` into what
+includes `M` — a class, or a concern, which defers it to its own includer.
+A plain module that includes `M` is extended itself, and a class
+including that module is not: `KC.respond_to?(:has_inner)` is false. The
+class side asked every module in the class's ancestors for its
+`ClassMethods`; it now asks those the class mixes in, the class itself,
+and through each concern among them what that concern mixes in
+(`Tree::concerns_reaching`), in the ancestors' order as before.
+
+**Why.** `module Outer; include Inner; end`, with `Inner` a concern: a
+class including `Outer` resolved `has_inner` to `Inner::ClassMethods`.
+
+Testbed 1013.
 
 ## DEC-873 — A body's calls come back in path order
 

@@ -1,0 +1,9 @@
+# A concern extends its `ClassMethods` into what includes it — a class, or
+# a concern, which hands them on to its own includer. A plain module that
+# includes one is extended itself, and a class including that module does
+# not get them: Ruby's `KC.respond_to?(:has_inner)` is false. The class
+# side walked every ancestor, so `KC`'s `has_inner` was Inner's.
+def app/models/klasses.rb:3:3 status=residue
+def app/models/klasses.rb:8:3 status=resolved owner=Inner::ClassMethods
+def app/models/klasses.rb:13:3 status=resolved owner=Inner::ClassMethods
+def app/models/concerns/outer.rb:3:3 status=resolved owner=Inner::ClassMethods
