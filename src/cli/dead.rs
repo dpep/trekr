@@ -1043,11 +1043,12 @@ fn dead_in(
         // lower only on evidence now (DEC-654); this is not re-measured.
         if constructor {
             let ancestors = tree.ancestors(&owner);
-            let exception = |name: &String| matches!(name.as_str(), "Exception" | "StandardError");
+            let exception = |name: &str| matches!(name, "Exception" | "StandardError");
             let how = if ancestors
                 .chain
                 .iter()
-                .chain(&ancestors.unresolved)
+                .map(crate::tree::Fqn::as_str)
+                .chain(ancestors.unresolved.iter().map(String::as_str))
                 .any(exception)
             {
                 "an exception class, which `raise` constructs from its name"

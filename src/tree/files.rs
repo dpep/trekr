@@ -397,7 +397,7 @@ mod tests {
         "module Parts\n  class Widget < Base\n    include Named\n  end\nend\nclass Base\nend\nmodule Named\nend\n",
     );
 
-    fn answers(tree: &Tree) -> (Vec<String>, Option<String>) {
+    fn answers(tree: &Tree) -> (Vec<crate::tree::Fqn>, Option<String>) {
         (
             tree.ancestors("Parts::Widget").chain.clone(),
             tree.resolve("Widget", &["Parts".to_string()]).fqn,

@@ -66,8 +66,9 @@ pub(super) fn is_job(tree: &Tree, class: &str) -> bool {
         && ancestors
             .chain
             .iter()
-            .chain(&ancestors.unresolved)
-            .filter(|name| name.as_str() != class)
+            .map(crate::tree::Fqn::as_str)
+            .chain(ancestors.unresolved.iter().map(String::as_str))
+            .filter(|name| *name != class)
             .any(|name| JOB_ANCESTORS.contains(&crate::tree::public_name(name)))
 }
 

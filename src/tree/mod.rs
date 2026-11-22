@@ -593,10 +593,82 @@ pub(crate) struct Dynamic {
     pub(crate) line: u32,
 }
 
+/// A constant's full name, shared: every chain that passes through a class
+/// holds it, so a chain is a list of pointers rather than of copies.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct Fqn(Arc<str>);
+
+impl Fqn {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for Fqn {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for Fqn {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for Fqn {
+    fn from(name: &str) -> Fqn {
+        Fqn(name.into())
+    }
+}
+
+impl From<&Fqn> for String {
+    fn from(name: &Fqn) -> String {
+        name.0.to_string()
+    }
+}
+
+impl PartialEq<str> for Fqn {
+    fn eq(&self, other: &str) -> bool {
+        &*self.0 == other
+    }
+}
+
+impl PartialEq<&str> for Fqn {
+    fn eq(&self, other: &&str) -> bool {
+        &*self.0 == *other
+    }
+}
+
+impl PartialEq<String> for Fqn {
+    fn eq(&self, other: &String) -> bool {
+        *self.0 == **other
+    }
+}
+
+impl PartialEq<Fqn> for String {
+    fn eq(&self, other: &Fqn) -> bool {
+        **self == *other.0
+    }
+}
+
+impl std::fmt::Debug for Fqn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Serialize for Fqn {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
 /// A linearized ancestor chain, and how much of it we could actually build.
 #[derive(Debug, Default)]
 pub(crate) struct Ancestry {
-    pub(crate) chain: Vec<String>,
+    pub(crate) chain: Vec<Fqn>,
     /// Ancestor targets that resolved to nothing — a gem superclass, a
     /// dynamically built module. A miss further down the chain is only as
     /// trustworthy as this list is short, so it travels with the answer.
@@ -624,11 +696,11 @@ pub(crate) struct AgreedReturn {
 /// name, and each ancestor's includers as indices into it, ascending.
 struct Includers {
     classes: Vec<String>,
-    by_ancestor: HashMap<String, Vec<u32>>,
+    by_ancestor: HashMap<Fqn, Vec<u32>>,
 }
 
 /// `(owner, singleton)` pairs, in the order a lookup walks them.
-type Pairs = Arc<[(String, bool)]>;
+type Pairs = Arc<[(Fqn, bool)]>;
 
 /// The `(owner, singleton)` pairs a method lookup walks, in order: an
 /// instance's ancestry as it is memoized, or a class side's own walk.
@@ -673,17 +745,17 @@ struct Frame {
     low: usize,
     /// A cycle closed somewhere under this frame.
     cyclic: bool,
-    prepends: Vec<String>,
-    includes: Vec<String>,
-    parent: Vec<String>,
+    prepends: Vec<Fqn>,
+    includes: Vec<Fqn>,
+    parent: Vec<Fqn>,
 }
 
 impl Frame {
     /// What Ruby's `ancestors` would say at this point in the body: the
     /// superclass's chain and the mixins read so far.
-    fn so_far(&self) -> Vec<String> {
+    fn so_far(&self) -> Vec<Fqn> {
         let mut chain = self.prepends.clone();
-        chain.push(self.fqn.clone());
+        chain.push(self.fqn.as_str().into());
         chain.extend(self.includes.iter().cloned());
         chain.extend(self.parent.iter().cloned());
         chain
@@ -1927,7 +1999,7 @@ impl Tree {
     ///
     /// Works on the innermost frame's lists, which are what a lookup that
     /// comes back to this name sees as its chain so far.
-    fn linearize(&self, fqn: &str, out: &mut Ancestry) -> Vec<String> {
+    fn linearize(&self, fqn: &str, out: &mut Ancestry) -> Vec<Fqn> {
         let entry = self.names.get(fqn);
 
         // A split name has no ancestry of its own to give: which superclass it
@@ -1939,12 +2011,12 @@ impl Tree {
                     out.unresolved.push(name);
                 }
             }
-            return vec![fqn.to_string()];
+            return vec![fqn.into()];
         }
 
         // The parent chain is needed before includes, because includes dedup
         // against it.
-        let parent: Vec<String> = match entry.and_then(EntryRef::superclass) {
+        let parent: Vec<Fqn> = match entry.and_then(EntryRef::superclass) {
             // `class X < ::X` names nothing that exists yet: unresolved, not a
             // cycle cut that answers nothing and says nothing.
             Some(target) if self.resolves_to(&target, fqn) => {
@@ -2009,7 +2081,7 @@ impl Tree {
 
         self.innermost(|frame| {
             let mut chain = std::mem::take(&mut frame.prepends);
-            chain.push(fqn.to_string());
+            chain.push(fqn.into());
             chain.append(&mut frame.includes);
             chain.append(&mut frame.parent);
             chain
@@ -2026,7 +2098,7 @@ impl Tree {
 
     /// A superclass's or mixin's whole chain, with what it could not resolve
     /// added to `out`'s, in the order a single walk would have met them.
-    fn sub_chain(&self, fqn: &str, out: &mut Ancestry) -> Vec<String> {
+    fn sub_chain(&self, fqn: &str, out: &mut Ancestry) -> Vec<Fqn> {
         let sub = self.linearized(fqn, true);
         for name in &sub.unresolved {
             if !out.unresolved.contains(name) {
@@ -2049,7 +2121,7 @@ impl Tree {
 
     /// One mixin or superclass target: its own whole chain, or nothing plus a
     /// note that we could not see it.
-    fn chain_of(&self, target: &Written, out: &mut Ancestry) -> Vec<String> {
+    fn chain_of(&self, target: &Written, out: &mut Ancestry) -> Vec<Fqn> {
         match self.resolve_lexical(target.name, &target.nesting) {
             Some(fqn) => {
                 let fqn = self.namespace_of(&fqn);
@@ -2623,7 +2695,7 @@ mod tests {
                     .first()
                     .is_none_or(|site| !is_core(&site.path))
             })
-            .cloned()
+            .map(String::from)
             .collect()
     }
 
@@ -2961,7 +3033,7 @@ end
             ),
         ];
         for (source, names) in cases {
-            let first: Vec<Vec<String>> = names
+            let first: Vec<Vec<Fqn>> = names
                 .iter()
                 .map(|name| one(source).ancestors(name).chain.clone())
                 .collect();
@@ -3592,7 +3664,7 @@ impl Tree {
         Chain::Singleton(self.singleton_chains.publish(key, chain))
     }
 
-    fn class_side(&self, fqn: &str, as_self: bool) -> Vec<(String, bool)> {
+    fn class_side(&self, fqn: &str, as_self: bool) -> Vec<(Fqn, bool)> {
         let mut chain = Vec::new();
         let mut seen = HashSet::new();
         for class in self.superclass_chain(fqn) {
@@ -3609,8 +3681,9 @@ impl Tree {
                     }
                 }
             }
-            if seen.insert((class.clone(), true)) {
-                chain.push((class.clone(), true));
+            let own = Fqn::from(class.as_str());
+            if seen.insert((own.clone(), true)) {
+                chain.push((own, true));
             }
             let mut extends = entry.map(EntryRef::extends).unwrap_or_default();
             extends.extend(self.macro_mixins_of(&class, crate::core::Relation::Extend));
@@ -3642,7 +3715,7 @@ impl Tree {
             }
             let reached = self.concerns_reaching(&class);
             for module_name in &self.ancestors(&class).chain {
-                if !reached.contains(module_name) {
+                if !reached.contains(module_name.as_str()) {
                     continue;
                 }
                 let Some(class_methods) = self.concern_class_methods(module_name) else {
@@ -4577,7 +4650,7 @@ impl Tree {
                 }
             });
             classes.sort();
-            let mut by_ancestor: HashMap<String, Vec<u32>> = HashMap::new();
+            let mut by_ancestor: HashMap<Fqn, Vec<u32>> = HashMap::new();
             for (at, class) in classes.iter().enumerate() {
                 for ancestor in &self.ancestors(class).chain {
                     if ancestor == class {
@@ -5528,7 +5601,7 @@ mod reentrant_linearization_tests {
     fn two_classes_whose_superclass_paths_need_each_other_terminate() {
         let tree = crate::tree::for_test(&[("a.rb", "class A < B::C\nend\nclass B < A::D\nend\n")]);
         // Terminating at all is the assertion.
-        assert!(tree.ancestors("A").chain.contains(&"A".to_string()));
-        assert!(tree.ancestors("B").chain.contains(&"B".to_string()));
+        assert!(tree.ancestors("A").chain.iter().any(|a| a == "A"));
+        assert!(tree.ancestors("B").chain.iter().any(|a| a == "B"));
     }
 }

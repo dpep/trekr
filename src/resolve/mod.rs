@@ -3209,7 +3209,7 @@ fn residue(
     };
     let ancestors: Vec<String> = here
         .as_ref()
-        .map(|fqn| tree.ancestors(fqn).chain.clone())
+        .map(|fqn| tree.ancestors(fqn).chain.iter().map(String::from).collect())
         .unwrap_or_default();
     // Whichever type we did settle on — the receiver's, else the enclosing
     // scope's — say what we could not see of its ancestry.

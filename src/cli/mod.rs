@@ -3074,7 +3074,7 @@ impl Split {
 }
 
 /// An ancestor chain as a person reads it: a split name's variant is its name.
-fn public_chain(chain: &[String]) -> Vec<String> {
+fn public_chain(chain: &[crate::tree::Fqn]) -> Vec<String> {
     chain
         .iter()
         .map(|name| crate::tree::public_name(name).to_string())

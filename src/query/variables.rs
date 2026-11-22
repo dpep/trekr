@@ -35,7 +35,12 @@ impl ClassScope {
         // or a class variable, is shared down the ancestry.
         let chain: Vec<String> = match sigil == Sigil::Instance && owner.singleton {
             true => vec![fqn],
-            false => tree.ancestors(&fqn).chain.clone(),
+            false => tree
+                .ancestors(&fqn)
+                .chain
+                .iter()
+                .map(String::from)
+                .collect(),
         };
         let mut files = vec![here.to_string()];
         for name in &chain {

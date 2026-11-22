@@ -616,7 +616,11 @@ fn add_constants(list: &mut Ranked, tree: &Tree, members: &Members, scope: &str,
     let scopes: Vec<String> = if scope.is_empty() {
         vec![String::new()]
     } else {
-        tree.ancestors(scope).chain.clone()
+        tree.ancestors(scope)
+            .chain
+            .iter()
+            .map(String::from)
+            .collect()
     };
     for (step, owner) in scopes.iter().enumerate() {
         let owner = crate::tree::public_name(owner);

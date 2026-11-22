@@ -16,7 +16,7 @@ belongs to:
 | Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651, 873, 878, 882 |
 | Indexing and freshness | 014, 035, 041, 043, 046, 047, 048, 049, 055, 066, 139, 171, 195, 232, 320, 400, 500, 501, 512, 884 |
 | Extraction: macros, made methods, schema | 022, 033, 069, 070, 085, 086, 094, 110, 111, 130, 131, 132, 160, 161, 162, 163, 164, 212, 310, 312, 480, 561, 643, 645, 710, 711, 712, 740, 741, 883 |
-| Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841, 871, 885 |
+| Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841, 871, 885, 886 |
 | Resolve: the receiver ladder, confidence, residue | 008, 010, 011, 019, 020, 027, 028, 031, 068, 071, 077, 081, 082, 089, 093, 112, 116, 126, 127, 133, 136, 137, 140, 165, 166, 172, 211, 213, 214, 260, 261, 280, 311, 314, 340, 341, 342, 350, 351, 380, 390, 391, 392, 401, 440, 441, 442, 444, 445, 541, 795, 796, 797, 798, 825, 826, 827, 828, 837, 868, 869, 872 |
 | Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610, 847, 876, 879 |
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
@@ -19126,3 +19126,25 @@ references; `heap -s` live heap, since footprint after the burst moved
 live after references, 2,236–2,238k → 2,088–2,090k allocations over
 three sessions each. Same answers: the shared table is the filtered one
 when nothing is filtered.
+
+## DEC-886 — An ancestor chain holds shared names, not copies
+
+**Decided.** `Ancestry::chain` is a `Vec<Fqn>`, an `Arc<str>` newtype,
+and so is a class side's memoized walk (`Pairs`) and `includers_of`'s
+index. A chain is its prepends, its own name, its includes and its
+parent's chain, and the sub-chains it is built from are memoized, so
+every entry it takes from one is a reference-count bump rather than a
+`String` clone: each name is allocated once, when it is itself
+linearized. Round 2 attributed 42 MB of an LSP session's live heap after
+references (discourse) to these chains, almost all `String::clone` in
+`sub_chain` and `linearized`, built for `includers_of` in `refs::tier`.
+`Fqn` compares with `str` and `String` and derefs to `str`, so most
+readers compile unchanged; the four that wanted a `Vec<String>` copy it.
+
+**Measured** (discourse; `heap -s` live heap, one session each, the same
+script as DEC-885): 157.6 → 137.9 MB live after 20 references,
+2,090k → 1,619k allocations. `--dead` reads chains too; with DEC-885,
+peak footprint
+1,502–1,552 → 1,454–1,479 MB on `--dead app lib plugins` (discourse),
+722–730 → 683–696 MB on `--dead activerecord` (rails), two interleaved
+runs each, instructions 1–2.5 % fewer, output byte-identical.

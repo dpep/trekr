@@ -272,7 +272,7 @@ fn ruby(store: &Store, root: &Path, signatures: &stubs::Signatures) -> anyhow::R
                 .skip_while(|name| **name != fqn)
                 .skip(1)
                 .find(|name| tree.kind_of(name) == Some("class"));
-            ruby.superclasses.extend(superclass.cloned());
+            ruby.superclasses.extend(superclass.map(String::from));
             // Outside the stdlib (`< StandardError`): named as written. A
             // module among them is never a return anyway.
             ruby.superclasses.extend(
