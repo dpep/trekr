@@ -188,7 +188,7 @@ pub(crate) struct Document {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Origin {
+pub(crate) enum Origin {
     /// The editor sent it, at this version.
     Editor { version: i32 },
     /// Read from disk, when the file had this modification time and length.
@@ -215,6 +215,11 @@ impl Document {
             tables: None,
             origin,
         }
+    }
+
+    /// Which text this is: the editor's version, or the disk's stamp.
+    pub(crate) fn origin(&self) -> Origin {
+        self.origin
     }
 
     /// The editor's version, when this is the editor's copy.

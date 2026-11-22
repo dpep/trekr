@@ -7,9 +7,10 @@
 //! whole index; a position's question waits until the checkout has its first
 //! part, and then only when it found nothing. A parked request is retried as
 //! the index moves, answered once it is whole, and refused with
-//! `RequestFailed` when the wait runs out or no index is coming.
+//! `RequestFailed` when the wait runs out or no index is coming, or
+//! `ContentModified` when its document changes meanwhile (DEC-866).
 
-use super::state::Session;
+use super::state::{Origin, Session};
 use lsp_server::{Request, Response};
 use lsp_types::request::{self as req, Request as _};
 use std::path::PathBuf;
@@ -182,22 +183,38 @@ fn refusal(session: &Session, root: &std::path::Path, coming: bool) -> String {
     }
 }
 
+/// The text a request's position was asked of: its document's version, or
+/// the disk's stamp when no editor has it open.
+fn read_of(session: &mut Session, request: &Request) -> Option<Origin> {
+    let (uri, _) = super::asked_about(&request.params);
+    let path = super::document_path(&uri?)?;
+    session.document(&path).map(|document| document.origin())
+}
+
 /// A request held for an index.
 pub(super) struct Parked {
     pub(super) request: Request,
     root: PathBuf,
     pub(super) since: Instant,
     seen: Seen,
+    read: Option<Origin>,
 }
 
 impl Parked {
-    pub(super) fn new(session: &Session, request: Request, root: PathBuf) -> Parked {
+    pub(super) fn new(session: &mut Session, request: Request, root: PathBuf) -> Parked {
         Parked {
-            request,
+            read: read_of(session, &request),
             seen: seen(session, &root),
             root,
+            request,
             since: Instant::now(),
         }
+    }
+
+    /// The document the request was asked of has changed since (DEC-866):
+    /// its position no longer names what the client asked about.
+    pub(super) fn modified(&self, session: &mut Session) -> bool {
+        read_of(session, &self.request) != self.read
     }
 
     /// The index moved since this was last tried, or is no longer coming:

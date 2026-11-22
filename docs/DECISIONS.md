@@ -18133,7 +18133,8 @@ so blocking there would hold `$/cancelRequest`, `shutdown` and every other
 request behind the index. A held request is a parked message the loop
 revisits at the pace it already wakes for an index (250 ms), and a hot
 reload waits for none to be held. `$/cancelRequest` answers it
-`RequestCancelled`.
+`RequestCancelled`, and a change to its document `ContentModified`
+(DEC-866).
 
 **Why `RequestFailed`, not `ContentModified`.** The spec gives
 `ContentModified` for a result a change invalidated while it was computed,
@@ -18621,3 +18622,32 @@ behind the example-group member lookup, which reads the checkout, so it is
 not marked either.
 
 Test: `a_locals_definition_and_references_need_no_index`.
+
+## DEC-866 — A parked request whose document changed is refused `ContentModified`
+
+**Decided.** A request held for the index (DEC-811) records which text of
+its document it was asked of: the editor's version, or the disk's
+modification time and length when no editor has the file open. At each
+pass of the loop, before it is retried, that is read again; if it moved,
+the request is answered `ContentModified` (`-32801`) at once, and counted
+`cancelled`.
+
+**Why.** A position is a line and a character in one text. Retried after a
+`didChange`, it was resolved against the new text: Go to Definition asked
+at `reply?` came back for `reblog?`, which the edit had put there, and
+references likewise. The spec gives `ContentModified` for exactly this, a
+result the client's own change has invalidated; VS Code retries the
+request or drops it, and either is right, where an answer for another name
+is wrong. DEC-811 chose `RequestFailed` over it for a wait that ran out,
+because there the content had not changed; here it has.
+
+**Not recomputed against the old text.** Answering from the snapshot the
+request was asked of would need that text, its parse and the overlay of
+every open buffer kept per parked request, and the answer would still name
+places in text the client no longer shows.
+
+**Which document.** Only the one the position is in. Locations in other
+files come from their current text, which is what the client has now. A
+workspace symbol has no position, and is never refused for it.
+
+Test: `a_parked_request_whose_document_changes_is_refused_as_modified`.

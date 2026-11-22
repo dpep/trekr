@@ -335,6 +335,8 @@ fn serve(
             if turn.inbox.is_cancelled(&held.request.id) {
                 let (response, counted) = turn.respond(&mut session, &held.request);
                 turn.deliver(&mut session, response, counted, &mut first_request)?;
+            } else if held.modified(&mut session) {
+                turn.modified(&held.request, held.since, &mut first_request)?;
             } else if let Some(why) = held.expired(&session) {
                 turn.refuse(&held.request, held.since, why, &mut first_request)?;
             } else if held.moved(&session) {
@@ -448,7 +450,7 @@ fn serve(
                             "index_wait",
                             serde_json::json!({ "op": request.method, "status": "parked" }),
                         );
-                        parked.push(wait::Parked::new(&session, request, root));
+                        parked.push(wait::Parked::new(&mut session, request, root));
                     }
                     Verdict::Refuse(why) => {
                         turn.refuse(&request, started, why, &mut first_request)?;
@@ -648,22 +650,48 @@ impl Turn<'_> {
         why: String,
         first_request: &mut bool,
     ) -> anyhow::Result<()> {
+        let code = lsp_server::ErrorCode::RequestFailed;
+        let outcome = (code, why, "refused", Outcome::NotIndexed);
+        self.end_parked(request, since, outcome, first_request)
+    }
+
+    /// Answer a parked `request` whose document changed while it waited
+    /// (DEC-866): `ContentModified`, which a client retries or drops.
+    fn modified(
+        &self,
+        request: &Request,
+        since: std::time::Instant,
+        first_request: &mut bool,
+    ) -> anyhow::Result<()> {
+        let code = lsp_server::ErrorCode::ContentModified;
+        let why = "the document changed while the request waited for the index".to_string();
+        let outcome = (code, why, "modified", Outcome::Cancelled);
+        self.end_parked(request, since, outcome, first_request)
+    }
+
+    /// Answer a parked request with an error, logged and counted.
+    fn end_parked(
+        &self,
+        request: &Request,
+        since: std::time::Instant,
+        (code, why, status, outcome): (lsp_server::ErrorCode, String, &str, Outcome),
+        first_request: &mut bool,
+    ) -> anyhow::Result<()> {
         self.log.event(
             "index_wait",
             serde_json::json!({
                 "op": request.method,
-                "status": "refused",
+                "status": status,
                 "ms": ms(since.elapsed()),
             }),
         );
         self.inbox.settle(&request.id);
-        let code = lsp_server::ErrorCode::RequestFailed as i32;
         self.writer
-            .send(Response::new_err(request.id.clone(), code, why).into())?;
+            .send(Response::new_err(request.id.clone(), code as i32, why).into())?;
         self.log.count(
             &feature_of(&request.method),
             String::new(),
-            Outcome::NotIndexed,
+            outcome,
             Some(since.elapsed()),
             std::mem::take(first_request),
         );

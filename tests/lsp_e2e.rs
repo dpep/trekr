@@ -6491,6 +6491,36 @@ fn a_definition_asked_before_the_index_waits_for_it_while_the_loop_serves() {
     let _ = fs::remove_dir_all(dir.with_extension("gated-git"));
 }
 
+/// A request parked for the index whose document then changes is refused
+/// with `ContentModified`, not answered for whatever the new text holds at
+/// its position: the client asked about the old one.
+#[test]
+fn a_parked_request_whose_document_changes_is_refused_as_modified() {
+    let (dir, gate, mut session) = unindexed_session("wait-modified", &[]);
+    let definition = send_request(&mut session, "textDocument/definition", save_at(&dir));
+    let mut at = save_at(&dir);
+    at["context"] = serde_json::json!({"includeDeclaration": true});
+    let references = send_request(&mut session, "textDocument/references", at);
+    let source = fs::read_to_string(dir.join("app.rb")).unwrap();
+    session.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb"), "version": 2},
+            "contentChanges": [{"text": source.replace("w.save", "w.size")}],
+        }),
+    );
+    // Refused while the gate still holds the index: no answer can come else.
+    for id in [definition, references] {
+        let (answer, _) = answer_to(&mut session, id);
+        assert_eq!(answer["error"]["code"], -32801, "{answer}");
+    }
+
+    fs::write(&gate, "").unwrap();
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(dir.with_extension("gated-git"));
+}
+
 /// A request still waiting when its wait runs out, or when the session
 /// shuts down, is refused with `RequestFailed` saying the checkout is being
 /// indexed — never answered empty.

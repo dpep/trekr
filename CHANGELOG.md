@@ -192,7 +192,8 @@
   index, as `--refs` does; other requests, `$/cancelRequest` and
   `shutdown` are served meanwhile. A request still waiting after 30 s or
   at shutdown is refused with `RequestFailed`, saying the checkout is being
-  indexed; with indexing turned off (`trekr.index: false`), at once,
+  indexed, and one whose document is edited meanwhile with
+  `ContentModified`; with indexing turned off (`trekr.index: false`), at once,
   naming `trekr --index`. A local variable's definition and references
   read only the file, and are answered at once.
 - **`--no-index` beside another trekr's first index says it is under
