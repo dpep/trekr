@@ -23,7 +23,11 @@
   Gemfile in a subdirectory is refused with exit 64; an engine's gemspec
   that is a path gem of the root bundle is graded, and so is a file the
   root Gemfile reads with `eval_gemfile`, whose gems `--dead Gemfile`
-  grades too, named from the checkout wherever the file sits.
+  grades too, named from the checkout wherever the file sits. An eval's
+  path is read from a literal, `File.expand_path("x.rb", __dir__)` or
+  `File.join(__dir__, "x.rb")`; one it cannot follow (a computed path, a
+  missing file) is said, in `summary.unread_evals` and on a line of its
+  own.
   `--explain` lists each gem found in use and the first evidence;
   `--json` carries it as `referenced`.
 
@@ -98,12 +102,10 @@
 - **With no lockfile, `--index` resolves the gems a file the Gemfile
   evals declares** (`eval_gemfile "Gemfile.tools"`), as `--dead Gemfile`
   grades them: they were left out, so nothing of theirs was indexed.
-- **`--dead Gemfile` follows `eval_gemfile File.expand_path("x.rb",
-  __dir__)`**, and `File.join(__dir__, "x.rb")`: the file was skipped and
-  its gems never graded. An eval it cannot follow (a computed path, a
-  missing file) is said, in `summary.unread_evals` and on a line of its
-  own; with no lockfile, `--index` and `--status` say it in
-  `gems.unread_evals`.
+- **With no lockfile, `--index` follows `eval_gemfile
+  File.expand_path("x.rb", __dir__)`** and `File.join(__dir__, "x.rb")`,
+  and an eval it cannot follow (a computed path, a missing file) is said
+  in `--index`'s and `--status`'s `gems.unread_evals`.
 - **With no lockfile, a git gem with no checkout is indexed at its
   installed release**: `gem "hashdiff", git: …` with nothing in
   `bundler/gems` dropped hashdiff, the gemspec's dependency on it too, so
@@ -168,8 +170,8 @@
   a one-line `def` names no caller either.
 - **`--dead` reads `class << io` as `def io.x`**: a method defined in the
   singleton class of a local's object was filed as the class's own
-  (`Printer.write`), `unreferenced`, `clear`, and named as what frees the
-  methods it calls. It is `lower`, "defined on the object `io` holds, which
+  (`Printer.write`), `unreferenced`, `clear`, and named as the caller of
+  the methods it calls. It is `lower`, "defined on the object `io` holds, which
   trekr cannot type", and frees nothing.
 - **`--dead` reads a call written as an assignment target as a call of
   its writer**: `pr.left, pr.right = 1, 2` and `rescue => pr.err` left

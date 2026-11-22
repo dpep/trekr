@@ -190,7 +190,7 @@ found; here is what was checked". Before deleting:
   is `single-caller`, and its reason says so. When that caller is a `clear`
   `unreferenced` or `test-only` method, the row's `cascaded_from` names it:
   delete the root first, then this. Anything deeper (a chain, two methods
-  calling only each other): delete, re-index, and ask again.
+  calling only each other): delete the root, then run `--dead` again.
 - `--dead` lists nothing while `warming`.
 
 ## Gotchas

@@ -574,9 +574,13 @@ installed release that meets its requirements, plus the runtime
 dependencies each installed gem's own gemspec names, to closure — every
 requirement on a name binding its pick (DEC-151), and installed meaning
 installed for one Ruby: the one `.ruby-version` names, else `$GEM_HOME`'s,
-else the `ruby` on `$PATH` (DEC-152). A gem from
-a path or git, or for another platform, is left out; the checkout's own
-gemspecs are the checkout. `gems.resolved_from` says which list it was:
+else the `ruby` on `$PATH` (DEC-152). The files the Gemfile
+`eval_gemfile`s declare gems too, when their path is a literal or the
+`__dir__`/`__FILE__` idiom; any other eval is listed in `gems.unread_evals`
+(DEC-847, DEC-876). A gem from a path, or for another platform, is left
+out; a git gem with no checkout is indexed at its installed release and
+listed in `gems.unlocated` (DEC-879); the checkout's own gemspecs are the
+checkout. `gems.resolved_from` says which list it was:
 `lockfile` or `declared` (DEC-134).
 
 **A gem version outlives the projects that used it** unless collected, because

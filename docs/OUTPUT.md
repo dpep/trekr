@@ -368,7 +368,7 @@ follow its `end`), when it names none. When that caller is a `clear`
 `unreferenced` or `test-only` method and the row is `clear` too, with no
 `super_refs` or `symbol_refs` besides, deleting
 the caller leaves this one unreferenced (or reached only by tests): the
-row carries `cascaded_from` (`name`, `path`, `line`, `tier`), naming it,
+row carries `cascaded_from` (`name`, `path`, `line`, `tier`, `root`), naming it,
 and its reason says "its caller, build, is itself unreferenced". Delete the
 root first, then this. One step only: a method freed through another
 candidate, or two that call only each other, carry none — run `--dead`
@@ -420,7 +420,8 @@ ones git does not ignore included; DEC-845):
   a gem of the bundle that calls the name, a helper another helper calls
   (DEC-363–368, DEC-370);
 - a YAML config that writes the name (`generator: pay_schedule_resources`,
-  `Pkg::Sanitizer.clean_uid`; locale files aside, DEC-402);
+  `Pkg::Sanitizer.clean_uid`: "named in config (…), which is not read";
+  locale files aside, DEC-402);
 - a file a generator wrote (`linguist-generated`, a `generated/` directory,
   a "DO NOT EDIT" header; DEC-403);
 - for a module's method, `unreferenced` or `test-only`, a call of its name
