@@ -574,17 +574,24 @@ fn method_answer(
     facts: &crate::core::Facts,
     call: &crate::core::Call,
 ) -> anyhow::Result<crate::resolve::MethodAnswer> {
+    with_checkout_files(session, located, |tree, files| {
+        crate::query::def::method_answer(tree, files, facts, call, &located.relative)
+    })
+}
+
+/// `answer`, over the checkout's tree and its files with the open buffers
+/// read before disk. Built once per request: the overlay copies every open
+/// buffer, so a request asking about many calls shares one.
+fn with_checkout_files<R>(
+    session: &mut Session,
+    located: &Located,
+    answer: impl FnOnce(&crate::tree::Tree, &CheckoutFiles) -> R,
+) -> anyhow::Result<R> {
     let open = overlay(session, &located.root);
     let (tree, store) = session.tree_and_store(&located.root)?;
     let root = located.root.to_string_lossy().into_owned();
     let files = CheckoutFiles::with_open(store, &located.root, &root, open);
-    Ok(crate::query::def::method_answer(
-        tree,
-        &files,
-        facts,
-        call,
-        &located.relative,
-    ))
+    Ok(answer(tree, &files))
 }
 
 /// Why a click found nothing, when nothing more specific was noted.
@@ -2280,7 +2287,13 @@ pub(crate) fn prepare_call_hierarchy(
         // hierarchy is *of*. Expanding the call site itself would find no
         // definition there and answer nothing.
         Under::Call(call) => located
-            .and_then(|located| callee_item(session, &located, &facts, &call))
+            .and_then(|located| {
+                with_checkout_files(session, &located, |tree, files| {
+                    callee_item((tree, files), &located, &facts, &call)
+                })
+                .ok()
+                .flatten()
+            })
             .unwrap_or_else(|| call_item(uri, &text, &call)),
         _ => return Ok(None),
     };
@@ -2323,14 +2336,14 @@ fn call_item(uri: Url, text: &str, call: &crate::core::Call) -> CallHierarchyIte
 /// `X.new` that runs one — as an item; `None` when the call does not
 /// resolve, or its file is not in an indexed checkout.
 fn callee_item(
-    session: &mut Session,
+    (tree, files): (&crate::tree::Tree, &CheckoutFiles),
     located: &Located,
     facts: &crate::core::Facts,
     call: &crate::core::Call,
 ) -> Option<CallHierarchyItem> {
-    let answer = method_answer(session, located, facts, call).ok()?;
+    let answer = crate::query::def::method_answer(tree, files, facts, call, &located.relative);
     let site = &answer.sites.first()?.site;
-    let (name, _) = crate::resolve::asked_at(session.tree(&located.root).ok()?, call, &answer);
+    let (name, _) = crate::resolve::asked_at(tree, call, &answer);
     let absolute = absolute_site(&located.root, &site.path)?;
     let text = crate::scan::read_text(&absolute).ok()?;
     let uri: Url = path_to_uri(&absolute).parse().ok()?;
@@ -2537,24 +2550,32 @@ pub(crate) fn outgoing_calls(
         return Ok(None);
     };
     let (start, end) = (enclosing.pos.line, enclosing.end_line);
-    let located = session.locate_query(&path);
+    let calls_in = || {
+        facts
+            .calls
+            .iter()
+            .filter(|call| call.pos.line >= start && call.pos.line <= end)
+            .filter(|call| call.recv != crate::core::RecvShape::Symbol)
+    };
+    // Each call's callee, resolved over one view of the checkout's files.
+    let callees: Vec<Option<CallHierarchyItem>> = match session.locate_query(&path) {
+        Some(located) => with_checkout_files(session, &located, |tree, files| {
+            calls_in()
+                .map(|call| callee_item((tree, files), &located, &facts, call))
+                .collect()
+        })
+        .unwrap_or_else(|_| calls_in().map(|_| None).collect()),
+        None => calls_in().map(|_| None).collect(),
+    };
 
     // Each callee once, with every call to it as a range. A callee that
     // resolves is an item at its definition, so the client can keep walking
     // down; one that does not is the call itself.
     let mut calls: Vec<CallHierarchyOutgoingCall> = Vec::new();
     let mut index: HashMap<(String, u32, String), usize> = HashMap::new();
-    for call in facts
-        .calls
-        .iter()
-        .filter(|call| call.pos.line >= start && call.pos.line <= end)
-        .filter(|call| call.recv != crate::core::RecvShape::Symbol)
-    {
+    for (call, callee) in calls_in().zip(callees) {
         let at = convert::span(Some(&text), call.pos.line, call.pos.col, call.written_len());
-        let to = located
-            .as_ref()
-            .and_then(|located| callee_item(session, located, &facts, call))
-            .unwrap_or_else(|| call_item(uri.clone(), &text, call));
+        let to = callee.unwrap_or_else(|| call_item(uri.clone(), &text, call));
         let key = (
             to.uri.to_string(),
             to.selection_range.start.line,

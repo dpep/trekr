@@ -18243,7 +18243,11 @@ editor one over its open buffers; neither re-states the pair.
 **Cost.** The server copies its open buffers into the `CheckoutFiles`
 for every call it answers, not only for one in a shared group's body:
 the tree is borrowed from the session, so the copy cannot wait for the
-check. It is a copy of the few open documents' text.
+check. It is a copy of the few open documents' text, made once per
+request: outgoing calls, which answers every call in a method's body,
+copied them once per call, and with 300 calls and 20 open buffers of
+1.5 MB took 0.36 s where 0.13 s had; it now resolves them all over one
+copy (`handlers::with_checkout_files`).
 
 **Not done.** A shared answer over every `Subject` (DEC-524's fronts
 render JSON disclosure on one side and `Location`s on the other): grown a
