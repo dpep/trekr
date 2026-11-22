@@ -13,17 +13,17 @@ belongs to:
 
 | area | DEC- |
 | --- | --- |
-| Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651, 873 |
+| Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651, 873, 878 |
 | Indexing and freshness | 014, 035, 041, 043, 046, 047, 048, 049, 055, 066, 139, 171, 195, 232, 320, 400, 500, 501, 512 |
 | Extraction: macros, made methods, schema | 022, 033, 069, 070, 085, 086, 094, 110, 111, 130, 131, 132, 160, 161, 162, 163, 164, 212, 310, 312, 480, 561, 643, 645, 710, 711, 712, 740, 741 |
 | Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841, 871 |
 | Resolve: the receiver ladder, confidence, residue | 008, 010, 011, 019, 020, 027, 028, 031, 068, 071, 077, 081, 082, 089, 093, 112, 116, 126, 127, 133, 136, 137, 140, 165, 166, 172, 211, 213, 214, 260, 261, 280, 311, 314, 340, 341, 342, 350, 351, 380, 390, 391, 392, 401, 440, 441, 442, 444, 445, 541, 795, 796, 797, 798, 825, 826, 827, 828, 837, 868, 869, 872 |
-| Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610, 847 |
+| Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610, 847, 876, 879 |
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563, 812, 855, 856, 870 |
-| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 670, 680, 690, 720, 721, 730, 750, 751, 760, 762, 770, 771, 772, 791, 792, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 815, 816, 817, 818, 819, 820, 821, 822, 842, 843, 845, 846, 857, 858 |
-| LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646, 810, 811, 836 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666, 670, 680, 690, 720, 721, 730, 750, 751, 760, 762, 770, 771, 772, 791, 792, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809, 815, 816, 817, 818, 819, 820, 821, 822, 842, 843, 845, 846, 857, 858, 874, 875, 877, 880, 881 |
+| LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646, 810, 811, 836, 864, 865, 866, 867 |
 | Scope and housekeeping | 030, 063, 640, 835, 838, 860, 863 |
 
 A few revisits are subsections filed under a neighbouring entry, as they
@@ -18836,7 +18836,7 @@ fresh indexes of one checkout. Testbed 600's flip.
 its eight `--def`s and three `--refs`: two distinct answer sets before
 (six and two), one after (all eight).
 
-## DEC-871 — Without a lockfile, a git gem with no checkout is its installed release, said
+## DEC-879 — Without a lockfile, a git gem with no checkout is its installed release, said
 
 **Decided.** With no lockfile, a `gem` line's `git:` or `github:` source
 that has no one checkout in `bundler/gems` (DEC-293) no longer takes the
@@ -18869,7 +18869,7 @@ Tests: `a_git_gem_with_no_checkout_falls_back_to_the_installed_release`,
 `with_no_lockfile_a_gem_whose_git_source_is_not_checked_out_is_the_installed_release`
 (`--status --json`), both red before.
 
-## DEC-872 — The text readers beside the index decode lossily
+## DEC-880 — The text readers beside the index decode lossily
 
 **Decided.** `--dead`'s methods read a Slim view (and a Jbuilder one, which the index reads too), and a YAML
 config, through `scan::read_lossy` (or `from_utf8_lossy` over the bytes):
@@ -18888,7 +18888,7 @@ moves, and the testbed input lands a commit earlier — and their output
 keeps the template's byte offsets, which a lossy decode would move; left
 for its own change.
 
-## DEC-873 — `--dead`'s text readers read an identifier as `is_ident` does
+## DEC-881 — `--dead`'s text readers read an identifier as `is_ident` does
 
 **Decided.** DEC-835 made a name read by a run helper `is_ident`, Ruby's
 rule, but three readers kept ASCII: a Slim view's `words()` read

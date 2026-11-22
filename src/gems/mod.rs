@@ -64,7 +64,7 @@ pub(crate) struct Located {
     /// own: that Ruby has no copy that would do (DEC-291).
     pub(crate) elsewhere: bool,
     /// Without a lockfile, a git source with no checkout to take, so the
-    /// installed release meeting its requirements stands in (DEC-871).
+    /// installed release meeting its requirements stands in (DEC-879).
     pub(crate) git_not_taken: Option<Absence>,
 }
 

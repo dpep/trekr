@@ -104,7 +104,7 @@ pub(super) fn resolve(
     // bundler takes the Gemfile's source for every requirement on the name.
     // With no checkout to take, the name resolves as a release does, and
     // says why: the git line must not take away a gem the installed release
-    // answers for (DEC-871).
+    // answers for (DEC-879).
     let mut git: BTreeMap<String, Copy> = BTreeMap::new();
     let mut not_checked_out: BTreeMap<String, Absence> = BTreeMap::new();
     for dependency in &declared {

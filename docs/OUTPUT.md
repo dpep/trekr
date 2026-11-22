@@ -805,7 +805,7 @@ was found.
   each with its `why` (a git checkout not where bundler puts it, a path
   outside the checkout). Without a lockfile, a git gem with no checkout to
   take is indexed at the installed release that meets its requirements, when
-  one is, and listed here too, its `why` saying so (DEC-871).
+  one is, and listed here too, its `why` saying so (DEC-879).
 - `unread_evals` — without a lockfile, each `eval_gemfile` not followed,
   as `--dead Gemfile`'s `summary.unread_evals` writes it: its gems are
   not indexed.
