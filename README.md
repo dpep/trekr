@@ -171,7 +171,9 @@ trekr cannot see: a Slim view, an extensionless script, a name built at
 runtime, a hook Ruby calls by name, an unindexed ancestor, a gem. A row
 reached from outside the repo — a gem's public API, a routed action, a
 job — says so (`entry_point`) and is always `lower`. Every spec-member row
-is `lower` too: run the spec file after deleting one.
+is `lower` too: run the spec file after deleting one. A method freed by
+deleting another row names it (`cascaded_from`: delete that one first), and
+a `test-only` method lists its tests (`test_sites`).
 
 The tiers, the caveats, and the hand-checked measurements behind the
 grading are in [docs/OUTPUT.md](docs/OUTPUT.md#--dead).
@@ -267,7 +269,9 @@ highlights. Hover on a model shows its table's columns and indexes, and on a
 column's attribute (`post.title`) the column's type, null and default — read
 from `db/schema.rb`, or `db/structure.sql` for an app that dumps SQL, without
 booting the app. It keeps the index current as files are saved, and indexes an
-unindexed checkout in the background, the files you have open first.
+unindexed checkout in the background, the files you have open first. While
+a checkout is first indexed, definition and references wait for it (up to
+30 s) rather than answer empty (DEC-811).
 
 [claude/INSTALL.md](claude/INSTALL.md) wires up the skill and the server.
 

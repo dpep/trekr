@@ -169,7 +169,9 @@ found; here is what was checked". Before deleting:
   (`marshal_load`, `perform`), an unindexed ancestor, a module mixed in at
   runtime, or a gem.
 - **`test-only`, `clear`, no `entry_point`:** nothing but tests was found
-  to use it. Deleting it means deleting the tests that exercise it too.
+  to use it. Deleting it means deleting the tests that exercise it too:
+  `test_sites` lists each test call with its example and group, so delete
+  those tests with it.
 - **A class, module or constant row is `lower`** when the checkout looks up
   a name computed at runtime (`x.constantize`, `Object.const_get(x)`) —
   nearly every app does, and the caveat names the site — and `clear`
@@ -192,6 +194,27 @@ found; here is what was checked". Before deleting:
   delete the root first, then this. Anything deeper (a chain, two methods
   calling only each other): delete the root, then run `--dead` again.
 - `--dead` lists nothing while `warming`.
+- trekr grades; it does not run anything. To settle a candidate, use a
+  dead-code workflow that deletes the candidate and runs the affected specs
+  to confirm.
+
+### Gems: `--dead Gemfile`
+
+`trekr --dead Gemfile` (or `gems.rb`, or the root gemspec) grades each
+`gem` line instead of code:
+
+- `unreferenced`: nothing in the checkout names its constants, requires its
+  files or calls its methods.
+- `test-only`: only tests use it, but it is in the default group — move it
+  to the test group.
+- `convention-only`: no Ruby uses it, but something loads it by name (a
+  config, a command line, another gem's `require`; `convention.by`).
+
+`lower` is the usual grade: a Railtie, a command it installs, a method it
+defines on another gem's class, or the development group may use a gem
+nothing names. Exit 64 for a lockfile, a second bundle (`Gemfile.next`,
+`gemfiles/*.gemfile`), a Gemfile in a subdirectory, or a Gemfile passed
+with code paths (grade code and gems in separate runs).
 
 ## Gotchas
 
