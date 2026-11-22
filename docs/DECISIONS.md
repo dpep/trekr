@@ -19151,7 +19151,7 @@ runs each, instructions 1–2.5 % fewer, output byte-identical.
 
 ## DEC-887 — `--dead`'s held facts: what holds the peak, and the one lever worth pulling
 
-**Measured, not landed.** `--dead app lib plugins` on discourse peaks at
+**Landed (10d99c1a): share each call's scope stack.** `--dead app lib plugins` on discourse peaks at
 1.50–1.55 GB footprint (`/usr/bin/time -l`, steady to ±15 MB run to run).
 At the end of the run `cli::refs::Parsed` holds every file's facts,
 11,760 files; `malloc_size` over them, by part: the `Call` buffers 387 MB
@@ -19164,11 +19164,9 @@ names 44 MB, defs 114 MB, const refs 50 MB, assigns 33 MB, sources 55 MB.
   copy): 1,499–1,501 → 1,263–1,297 MB on discourse, 675–683 →
   612–628 MB on rails `--dead activerecord`, output byte-identical,
   instructions within 1 %. A symmetric probe agreed first: holding a
-  second copy of every call's stack added 200 MB. **Not landed here**: the
-  type is written by the extractor (`src/extract/mod.rs`, five
-  construction sites) and copied out by the store (`src/store/mod.rs`, one
-  `to_vec`), which another lane owned at the time; the stored format does
-  not move (`join_nesting` writes the same text), so no store bump.
+  second copy of every call's stack added 200 MB. Landed as `core::Nesting`,
+  shared by `Facts::share_nestings`; the stored format does not move
+  (`join_nesting` writes the same text), so no store bump.
 - **`shrink_to_fit` on held facts: dropped.** −33 MB (1,508 → 1,475),
   2 %, under the 5 % bar. The freed slack sits in malloc's small zone,
   which the memos' tiny allocations do not reuse.
