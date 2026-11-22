@@ -16,7 +16,7 @@ belongs to:
 | Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651, 873, 878, 882 |
 | Indexing and freshness | 014, 035, 041, 043, 046, 047, 048, 049, 055, 066, 139, 171, 195, 232, 320, 400, 500, 501, 512, 884 |
 | Extraction: macros, made methods, schema | 022, 033, 069, 070, 085, 086, 094, 110, 111, 130, 131, 132, 160, 161, 162, 163, 164, 212, 310, 312, 480, 561, 643, 645, 710, 711, 712, 740, 741, 883 |
-| Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841, 871 |
+| Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841, 871, 885 |
 | Resolve: the receiver ladder, confidence, residue | 008, 010, 011, 019, 020, 027, 028, 031, 068, 071, 077, 081, 082, 089, 093, 112, 116, 126, 127, 133, 136, 137, 140, 165, 166, 172, 211, 213, 214, 260, 261, 280, 311, 314, 340, 341, 342, 350, 351, 380, 390, 391, 392, 401, 440, 441, 442, 444, 445, 541, 795, 796, 797, 798, 825, 826, 827, 828, 837, 868, 869, 872 |
 | Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610, 847, 876, 879 |
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
@@ -19109,3 +19109,20 @@ are byte-identical to the base build.
 
 Test: `a_bundle_loaded_in_bulk_leaves_what_plain_writes_do`, which also
 fails one part way and finds the indexes rolled back.
+
+## DEC-885 — A name's definitions are shared with `named`, not copied
+
+**Decided.** `Tree::named` answered with a second copy of every
+definition of a name (its `is_definition` rows, cloned into an
+`Arc<[MethodDef]>`), held beside the memo's own table for the tree's
+life: round 2's 247k `MethodDef::clone` allocations in an LSP session.
+`Defs::methods` is now an `Arc<[MethodDef]>`, and a name with no
+visibility row (`private :x`, which is no definition) answers with that
+table itself; one with such a row filters a copy as before.
+
+**Measured** (discourse, LSP, 60 definitions, 30 hovers, then 20
+references; `heap -s` live heap, since footprint after the burst moved
+280–330 MB between identical sessions on a loaded box): 169.0 → 156.4 MB
+live after references, 2,236–2,238k → 2,088–2,090k allocations over
+three sessions each. Same answers: the shared table is the filtered one
+when nothing is filtered.

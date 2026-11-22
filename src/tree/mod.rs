@@ -478,7 +478,7 @@ const _: fn() = || {
 /// One name's definitions, in the order they were loaded: core's, the
 /// stdlib's, then the store's.
 struct Defs {
-    methods: Vec<MethodDef>,
+    methods: Arc<[MethodDef]>,
     /// owner → definitions, instance side then singleton. A reopened class
     /// gives several. Walking a chain probes by the owner's `&str` and builds
     /// no key (DEC-231).
@@ -3370,7 +3370,7 @@ impl Tree {
             methods.push(method);
         }
         Defs {
-            methods,
+            methods: methods.into(),
             by_owner,
             named: OnceLock::new(),
         }
@@ -4162,6 +4162,10 @@ impl Tree {
         let defs = self.ensure(name);
         defs.named
             .get_or_init(|| {
+                // Most names have no visibility row: share the table itself.
+                if defs.methods.iter().all(MethodDef::is_definition) {
+                    return defs.methods.clone();
+                }
                 defs.methods
                     .iter()
                     .filter(|m| m.is_definition())
