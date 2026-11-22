@@ -169,9 +169,8 @@ found; here is what was checked". Before deleting:
   (`marshal_load`, `perform`), an unindexed ancestor, a module mixed in at
   runtime, or a gem.
 - **`test-only`, `clear`, no `entry_point`:** nothing but tests was found
-  to use it. Deleting it means deleting the tests that exercise it too:
-  `test_sites` lists each test call with its example and group, so delete
-  those tests with it.
+  to use it. Delete its tests with it: `test_sites` lists each test call
+  with its example and group.
 - **A class, module or constant row is `lower`** when the checkout looks up
   a name computed at runtime (`x.constantize`, `Object.const_get(x)`) —
   nearly every app does, and the caveat names the site — and `clear`

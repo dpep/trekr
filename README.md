@@ -60,11 +60,13 @@ caller or an override may be in any file: about 4 s on discourse, 17 s on a
 100k-file monorepo. A position (`--def`, `FILE:LINE:COL`) waits only for its
 file and the files and gems it names, and answers in under a second with
 `warming` while the rest is read in the background; a miss there waits for
-the rest, so it is never a "try again". Past a second the query says on
-stderr what it is doing, and at a terminal shows a progress line that clears
-itself; Ctrl-C stops the wait, not the index, which a later query picks up.
-A checkout whose index an upgrade dropped, or one cut short, is indexed the
-same way, and two queries at once share one index. `--no-index` (or
+the rest, so it is never a "try again".
+
+Past a second, the query says on stderr what it is doing, and at a terminal
+shows a progress line that clears itself. Ctrl-C stops the wait, not the
+index, which a later query picks up. A checkout whose index an upgrade
+dropped, or one cut short, is indexed the same way, and two queries at once
+share one index. `--no-index` (or
 `TREKR_NO_INDEX=1`) answers from what is indexed instead: a checkout nobody
 indexed is `not_indexed`, exit 2. `--status` never indexes.
 

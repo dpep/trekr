@@ -5,19 +5,20 @@
 ### Added
 
 - **`trekr --dead Gemfile` grades the gems a root Gemfile, `gems.rb` or
-  gemspec declares**, one row per `gem` line (`kind: gem`). A gem is
-  `unreferenced` when nothing in the checkout names a constant it owns,
-  requires its files or calls a method of its own modules — views
-  (Builder, Arbre, Jb, Slim), Thor files, Capistrano tasks, extensionless
-  Ruby files (`Dangerfile`, `Fastfile`), untracked files and in-checkout
-  path gems included. It is `test-only` when only tests use a
-  default-group gem, and `convention-only` when a config
-  (`database.yml`'s adapter, a `.rubocop.yml` plugin), a command line
-  (Procfile, CI, lefthook), a plugin symbol (`provider :saml`) or another
-  used gem's `require` loads it by name. A Railtie, a method defined on a
-  class the gem does not own, a command it installs, a plugin's name or
-  the development group grades it `lower`. A gem only the lockfile names
-  is never a row.
+  gemspec declares**, one row per `gem` line (`kind: gem`). A gem only the
+  lockfile names is never a row.
+  - `unreferenced`: nothing in the checkout names a constant it owns,
+    requires its files or calls a method of its own modules. The checkout
+    includes views (Builder, Arbre, Jb, Slim), Thor files, Capistrano
+    tasks, extensionless Ruby files (`Dangerfile`, `Fastfile`), untracked
+    files and in-checkout path gems.
+  - `test-only`: only tests use a default-group gem.
+  - `convention-only`: something loads it by name: a config
+    (`database.yml`'s adapter, a `.rubocop.yml` plugin), a command line
+    (Procfile, CI, lefthook), a plugin symbol (`provider :saml`) or another
+    used gem's `require`.
+  - `lower`: a Railtie, a method defined on a class the gem does not own,
+    a command it installs, a plugin's name, or the development group.
   - Also read: an engine's gemspec that is a path gem of the root bundle,
     and each file the Gemfile `eval_gemfile`s, named from the checkout.
     An eval's path is read from a literal, `File.expand_path("x.rb",
@@ -72,7 +73,7 @@
 ### Fixed
 
 - **`--dead` reads the untracked files the index reads**: a view, YAML
-  config, script or `config/routes.rb` git has never seen now counts.
+  config, script or `config/routes.rb` git has never seen counts.
 - **`--dead` reads Slim views and YAML configs more fully**: a Slim line
   splits as Slim 5 does (`href = x` is read, a `/` comment's `#{}` is
   not), a byte that is not UTF-8 reads as U+FFFD instead of leaving the
@@ -119,27 +120,26 @@
 - **`--dead` no longer panics on a non-ASCII receiver** (`año.descendants`,
   `año.const_get(name)`); a caveat names it whole.
 - **`--dead DIR` reads the `.rake` files in it.**
-- **A concern is one whose `extend` is `ActiveSupport::Concern`**, also
-  through a constant alias (`C = ActiveSupport::Concern; extend C`), or
-  written `ActiveSupport::Concern` or `Concern` when ActiveSupport is not
-  indexed — not a module merely named `…Concern`. A concern included
-  through a plain module no longer puts its `ClassMethods` on the class,
-  and of an `extend` and a concern's `ClassMethods`, the one written later
-  wins, as in Ruby, also through nested concerns and `included` hooks.
-- **A method defined on an object is reached as Ruby reaches it**: a bare
+- **A concern is one whose `extend` is `ActiveSupport::Concern`**, not a
+  module merely named `…Concern`. The `extend` may go through a constant
+  alias (`C = ActiveSupport::Concern; extend C`), or be written
+  `ActiveSupport::Concern` or `Concern` when ActiveSupport is not indexed.
+  A concern included through a plain module leaves its `ClassMethods` off
+  the class. Of an `extend` and a concern's `ClassMethods`, the one written
+  later wins, as in Ruby, through nested concerns and `included` hooks too.
+- **A method defined on an object is reached as Ruby reaches it.** A bare
   call in `def obj.kinds` or `class << obj` is a call on `obj` (typed as
-  it, or untyped), not on the enclosing class; `--refs` on the object's
-  method counts a call whose receiver may be the object as `possible`,
-  also where the object overrides its class's method and for a predicate
-  matcher (`expect(widget).to be_ready`), in Find References too.
-- **A top-level `def` is found as Ruby finds it**: it comes before
+  it, or untyped), not on the enclosing class. `--refs` and Find
+  References on the object's method count a call whose receiver may be the
+  object as `possible`, including where the object overrides its class's
+  method and a predicate matcher (`expect(widget).to be_ready`).
+- **A top-level `def` is found as Ruby finds it.** It comes before
   Kernel's, a `class Object` def of the name is the same method, and an
   explicit receiver may call it where a site makes it public (a top-level
   `public`, a `class Object` def, `Object.class_eval`). `--refs
-  Object#helper`, `--refs` at the def and its card list its callers;
-  `--dead` counts a bare call at the top of a script and a call Kernel
-  answers; the editor's Find References and incoming calls list what
-  `--refs` lists.
+  Object#helper`, `--refs` at the def, its card, and the editor's Find
+  References and incoming calls list its callers. `--dead` counts a bare
+  call at the top of a script and a call Kernel answers.
 - **A call in a module's own `def self.x` runs on the module.**
 - **Answers that rest on `helper_method` and other class-body macros no
   longer vary between fresh indexes** of the same checkout.
@@ -160,11 +160,12 @@
   `Content-Length`, or a header section over 8 KiB, closes the connection
   with the reason on stderr.
 - **`trekr --lsp` waits for a checkout's first index instead of answering
-  empty**: definition waits for the index's first part, references for
-  the whole index; other requests are served meanwhile. After 30 s or at
-  shutdown a waiting request is refused with `RequestFailed`, or
-  `ContentModified` if its document changed; with `trekr.index: false`,
-  at once, naming `trekr --index`. A local variable's answers never wait.
+  empty.** Definition waits for the index's first part and references for
+  the whole index, while other requests are served. A local variable's
+  answers never wait. A waiting request is refused with `RequestFailed`
+  after 30 s or at shutdown, or with `ContentModified` if its document
+  changed. With `trekr.index: false` it is refused at once, naming
+  `trekr --index`.
 - **`trekr --lsp` exits 1 on `exit` without `shutdown`**, as the spec
   says.
 - **Hover works on a doc comment indented with NBSP or U+3000.**

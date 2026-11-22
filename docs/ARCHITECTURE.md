@@ -1200,23 +1200,26 @@ completion is `isIncomplete`, and a definition says once, as a
 `window/showMessage`, that it answers from what is read so far (DEC-331).
 
 **No empty answer stands in for "not indexed yet"** (DEC-811, `wait.rs`).
-The CLI's rule (DEC-500), over LSP: references, implementation, incoming
-calls and workspace symbols wait for the whole index; definition,
-declaration and the call hierarchy's prepare and outgoing calls wait for
-the checkout's first part, and after it only when they found nothing. A
-waiting request is parked, not served: the loop keeps answering other
-requests, `$/cancelRequest` and `shutdown`. A parked position is tried
-again each time the index commits; a whole-checkout question only once the
-index is whole, or no longer coming (DEC-867). When the index ends it is
-answered; after 30 s, at shutdown, or at once when this session indexes
-nothing, it is refused with `RequestFailed` (-32803) and a message saying
-how far the index has got. A parked request whose document changed
-meanwhile — the editor's version, or the disk's mtime and length — is
-refused `ContentModified` (-32801), since its position names text the
-client no longer shows (DEC-866). An empty answer no index would change —
-no name at the caret, an unreadable file — goes out at once, and so does a
-local variable's definition and references, read from the file alone
-(DEC-865).
+This is the CLI's rule (DEC-500), over LSP.
+
+- **What waits.** References, implementation, incoming calls and workspace
+  symbols wait for the whole index. Definition, declaration and the call
+  hierarchy's prepare and outgoing calls wait for the checkout's first
+  part, and after it only when they found nothing.
+- **What doesn't.** An empty answer no index would change (no name at the
+  caret, an unreadable file) goes out at once. So does a local variable's
+  definition and references, read from the file alone (DEC-865).
+- **How it waits.** A waiting request is parked, not served: the loop keeps
+  answering other requests, `$/cancelRequest` and `shutdown`. A parked
+  position is tried again each time the index commits; a whole-checkout
+  question only once the index is whole, or never will be (DEC-867).
+- **How it ends.** When the index ends, the request is answered. After
+  30 s, at shutdown, or at once when this session indexes nothing, it is
+  refused with `RequestFailed` (-32803) and a message saying how far the
+  index has got. If its document changed meanwhile (the editor's version,
+  or the disk's mtime and length), it is refused `ContentModified`
+  (-32801), since its position names text the client no longer shows
+  (DEC-866).
 
 **Hover is for a person reading code** (DEC-052), so it shows what the
 definition is and leaves out how it was found:
@@ -1233,7 +1236,7 @@ Defined in [`lib/active_record/associations.rb:1302`](file://…#L1302) · gem `
 The signature is the definition's own text after its name — parameters with
 their defaults, a class's `< Parent`, a constant's value — under the FQN the
 tree settled on. `status`, `confidence` and `resolved_via` stay in `--json`,
-where a caller branches on them; in a hover they were noise. What replaces
+where a caller branches on them; in a hover they are noise. What replaces
 them is a sentence, and only when it matters: `Best guess — … 3 other
 definitions of save exist` for an ambiguous pick, `receiver type unknown — 7
 possible definitions: …` for residue. Never a number.
