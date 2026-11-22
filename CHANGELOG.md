@@ -56,6 +56,9 @@
   longer loads every `initialize`, nor rescans each class's concerns, so
   a `--def` or `--ancestors` that needs the tree, and the language
   server's first answer, shed most of that build on a large app.
+- **`--dead` spends less CPU looking up methods by name**: about a
+  quarter less for `--dead Gemfile` on rails, a tenth less for `--dead`
+  on a large app.
 
 ### Removed
 

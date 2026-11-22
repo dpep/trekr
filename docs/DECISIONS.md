@@ -13,7 +13,7 @@ belongs to:
 
 | area | DEC- |
 | --- | --- |
-| Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651, 873, 878 |
+| Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651, 873, 878, 882 |
 | Indexing and freshness | 014, 035, 041, 043, 046, 047, 048, 049, 055, 066, 139, 171, 195, 232, 320, 400, 500, 501, 512 |
 | Extraction: macros, made methods, schema | 022, 033, 069, 070, 085, 086, 094, 110, 111, 130, 131, 132, 160, 161, 162, 163, 164, 212, 310, 312, 480, 561, 643, 645, 710, 711, 712, 740, 741 |
 | Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841, 871 |
@@ -19005,3 +19005,45 @@ now the file's own checkout when its Gemfile evals the file, else the
 checkout `--dead` runs in when its Gemfile does; the file is graded as
 that root's manifest. A file neither evals is refused as before. Test
 `an_evaled_gemfile_outside_the_checkout_is_graded_from_it`, red before.
+
+## DEC-882 — Per-name method rows and body calls match their roots in Rust
+
+**Decided.** `methods_named` and `body_calls` query by name alone and keep
+the rows whose checkout root is among `Roots::list` in Rust; `methods_named`
+then sorts by the key `methods`' SQL orders by (layer, checkout id, path,
+line, col), stably, so rows that tie keep the scan's rowid order, as the
+SQL sort did. Bound as `c.root IN (?1..?303)`, a bundle's roots cost every
+call a fresh ~4 KB SQL text, 300 bindings and an ephemeral b-tree:
+`Tree::named` → `method_rows` was 12.4 % of a discourse `--dead`'s CPU, and
+37 % of that was the `IN` list, not the lookup (round 2's profile).
+
+Release builds, interleaved run by run, best of 3, at load 23–45 (so the
+walls are noise; instructions are the number):
+
+| run | instructions | user+sys CPU |
+| --- | ---: | ---: |
+| rails `--dead Gemfile` | 42.4 → 31.1 G (−27 %) | 6.2 → 4.8 s |
+| discourse `--dead Gemfile` | 36.2 → 33.8 G (−7 %) | 4.8 → 4.1 s |
+| discourse `--dead app lib plugins` | 168 → 151 G (−10 %) | 26.6 → 24.0 s |
+| discourse `--refs`, 10 names (sums of bests) | 105.6 → 101.2 G (−4 %) | 17.1 → 16.7 s |
+
+Every output of the battery (both corpora's `--dead` and `--dead Gemfile`,
+20 `--refs`, 59 `--def` positions) was byte-identical to the base build.
+Tests `named_methods_match_the_layered_sql` and
+`body_calls_match_the_sql_they_replaced` keep the old SQL as the oracle
+over a store whose checkout ids run against their layering, with a hidden
+stdlib file, a repo outside the roots, and ties (`module_function`'s two
+rows at one position, two calls on one line).
+
+A shared store reads other checkouts' rows for the name and drops them;
+at hundreds of roots per checkout that is still far cheaper than the `IN`
+table. The rest of the `IN` shape stays, measured on the discourse store
+(511 checkouts, 303 roots), with Python standing in for the Rust filter:
+
+- `ancestry`, `macro_mixins`, `load_hooks`, `dynamic_markers` run once per
+  tree, so the `IN` list is paid once. Unfiltered, `ancestry` reads every
+  checkout's edges: 98 → 189 ms. The other three are 3–9 ms either way.
+- `rbi_defines`'s first `EXISTS` (any `.rbi` among the roots) costs 2.3–5
+  ms per call, but by name alone the call takes 29 ms for `initialize`
+  (13k defs), against 0.03–0.3 ms for a rare name. A per-checkout "has an
+  `.rbi`" would take both; that is a different change.

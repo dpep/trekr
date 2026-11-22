@@ -169,6 +169,11 @@ impl Roots {
         }
     }
 
+    /// `list`, for matching a row's root in Rust rather than by an `IN` list.
+    fn set(&self) -> HashSet<&str> {
+        self.list.iter().map(String::as_str).collect()
+    }
+
     fn shows(&self, path: &str) -> bool {
         !self.hidden.contains(path)
     }
@@ -1233,14 +1238,15 @@ impl Store {
         name: Option<&str>,
         mut visit: impl FnMut(MethodRow),
     ) -> Result<()> {
+        if let Some(name) = name {
+            for row in self.method_rows_named(roots, name)? {
+                visit(row);
+            }
+            return Ok(());
+        }
         // Layering is load-bearing: `lookup` takes the last definition, so a
         // reopened class must arrive after the class it reopens.
         let count = roots.list.len();
-        let filter = if name.is_some() {
-            format!("AND d.name = ?{}", count + 1)
-        } else {
-            String::new()
-        };
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT d.name, d.nesting, d.singleton, d.visibility, d.params, d.via,
                     d.target, d.sig_returns, c.root || '/' || f.path, d.line, d.col,
@@ -1248,46 +1254,57 @@ impl Store {
                FROM def d
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root IN ({}) AND d.kind = 'method' {filter}
+              WHERE c.root IN ({}) AND d.kind = 'method'
               ORDER BY {}, f.path, d.line, d.col",
             numbered(1, count),
             layered(count)
         ))?;
-        let mut values: Vec<&dyn rusqlite::ToSql> = roots
-            .list
-            .iter()
-            .map(|r| r as &dyn rusqlite::ToSql)
-            .collect();
-        if let Some(name) = name.as_ref() {
-            values.push(name as &dyn rusqlite::ToSql);
-        }
-        let mut rows = stmt.query(values.as_slice())?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(&roots.list))?;
         while let Some(r) = rows.next()? {
             let path: String = r.get(8)?;
+            if roots.shows(&path) {
+                visit(method_row(r, path)?);
+            }
+        }
+        Ok(())
+    }
+
+    /// One name's methods, in `methods`' order. The roots are matched and
+    /// the rows layered here, not in SQL: bound as an `IN` list, a bundle's
+    /// hundreds of roots cost an ephemeral b-tree on every call (DEC-882).
+    fn method_rows_named(&self, roots: &Roots, name: &str) -> Result<Vec<MethodRow>> {
+        let wanted = roots.set();
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT d.name, d.nesting, d.singleton, d.visibility, d.params, d.via,
+                    d.target, d.sig_returns, f.path, d.line, d.col,
+                    d.target_line, d.target_col, c.root, c.kind, c.id
+               FROM def d
+               JOIN file f ON f.blob_id = d.blob_id
+               JOIN checkout c ON c.id = f.checkout_id
+              WHERE d.kind = 'method' AND d.name = ?1",
+        )?;
+        let mut found = Vec::new();
+        let mut rows = stmt.query([name])?;
+        while let Some(r) = rows.next()? {
+            let root = r.get_ref(13)?.as_str()?;
+            if !wanted.contains(root) {
+                continue;
+            }
+            let path = format!("{root}/{}", r.get_ref(8)?.as_str()?);
             if !roots.shows(&path) {
                 continue;
             }
-            let params: String = r.get(4)?;
-            visit(MethodRow {
-                name: r.get(0)?,
-                nesting: split_nesting(&r.get::<_, String>(1)?),
-                singleton: r.get::<_, i64>(2)? != 0,
-                visibility: r.get(3)?,
-                params: decode_params(&params),
-                via: r.get(5)?,
-                target: r.get(6)?,
-                sig_returns: r.get(7)?,
-                sig_overloads: Vec::new(),
-                path,
-                line: r.get(9)?,
-                col: r.get(10)?,
-                target_pos: match (r.get::<_, Option<u32>>(11)?, r.get::<_, Option<u32>>(12)?) {
-                    (Some(line), Some(col)) => Some(crate::core::Pos { line, col }),
-                    _ => None,
-                },
-            });
+            let layer = roots.layer(r.get_ref(14)?.as_str()?, root);
+            let id: i64 = r.get(15)?;
+            found.push(((layer, id), method_row(r, path)?));
         }
-        Ok(())
+        // Within one checkout the root is a shared prefix, so the absolute
+        // path orders as the relative one does in `methods`' SQL. Stable, so
+        // rows the key ties keep the scan's order, as SQL's sort did.
+        found.sort_by(|(a_key, a), (b_key, b)| {
+            (a_key, &a.path, a.line, a.col).cmp(&(b_key, &b.path, b.line, b.col))
+        });
+        Ok(found.into_iter().map(|(_, row)| row).collect())
     }
 
     /// Every ancestry edge in a checkout, in source order — which is the order
@@ -1377,29 +1394,35 @@ impl Store {
     /// scope stack each call is written in, with the literal names it is
     /// handed.
     pub(crate) fn body_calls(&self, roots: &Roots, name: &str) -> Result<Vec<BodyCallRow>> {
-        let mut stmt = self.conn.prepare_cached(&format!(
-            "SELECT DISTINCT c.nesting, c.args, k.root || '/' || f.path, c.line
+        // Roots matched here, not by an `IN` list, as in `method_rows_named`.
+        let wanted = roots.set();
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT c.nesting, c.args, k.root, f.path, c.line
                FROM body_call c
                JOIN file f ON f.blob_id = c.blob_id
                JOIN checkout k ON k.id = f.checkout_id
-              WHERE c.name = ?1 AND k.root IN ({})
-              -- Not blob order, which follows the parallel index's finish.
-              ORDER BY 3, 4",
-            numbered(2, roots.list.len())
-        ))?;
-        let params = std::iter::once(name.to_string()).chain(roots.list.iter().cloned());
-        let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, u32>(3)?,
-            ))
-        })?;
+              WHERE c.name = ?1",
+        )?;
+        let mut rows = stmt.query([name])?;
+        let mut calls = Vec::new();
+        while let Some(r) = rows.next()? {
+            let root = r.get_ref(2)?.as_str()?;
+            if wanted.contains(root) {
+                let path = format!("{root}/{}", r.get_ref(3)?.as_str()?);
+                calls.push((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    path,
+                    r.get::<_, u32>(4)?,
+                ));
+            }
+        }
+        // Not blob order, which follows the parallel index's finish. Stable,
+        // so a line's calls keep the scan's order, as SQL's sort did.
+        calls.sort_by(|a, b| (&a.2, a.3).cmp(&(&b.2, b.3)));
         let mut seen: HashSet<(String, String)> = HashSet::new();
         let mut found = Vec::new();
-        for row in rows {
-            let (nesting, args, path, line) = row?;
+        for (nesting, args, path, line) in calls {
             if !roots.shows(&path) || !seen.insert((nesting.clone(), args.clone())) {
                 continue;
             }
@@ -2828,6 +2851,30 @@ fn numbered(first: usize, count: usize) -> String {
         .join(", ")
 }
 
+/// A method row from a query whose columns are `visit_method_rows`', with
+/// its absolute `path` read already.
+fn method_row(r: &rusqlite::Row, path: String) -> Result<MethodRow> {
+    let params: String = r.get(4)?;
+    Ok(MethodRow {
+        name: r.get(0)?,
+        nesting: split_nesting(&r.get::<_, String>(1)?),
+        singleton: r.get::<_, i64>(2)? != 0,
+        visibility: r.get(3)?,
+        params: decode_params(&params),
+        via: r.get(5)?,
+        target: r.get(6)?,
+        sig_returns: r.get(7)?,
+        sig_overloads: Vec::new(),
+        path,
+        line: r.get(9)?,
+        col: r.get(10)?,
+        target_pos: match (r.get::<_, Option<u32>>(11)?, r.get::<_, Option<u32>>(12)?) {
+            (Some(line), Some(col)) => Some(crate::core::Pos { line, col }),
+            _ => None,
+        },
+    })
+}
+
 fn placeholders(count: usize) -> String {
     if count == 0 {
         return "NULL".to_string();
@@ -3071,6 +3118,208 @@ mod tests {
         ];
         assert_eq!(decode_params(&encode_params(&params)), params);
         assert!(decode_params("").is_empty());
+    }
+
+    /// A store with a stdlib, two gems and two repos, indexed in an order
+    /// unlike their layering, and the roots one of the repos sees: one stdlib
+    /// file hidden, the other repo left out.
+    fn layered_store() -> (Store, Roots) {
+        let mut store = Store::open_in_memory().unwrap();
+        let module_function = "module M\n  module_function\n  def go; end\nend\n";
+        let reopened = "class W\n  def go; end\n  def go(a); end\n  helper :go, :x\n  helper :z; helper :a\nend\n";
+        let checkouts: [(&str, &[(&str, &str)]); 5] = [
+            ("/app", &[("b.rb", reopened), ("a/z.rb", module_function)]),
+            ("/other", &[("w.rb", reopened)]),
+            (
+                "/gems/zeta",
+                &[("lib/w.rb", reopened), ("lib/m.rb", module_function)],
+            ),
+            (
+                "/gems/alpha",
+                &[("lib/w.rb", "class W\n  def go; end\n  helper :go\nend\n")],
+            ),
+            (
+                "/ruby/lib",
+                &[
+                    ("hidden.rb", reopened),
+                    ("shown.rb", "class W\n  def go; end\nend\n"),
+                ],
+            ),
+        ];
+        for (root, sources) in checkouts {
+            let mut files = Files::new();
+            let mut facts = Vec::new();
+            for (path, src) in sources {
+                let oid = crate::scan::hash_blob(src.as_bytes());
+                if !store.has_blob(&oid).unwrap() && !facts.iter().any(|(o, _)| o == &oid) {
+                    facts.push((oid.clone(), crate::extract::extract(src.as_bytes())));
+                }
+                files.insert(path.to_string(), oid);
+            }
+            store.write(root, &files, facts, 0).unwrap();
+        }
+        store
+            .conn
+            .execute_batch(
+                "UPDATE checkout SET kind = 'gem' WHERE root LIKE '/gems/%';
+                 UPDATE checkout SET kind = 'stdlib' WHERE root = '/ruby/lib';",
+            )
+            .unwrap();
+        let roots = Roots {
+            list: ["/ruby/lib", "/gems/zeta", "/gems/alpha", "/app"]
+                .map(String::from)
+                .to_vec(),
+            hidden: HashSet::from(["/ruby/lib/hidden.rb".to_string()]),
+            stdlib: Some("/ruby/lib".to_string()),
+        };
+        (store, roots)
+    }
+
+    /// `methods_named` is the whole-checkout query's rows for one name, in
+    /// its order: that query, with the name as a filter, is the oracle.
+    #[test]
+    fn named_methods_match_the_layered_sql() {
+        let (store, roots) = layered_store();
+        let count = roots.list.len();
+        let oracle = |name: &str| -> Vec<String> {
+            let mut stmt = store
+                .conn
+                .prepare(&format!(
+                    "SELECT d.name, d.nesting, d.singleton, d.visibility, d.params, d.via,
+                            d.target, d.sig_returns, c.root || '/' || f.path, d.line, d.col,
+                            d.target_line, d.target_col
+                       FROM def d
+                       JOIN file f ON f.blob_id = d.blob_id
+                       JOIN checkout c ON c.id = f.checkout_id
+                      WHERE c.root IN ({}) AND d.kind = 'method' AND d.name = ?{}
+                      ORDER BY {}, f.path, d.line, d.col",
+                    numbered(1, count),
+                    count + 1,
+                    layered(count)
+                ))
+                .unwrap();
+            let values = roots.list.iter().map(String::as_str).chain([name]);
+            let mut rows = stmt.query(rusqlite::params_from_iter(values)).unwrap();
+            let mut found = Vec::new();
+            while let Some(r) = rows.next().unwrap() {
+                let path: String = r.get(8).unwrap();
+                if roots.shows(&path) {
+                    found.push(format!("{:?}", method_row(r, path).unwrap()));
+                }
+            }
+            found
+        };
+        let named = |name: &str| -> Vec<String> {
+            let rows = store.methods_named(&roots, name).unwrap();
+            rows.iter().map(|row| format!("{row:?}")).collect()
+        };
+        let go = named("go");
+        assert_eq!(go, oracle("go"));
+        let paths: Vec<&str> = go
+            .iter()
+            .map(|row| {
+                row.split("path: \"")
+                    .nth(1)
+                    .unwrap()
+                    .split('"')
+                    .next()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "/ruby/lib/shown.rb",
+                "/gems/zeta/lib/m.rb",
+                "/gems/zeta/lib/m.rb",
+                "/gems/zeta/lib/w.rb",
+                "/gems/zeta/lib/w.rb",
+                "/gems/alpha/lib/w.rb",
+                "/app/a/z.rb",
+                "/app/a/z.rb",
+                "/app/b.rb",
+                "/app/b.rb",
+            ],
+            "layered, then by checkout, path and position; hidden and unseen left out"
+        );
+        for name in ["helper", "nothing"] {
+            assert_eq!(named(name), oracle(name), "{name}");
+        }
+        assert!(
+            store
+                .methods_named(&Roots::default(), "go")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// `body_calls` against the `IN`-list query it replaced, as the oracle.
+    #[test]
+    fn body_calls_match_the_sql_they_replaced() {
+        let (store, roots) = layered_store();
+        let oracle = |name: &str| -> Vec<String> {
+            let mut stmt = store
+                .conn
+                .prepare(&format!(
+                    "SELECT DISTINCT c.nesting, c.args, k.root || '/' || f.path, c.line
+                       FROM body_call c
+                       JOIN file f ON f.blob_id = c.blob_id
+                       JOIN checkout k ON k.id = f.checkout_id
+                      WHERE c.name = ?1 AND k.root IN ({})
+                      ORDER BY 3, 4",
+                    numbered(2, roots.list.len())
+                ))
+                .unwrap();
+            let params = std::iter::once(name).chain(roots.list.iter().map(String::as_str));
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(params), |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, u32>(3)?,
+                    ))
+                })
+                .unwrap();
+            let mut seen = HashSet::new();
+            let mut found = Vec::new();
+            for row in rows {
+                let (nesting, args, path, line) = row.unwrap();
+                if roots.shows(&path) && seen.insert((nesting.clone(), args.clone())) {
+                    found.push(format!("{nesting:?} {args:?} {path} {line}"));
+                }
+            }
+            found
+        };
+        let calls = |name: &str| -> Vec<String> {
+            let rows = store.body_calls(&roots, name).unwrap();
+            rows.iter()
+                .map(|c| {
+                    let args: Vec<&str> =
+                        c.args.iter().map(|a| a.as_deref().unwrap_or("")).collect();
+                    format!(
+                        "{:?} {:?} {} {}",
+                        c.nesting.join(";"),
+                        args.join("\t"),
+                        c.path,
+                        c.line
+                    )
+                })
+                .collect()
+        };
+        let helper = calls("helper");
+        assert_eq!(helper, oracle("helper"));
+        assert_eq!(
+            helper,
+            [
+                "\"W\" \"go\\tx\" /app/b.rb 4",
+                "\"W\" \"z\" /app/b.rb 5",
+                "\"W\" \"a\" /app/b.rb 5",
+                "\"W\" \"go\" /gems/alpha/lib/w.rb 3",
+            ],
+            "by path, a line's calls in source order, each scope and arguments once"
+        );
+        assert_eq!(calls("nothing"), oracle("nothing"));
     }
 
     #[test]
