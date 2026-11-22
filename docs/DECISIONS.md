@@ -18973,6 +18973,15 @@ matches a literal `*`, so no two-star shape reached a convention and the
 row went `unreferenced`, lower (the final perf hunt). A one-star shape
 reads as before. Testbed 1023, `the_last_star_of_a_shape_is_the_part_it_spans`.
 
+**Not done: a class name at another star** (hunt 5's g2):
+`"#{t.class}SerializerV#{n}".constantize` is `*SerializerV*`, whose class
+is the first star, and a class shape ending in `*` is never matched, so
+`GroupSerializerV1` stays `unreferenced`, `lower`, with the shape named in
+its caveat. Trying each star needs exceptions to stay selective: a star
+with nothing after it, and one followed only by `::` (`"#{self.class}::#{x}"`
+would credit every class nested in any class). A rule with exceptions is
+not a fix-round change.
+
 ## DEC-875 — `scan::listed` lists a checkout once per process
 
 **Decided.** DEC-845 put every reader beside the index on `scan::listed`,
