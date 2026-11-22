@@ -19267,3 +19267,25 @@ change.
 
 Testbed 1040, 1045 (the `Object.class_eval` form, which already answered
 as DEC-869's `class Object`).
+
+## DEC-892 — A class whose chain ends at BasicObject never reaches a top-level def
+
+**Decided.** DEC-311's `possible` arms — a call whose lookup finds nothing,
+and DEC-868's, one that finds a method behind Object's place — now first
+ask whether the receiver reaches Object: a typed receiver whose ancestors
+reach BasicObject without Object does not, so the call is excluded
+(`different_owner`), or, when the lookup found a module's method, that
+module's. An untyped receiver, and one whose chain does not end at
+BasicObject (a module, a class with an unindexed superclass), may still
+reach it.
+
+**Why.** hunt 5's a1, a2, a7: `class Bare < BasicObject; def go;
+only_bare` raises NameError in Ruby, yet `--dead` credited the top-level
+`only_bare` with the call. `Wrapper < BasicObject; include Tryish` runs
+Tryish's `attempt`, not the top-level one Object comes to first.
+
+**Not `tree.inherits(receiver, "Object")` alone.** A module's chain holds
+no Object, and its methods run on includers that do; asking for Object
+alone would exclude every implicit call in a module.
+
+Testbed 1041.

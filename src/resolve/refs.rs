@@ -483,6 +483,12 @@ fn tier(tree: &Tree, facts: &Facts, call: &Call, path: &str, asked: &Target) -> 
         let private = super::object_defs(tree, &call.name)
             .iter()
             .all(|d| d.visibility == "private");
+        // A class whose chain ends at BasicObject without Object never
+        // reaches Object's methods; one whose chain is unknown may.
+        let reaches_object = receiver_type.as_deref().is_none_or(|fqn| {
+            let has = |a: &str| fqn == a || tree.inherits(fqn, a);
+            !has("BasicObject") || has("Object")
+        });
         return match found {
             _ if explicit && private => here(
                 Tier::Excluded,
@@ -519,7 +525,7 @@ fn tier(tree: &Tree, facts: &Facts, call: &Call, path: &str, asked: &Target) -> 
                 None,
             ),
             // Kernel's is behind Object's place, where the top-level def is.
-            Some(found) if super::behind_object(tree, &found.owner) => here(
+            Some(found) if reaches_object && super::behind_object(tree, &found.owner) => here(
                 Tier::Possible,
                 receiver_type,
                 None,
@@ -535,13 +541,21 @@ fn tier(tree: &Tree, facts: &Facts, call: &Call, path: &str, asked: &Target) -> 
                 0,
                 Some(Ruling::DifferentOwner),
             ),
-            None => here(
+            None if reaches_object => here(
                 Tier::Possible,
                 receiver_type,
                 None,
                 "a method defined at the top level is every object's",
                 1,
                 None,
+            ),
+            None => here(
+                Tier::Excluded,
+                receiver_type,
+                None,
+                "the receiver's class does not inherit from Object, where a top-level method is",
+                0,
+                Some(Ruling::DifferentOwner),
             ),
         };
     }

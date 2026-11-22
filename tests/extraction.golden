@@ -271,6 +271,9 @@ ruby tests/testbed/1040-a-public-top-level-def-takes-a-receiver/app/models/user.
 ruby tests/testbed/1040-a-public-top-level-def-takes-a-receiver/lib/obj.rb 50991ac8bc57a399
 ruby tests/testbed/1040-a-public-top-level-def-takes-a-receiver/lib/pub.rb 49d17fb5d10ee3ed
 ruby tests/testbed/1040-a-public-top-level-def-takes-a-receiver/lib/top.rb 25e621297c756bf6
+ruby tests/testbed/1041-a-basic-object-subclass-never-reaches-a-top-level-def/lib/bare.rb 56636d83ed95a326
+ruby tests/testbed/1041-a-basic-object-subclass-never-reaches-a-top-level-def/lib/top.rb 5f9a4442a1ff7a85
+ruby tests/testbed/1041-a-basic-object-subclass-never-reaches-a-top-level-def/lib/wrapper.rb f9af0e3c0271e13e
 ruby tests/testbed/1042-a-def-on-a-parenthesised-constant/lib/a.rb 5cb1a5a919a652fd
 ruby tests/testbed/1045-object-class-eval-is-one-method-with-a-top-level-def/app/models/user.rb 35069407c78da43a
 ruby tests/testbed/1045-object-class-eval-is-one-method-with-a-top-level-def/lib/top.rb c0c803a451d5f6f6

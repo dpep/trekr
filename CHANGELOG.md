@@ -289,6 +289,11 @@
   `User.new.dual` were excluded as calls of a private method, so `--dead`
   graded the def `unreferenced`, `clear`, while `--refs` at a `class
   Object` def confirmed the call.
+- **`--dead` no longer credits a top-level def with a call in a
+  BasicObject subclass**: `class Bare < BasicObject; def go; only_bare`
+  raises NameError, and `Wrapper < BasicObject; include Tryish` runs
+  Tryish's method, yet each call was a `possible` caller of the top-level
+  def. Such a call is excluded.
 
 ## 0.10.2 — 2026-11-20
 

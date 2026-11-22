@@ -18,6 +18,7 @@
 1022-a-text-reader-reads-a-non-ascii-identifier-whole 2da52fdd5df9c74f
 1023-a-two-star-shape-is-built-from-a-class-by-its-last-star a38e4f52a6beffca
 1040-a-public-top-level-def-takes-a-receiver 7fc0ffe082b0210f
+1041-a-basic-object-subclass-never-reaches-a-top-level-def e0517f5b7b486206
 1042-a-def-on-a-parenthesised-constant e4e2cd7bef0c24f8
 1045-object-class-eval-is-one-method-with-a-top-level-def cb310a3ba5d89fef
 122-a-class-eval-string-is-read-as-code 3977f0a5676a712e

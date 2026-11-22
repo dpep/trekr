@@ -1,0 +1,7 @@
+# A top-level def is Object's. A class whose chain ends at BasicObject
+# without Object never reaches it: the call raises NameError, or runs the
+# module the class mixes in. `--dead` credited the top-level def with
+# such a call, naming a caller that cannot run it.
+dead lib/top.rb #only_bare=unreferenced #attempt=unreferenced
+refs lib/top.rb:1:5 status=resolved possible=0 excluded=1
+refs lib/top.rb:5:5 status=resolved possible=0 excluded=1
