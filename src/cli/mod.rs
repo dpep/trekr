@@ -81,7 +81,10 @@ use std::sync::{Arc, OnceLock, RwLock};
         TREKR_JOBS   parse threads, as --jobs\n  \
         TREKR_NO_INDEX  never index from a query, as --no-index\n  \
         TREKR_RETENTION  how long a file version nothing maps is kept: an age, `0`, or\n               \
-        `never` (default 14d); --gc, --status and the background cleanup read it"
+        `never` (default 14d); --gc, --status and the background cleanup read it\n  \
+        TREKR_LOG    the language server's log (default lsp.log beside the index): a path,\n               \
+        `-` for stderr, or `off`\n  \
+        TREKR_LOG_LEVEL  `debug` adds the wire-level params to that log"
 )]
 struct Cli {
     /// What to look up, dispatched on its shape. `FILE:LINE:COL` and
