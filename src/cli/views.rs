@@ -41,9 +41,9 @@ impl Views {
                 continue;
             };
             let ruby = if path.ends_with(".slim") {
-                crate::extract::slim::slim_ruby(text)
+                crate::extract::slim::slim_ruby(&text)
             } else {
-                text.to_string()
+                text.into_owned()
             };
             // Line by line: a quote a line leaves open is a slip of the
             // reading, and must not swallow the template after it.
@@ -246,12 +246,12 @@ pub(super) fn constant_paths(ruby: &str) -> Vec<String> {
     found
 }
 
-/// A template's text: none for a file that is not UTF-8 or holds a NUL,
-/// which is no template a view renders but a binary with its extension.
-fn template_text(bytes: &[u8]) -> Option<&str> {
-    std::str::from_utf8(bytes)
-        .ok()
-        .filter(|text| !text.contains('\0'))
+/// A template's text, decoded as `--dead Gemfile` decodes it: a byte that is
+/// not UTF-8 reads as U+FFFD rather than leave the view unread. None for a
+/// file holding a NUL, which is no template a view renders but a binary with
+/// its extension.
+fn template_text(bytes: &[u8]) -> Option<std::borrow::Cow<'_, str>> {
+    (!bytes.contains(&0)).then(|| String::from_utf8_lossy(bytes))
 }
 
 /// The identifiers in some Ruby, with a trailing `?` or `!`. A string's
@@ -352,7 +352,11 @@ mod tests {
     #[test]
     fn a_binary_file_is_no_template() {
         assert!(template_text(b"<%= w.title %>").is_some());
-        assert!(template_text(b"<%= w.\xff\xfe %>").is_none());
+        assert_eq!(
+            template_text(b"= w.caf\xe9 + w.title").as_deref(),
+            Some("= w.caf\u{fffd} + w.title"),
+            "a Latin-1 byte leaves the rest of the view read"
+        );
         assert!(template_text(b"<%= w.title %>\0").is_none());
     }
 }

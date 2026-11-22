@@ -25,7 +25,7 @@ impl Texts {
             .into_iter()
             .filter(|path| wanted(path))
             .filter_map(|path| {
-                let text = crate::scan::read_text(root.join(&path)).ok()?;
+                let text = crate::scan::read_lossy(root.join(&path)).ok()?;
                 Some(TextFile::new(path, text))
             })
             .collect();

@@ -1,0 +1,5 @@
+# One byte that is not UTF-8 (a Latin-1 `é`) left a Slim view,
+# or a YAML config, unread by `--dead`'s methods, so a method only it names
+# was `unreferenced`, clear; `--dead Gemfile` read the same Slim lossily.
+# Both read it lossily now.
+dead app Widget#from_slim=unreferenced~show.html.slim Widget#from_yaml=unreferenced~config/hooks.yml:3 Widget#lonely=unreferenced~

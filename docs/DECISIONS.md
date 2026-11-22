@@ -18865,3 +18865,22 @@ only what was indexed); one function, `gem_holes`, says both.
 Tests: `a_git_gem_with_no_checkout_falls_back_to_the_installed_release`,
 `with_no_lockfile_a_gem_whose_git_source_is_not_checked_out_is_the_installed_release`
 (`--status --json`), both red before.
+
+## DEC-872 — The text readers beside the index decode lossily
+
+**Decided.** `--dead`'s methods read a Slim view (and a Jbuilder one, which the index reads too), and a YAML
+config, through `scan::read_lossy` (or `from_utf8_lossy` over the bytes):
+a byte that is not UTF-8 reads as U+FFFD and the rest of the file is
+read. They decoded strictly, so one Latin-1 `é` in a comment left the
+file unread and a method only it named `unreferenced`, clear (hunt 4's
+slim8, latin), while `--dead Gemfile` read the same Slim file lossily.
+`--dead Gemfile`'s config and command files (`dead_gems::texts`) decode
+lossily too, so both modes read the same bytes the same way. A view
+holding a NUL is still no view. Testbed 1021.
+
+**Not done: the index's ERB and Haml.** `erb_ruby` and `haml_ruby` still
+refuse a file that is not UTF-8 (DEC-360), so a Latin-1 ERB view's calls
+are not indexed. Changing that is an extraction change — the store version
+moves, and the testbed input lands a commit earlier — and their output
+keeps the template's byte offsets, which a lossy decode would move; left
+for its own change.

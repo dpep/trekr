@@ -1,0 +1,3 @@
+# Café
+hook:
+  method: from_yaml

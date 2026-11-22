@@ -507,6 +507,18 @@ pub(crate) fn read_text(path: impl AsRef<Path>) -> std::io::Result<String> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
+/// [`read_source`], decoded lossily: a byte that is not UTF-8 reads as
+/// U+FFFD, so one Latin-1 `é` in a view or a YAML file does not leave the
+/// rest of it unread. For the text readers beside the index, which take
+/// words, never offsets.
+pub(crate) fn read_lossy(path: impl AsRef<Path>) -> std::io::Result<String> {
+    let bytes = read_source(path)?;
+    Ok(match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    })
+}
+
 /// More changed files than this in one batch is an operation — a checkout, a
 /// rebase — and is handed to a full index rather than refreshed one by one,
 /// by the language server and a CLI query alike.

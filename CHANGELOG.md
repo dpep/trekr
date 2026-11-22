@@ -76,6 +76,10 @@
 - **`--dead` reads a Slim view's Ruby as Slim 5 splits a line**, as
   `--dead Gemfile` does: an attribute written `href = x` went unread, and
   a `/` comment's `#{}` counted as a name the view writes.
+- **`--dead` reads a Slim view, or a YAML config, holding a
+  byte that is not UTF-8**: one Latin-1 `é` left the whole file unread, so
+  a method only it named was `unreferenced`, `clear`. The byte reads as
+  U+FFFD, as `--dead Gemfile` already read such a view.
 
 - **With no lockfile, `--index` resolves the gems a file the Gemfile
   evals declares** (`eval_gemfile "Gemfile.tools"`), as `--dead Gemfile`
