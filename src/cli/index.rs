@@ -851,14 +851,17 @@ fn plan_gems(
     let (located, resolved_from) = profile::timed(profile, "gem-scan", || {
         crate::gems::for_checkout(repo, stdlib.as_ref())
     });
-    let ruby = match &resolved_from {
-        Some(crate::gems::Resolved::Declared { ruby }) => Some(ruby.clone()),
-        _ => None,
+    let (ruby, unread_evals) = match &resolved_from {
+        Some(crate::gems::Resolved::Declared { ruby, unfollowed }) => {
+            (Some(ruby.clone()), unfollowed.clone())
+        }
+        _ => (None, Vec::new()),
     };
     let mut report = GemReport {
         lockfile: resolved_from == Some(crate::gems::Resolved::Lockfile),
         resolved_from: resolved_from.as_ref().map(crate::gems::Resolved::as_str),
         ruby,
+        unread_evals,
         ruby_not_found: crate::gems::stdlib::named_missing(repo),
         ruby_unmet: stdlib
             .as_ref()
@@ -1289,6 +1292,10 @@ struct GemReport {
     /// nobody installed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     unlocated: Vec<Unlocated>,
+    /// Without a lockfile, the Gemfile's `eval_gemfile`s not followed, whose
+    /// gems are then not indexed (DEC-876).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unread_evals: Vec<crate::gems::bundle::Unfollowed>,
     /// Each gem found, `name version`: exact from a lockfile, trekr's pick
     /// without one.
     picked: Vec<String>,
@@ -1452,7 +1459,10 @@ pub(super) fn cmd_index(
         ),
         Some(_) => {}
     }
-    let holes = !gems.missing.is_empty() || !gems.unlocated.is_empty() || !gems.unread.is_empty();
+    let holes = !gems.missing.is_empty()
+        || !gems.unlocated.is_empty()
+        || !gems.unread.is_empty()
+        || !gems.unread_evals.is_empty();
     if out == Output::Text && (gems.found > 0 || holes) {
         let from_git = match gems.from_git {
             0 => String::new(),
@@ -1496,6 +1506,12 @@ pub(super) fn cmd_index(
                 "  {} with a requirement trekr cannot read, at the highest installed: {}",
                 unread.len(),
                 abridged(&unread)
+            );
+        }
+        for eval in &gems.unread_evals {
+            println!(
+                "  not followed, so its gems are not indexed: {}",
+                eval.said()
             );
         }
         // One line per reason: a monorepo's gems share one checkout.

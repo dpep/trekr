@@ -865,7 +865,11 @@ pub(crate) enum Resolved {
     /// No lockfile: what the gemspecs and Gemfile declare, each at the
     /// highest version installed for one Ruby — `ruby` says which, and how
     /// it was chosen (DEC-134, DEC-152).
-    Declared { ruby: String },
+    Declared {
+        ruby: String,
+        /// The Gemfile's evals not followed (DEC-876).
+        unfollowed: Vec<bundle::Unfollowed>,
+    },
 }
 
 impl Resolved {
@@ -913,7 +917,13 @@ pub(crate) fn for_checkout(
                 }
             };
             match declared::resolve(repo, &dirs, &fallback) {
-                Some(located) => (located, Some(Resolved::Declared { ruby: how })),
+                Some((located, unfollowed)) => (
+                    located,
+                    Some(Resolved::Declared {
+                        ruby: how,
+                        unfollowed,
+                    }),
+                ),
                 None => (Vec::new(), None),
             }
         }

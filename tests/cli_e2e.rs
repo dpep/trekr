@@ -861,6 +861,43 @@ fn with_no_lockfile_a_gem_whose_git_source_is_not_checked_out_is_the_installed_r
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// An `eval_gemfile` trekr cannot follow — a computed path, a missing file —
+/// is said by `--dead Gemfile`, and with no lockfile by `--index` and
+/// `--status`, whose index then lacks its gems; it was skipped silently.
+#[test]
+fn an_eval_gemfile_not_followed_is_said() {
+    let (dir, db) = ruby_scratch("eval-unread");
+    repo(&dir);
+    fs::write(
+        dir.join("Gemfile"),
+        "source \"https://rubygems.org\"\neval_gemfile \"nope.rb\"\n\
+         eval_gemfile ENV.fetch(\"EXTRA\", \"extra.rb\")\n",
+    )
+    .unwrap();
+    commit_all(&dir);
+    let expected = serde_json::json!([
+        {"file": "Gemfile", "eval": "ENV.fetch(\"EXTRA\", \"extra.rb\")", "why": "computed"},
+        {"file": "Gemfile", "eval": "nope.rb", "why": "missing"},
+    ]);
+
+    let index = json(&trekr(&db, &dir, &["--index", "--json"]));
+    assert_eq!(index["gems"]["unread_evals"], expected, "{index}");
+    let status = json(&trekr(&db, &dir, &["--status", "--json"]));
+    assert_eq!(
+        status["checkouts"][0]["gems"]["unread_evals"], expected,
+        "{status}"
+    );
+    let dead = json(&trekr(&db, &dir, &["--dead", "Gemfile", "--json"]));
+    assert_eq!(dead["summary"]["unread_evals"], expected, "{dead}");
+    let text = stdout(&trekr(&db, &dir, &["--dead", "Gemfile"]));
+    assert!(
+        text.contains("`eval_gemfile nope.rb` in Gemfile: no such file"),
+        "{text}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A gem's base class may reach what a subclass in the app defines by a
 /// name no call writes: a drop's `public_send(key)` runs its methods, and a
 /// dashboard's `self.class::ATTRS` reads its constant. `--dead` reads the

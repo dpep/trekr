@@ -1,0 +1,5 @@
+# `eval_gemfile File.expand_path("gems/extra.rb", __dir__)`, the common
+# idiom, and `File.join(__dir__, …)` and `File.expand_path("../x",
+# __FILE__)` were skipped without a word, so their gems were never graded.
+# Each names a file beside the Gemfile, and is followed.
+dead Gemfile extra_kit=unreferenced more_kit=unreferenced last_kit=unreferenced

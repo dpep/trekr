@@ -713,7 +713,13 @@ the file's), `executables`, `test_refs`. A gem line several manifests
 reach is one row (DEC-822). `summary` counts `declared`,
 `referenced` (gems found in use that are not rows: a `test-only` row is
 not one), `transitive`, the rows per tier and per confidence; text lists
-`referenced` with `--explain`.
+`referenced` with `--explain`. `summary.unread_evals` lists each
+`eval_gemfile` not followed, whose gems are not graded: `file` (the one
+writing it), `eval` (as written) and `why` — `computed`, a path trekr
+cannot read without running Ruby (a literal, `File.expand_path(literal,
+__dir__)`, `File.join(__dir__, literal)` and `File.expand_path("../x",
+__FILE__)` are read), or `missing`, no such file; absent when every eval
+was followed. Text says each on a line of its own (DEC-876).
 
 Hand-checked on ten checkouts (mastodon, discourse, rails, sidekiq,
 rubocop, faraday, graphql, flipper, webmock, widget_shop; 508 declared
@@ -800,6 +806,9 @@ was found.
   outside the checkout). Without a lockfile, a git gem with no checkout to
   take is indexed at the installed release that meets its requirements, when
   one is, and listed here too, its `why` saying so (DEC-871).
+- `unread_evals` — without a lockfile, each `eval_gemfile` not followed,
+  as `--dead Gemfile`'s `summary.unread_evals` writes it: its gems are
+  not indexed.
 - `resolved_from` — `lockfile`, or `declared` when there was no
   `Gemfile.lock` and the gemspecs' and Gemfile's dependencies were resolved
   to the highest installed versions instead; absent, no gem was indexed.
@@ -826,8 +835,8 @@ was found.
 
 `trekr --status` shows the checkout you are in (`repo`, `files`, `blobs`,
 `indexed_at` in Unix seconds), its gems counted (`gems: {count, indexed,
-files}`, with `missing` and `unlocated` as `--index` writes them when the
-bundle has a hole, read again as the next index would find it), its Ruby's stdlib (`stdlib: {root, files, hidden}`), how many
+files}`, with `missing`, `unlocated` and `unread_evals` as `--index`
+writes them when the bundle has a hole, read again as the next index would find it), its Ruby's stdlib (`stdlib: {root, files, hidden}`), how many
 other checkouts are indexed (`others`, with `repos`), and `totals` over the
 whole store (`blobs`, `defs`, `const_refs`, `calls`); `--status --all`
 lists every checkout, each with `kind` (`repo`, `gem` or `stdlib`).

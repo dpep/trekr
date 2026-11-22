@@ -56,7 +56,8 @@ pub(super) fn resolve(
     repo: &Path,
     roots: &[PathBuf],
     fallback: &[PathBuf],
-) -> Option<Vec<Located>> {
+) -> Option<(Vec<Located>, Vec<super::bundle::Unfollowed>)> {
+    let mut unfollowed = Vec::new();
     let mut own: HashSet<String> = HashSet::new();
     let mut declared: Vec<Dependency> = Vec::new();
     let mut any = false;
@@ -82,7 +83,9 @@ pub(super) fn resolve(
         }
         let mut files = vec![(path.clone(), source)];
         if is_gemfile {
-            files.extend(super::bundle::evaled(&path, &files[0].1));
+            let (evaled, skipped) = super::bundle::evaled(repo, &path, &files[0].1);
+            files.extend(evaled);
+            unfollowed = skipped;
         }
         for (path, source) in files {
             let file = path.strip_prefix(repo).unwrap_or(&path).to_string_lossy();
@@ -262,7 +265,7 @@ pub(super) fn resolve(
             }
         })
         .collect();
-    Some(located)
+    Some((located, unfollowed))
 }
 
 /// Why nothing installed meets a name's requirements, when they come from
@@ -1091,7 +1094,7 @@ gem "gamma", "~> #{ENV['GAMMA']}"
         .unwrap();
         std::fs::write(repo.join("Gemfile"), "gemspec\ngem 'frame'\n").unwrap();
 
-        let located = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
+        let (located, _) = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
         let versions: Vec<(&str, &str)> = located
             .iter()
             .map(|l| (l.gem.name.as_str(), l.gem.version.as_str()))
@@ -1126,7 +1129,7 @@ gem "gamma", "~> #{ENV['GAMMA']}"
         )
         .unwrap();
 
-        let located = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
+        let (located, _) = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
         let place = |name: &str| &located.iter().find(|l| l.gem.name == name).unwrap().place;
         let Place::Missing(Absence::Conflict(said)) = place("linter") else {
             panic!("{:?}", place("linter"));
@@ -1177,7 +1180,7 @@ gem "gamma", "~> #{ENV['GAMMA']}"
             )
             .unwrap();
 
-            let located = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
+            let (located, _) = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
             let beta = located.iter().find(|l| l.gem.name == "beta").unwrap();
             assert_eq!(beta.gem.version, "5.26.0", "declared {order:?}");
             let _ = std::fs::remove_dir_all(&base);
@@ -1214,7 +1217,7 @@ gem "gamma", "~> #{ENV['GAMMA']}"
         )
         .unwrap();
 
-        let located = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
+        let (located, _) = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
         let by = |name: &str| located.iter().find(|l| l.gem.name == name).unwrap();
         for (name, version) in [("alpha", "1.2.1"), ("beta", "2.0.0")] {
             let gem = by(name);
@@ -1300,7 +1303,7 @@ gem "gamma", "~> #{ENV['GAMMA']}"
         )
         .unwrap();
 
-        let located = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
+        let (located, _) = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
         let got: Vec<(&str, &str, bool)> = located
             .iter()
             .map(|l| {

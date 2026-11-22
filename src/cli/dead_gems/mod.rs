@@ -157,6 +157,10 @@ struct Summary {
     transitive: usize,
     tiers: std::collections::BTreeMap<&'static str, usize>,
     confidence: std::collections::BTreeMap<&'static str, usize>,
+    /// The bundle's `eval_gemfile`s not followed, whose gems are not graded
+    /// (DEC-876).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unread_evals: Vec<crate::gems::bundle::Unfollowed>,
 }
 
 /// What the checkout's code says about one gem: the first use outside the
@@ -274,7 +278,13 @@ pub(super) fn cmd_dead_gems(
     let mut referenced: Vec<Evidence> = Vec::new();
     let mut declared_keys = HashSet::new();
     let mut transitive_by_root = BTreeMap::new();
+    let mut unread_evals: Vec<crate::gems::bundle::Unfollowed> = Vec::new();
     for one in graded {
+        for eval in one.unread_evals {
+            if !unread_evals.contains(&eval) {
+                unread_evals.push(eval);
+            }
+        }
         for row in one.rows {
             if !rows
                 .iter()
@@ -307,6 +317,7 @@ pub(super) fn cmd_dead_gems(
             .into_iter()
             .map(|(name, grade)| (name, count(&|r| r.confidence == grade)))
             .collect(),
+        unread_evals,
     };
     let found = !rows.is_empty();
     if out != Output::Text {
@@ -373,6 +384,12 @@ pub(super) fn cmd_dead_gems(
             false => " (--explain lists how)".to_string(),
         }
     );
+    for eval in &summary.unread_evals {
+        println!(
+            "not followed, so no gem it declares is graded: {}",
+            eval.said()
+        );
+    }
     Ok(exit_on(found))
 }
 
@@ -460,6 +477,7 @@ struct Graded {
     /// Each declaration, as the declaring file's path and the gem's name.
     declared: Vec<(String, String)>,
     transitive: usize,
+    unread_evals: Vec<crate::gems::bundle::Unfollowed>,
 }
 
 /// What each evidence channel reads: the checkout, its index, and which gem
@@ -748,6 +766,7 @@ fn grade(store: &Store, root: &Path, manifest: &Path) -> anyhow::Result<Graded> 
             .map(|(d, file)| (at(file), d.name.clone()))
             .collect(),
         transitive,
+        unread_evals: crate::gems::bundle::unfollowed_evals(root, manifest),
         root: root_str,
     })
 }

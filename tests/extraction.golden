@@ -259,6 +259,11 @@ ruby tests/testbed/1022-a-text-reader-reads-a-non-ascii-identifier-whole/app/mod
 ruby tests/testbed/1022-a-text-reader-reads-a-non-ascii-identifier-whole/app/models/ñu.rb daf866e48d89d76c
 ruby tests/testbed/1023-a-two-star-shape-is-built-from-a-class-by-its-last-star/lib/models.rb 888f7f27b7400ffc
 ruby tests/testbed/1023-a-two-star-shape-is-built-from-a-class-by-its-last-star/lib/notifier/create.rb 26c4558513fdc310
+ruby tests/testbed/1024-an-eval-gemfile-path-built-from-dir-is-followed/Gemfile 4594c27a2b44fbdc
+ruby tests/testbed/1024-an-eval-gemfile-path-built-from-dir-is-followed/app/models/widget.rb c732b49e7a38da14
+ruby tests/testbed/1024-an-eval-gemfile-path-built-from-dir-is-followed/gems/extra.rb 3dc65ee1e0cc77c6
+ruby tests/testbed/1024-an-eval-gemfile-path-built-from-dir-is-followed/gems/last.rb 3dc65ee1e0cc77c6
+ruby tests/testbed/1024-an-eval-gemfile-path-built-from-dir-is-followed/gems/more.rb 3dc65ee1e0cc77c6
 ruby tests/testbed/120-a-method-made-from-an-unnamed-name-is-not-absent/app.rb b1e220695c537f1f
 ruby tests/testbed/121-define-method-over-a-constant-list-defines-each-name/app.rb e7e8d445dc4ad5f0
 ruby tests/testbed/122-a-class-eval-string-is-read-as-code/app.rb fad3b1c5e17ce63b

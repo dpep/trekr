@@ -29,28 +29,90 @@ pub(crate) fn is_engine_gemspec(root: &Path, manifest: &Path) -> bool {
 /// Each file a Gemfile evals (`eval_gemfile "Gemfile.tools"`), and each one
 /// those eval, in the order Bundler reads them, with its source: they
 /// declare the bundle's gems too (DEC-820). Which files a Gemfile evals is
-/// `gemfile::declarations`' to say.
-pub(crate) fn evaled(gemfile: &Path, source: &[u8]) -> Vec<(PathBuf, Vec<u8>)> {
+/// `gemfile::declarations`' to say. Beside them, each eval not followed —
+/// a computed path, or no such file — which is said, never skipped
+/// silently (DEC-876); `root` makes their files relative.
+pub(crate) fn evaled(
+    root: &Path,
+    gemfile: &Path,
+    source: &[u8],
+) -> (Vec<(PathBuf, Vec<u8>)>, Vec<Unfollowed>) {
     let mut found = Vec::new();
+    let mut unfollowed = Vec::new();
     let mut read_once: HashSet<PathBuf> = HashSet::new();
     read_once.insert(std::fs::canonicalize(gemfile).unwrap_or_else(|_| gemfile.to_path_buf()));
-    let evals_of = |file: &Path, source: &[u8]| -> Vec<PathBuf> {
+    let relative = |path: &Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned()
+    };
+    let mut evals_of = |file: &Path, source: &[u8]| -> Vec<(PathBuf, String, String)> {
         let dir = file.parent().unwrap_or(Path::new("."));
-        let evals = gemfile::declarations(source).evals;
-        evals.iter().rev().map(|e| dir.join(e)).collect()
+        let declared = gemfile::declarations(source);
+        unfollowed.extend(declared.unread_evals.into_iter().map(|eval| Unfollowed {
+            file: relative(file),
+            eval,
+            why: "computed",
+        }));
+        declared
+            .evals
+            .into_iter()
+            .rev()
+            .map(|e| (dir.join(&e), relative(file), e))
+            .collect()
     };
     let mut todo = evals_of(gemfile, source);
-    while let Some(file) = todo.pop() {
+    let mut missing = Vec::new();
+    while let Some((file, from, written)) = todo.pop() {
         if !read_once.insert(std::fs::canonicalize(&file).unwrap_or_else(|_| file.clone())) {
             continue;
         }
         let Ok(source) = crate::scan::read_source(&file) else {
+            missing.push(Unfollowed {
+                file: from,
+                eval: written,
+                why: "missing",
+            });
             continue;
         };
         todo.extend(evals_of(&file, &source));
         found.push((file, source));
     }
-    found
+    unfollowed.extend(missing);
+    (found, unfollowed)
+}
+
+/// An `eval_gemfile` not followed: the file that writes it, what it evals
+/// as written, and why — `computed`, a path trekr cannot read without
+/// running Ruby, or `missing`, no such file.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct Unfollowed {
+    pub(crate) file: String,
+    pub(crate) eval: String,
+    pub(crate) why: &'static str,
+}
+
+impl Unfollowed {
+    /// In words: `` `eval_gemfile nope.rb` in Gemfile: no such file ``.
+    pub(crate) fn said(&self) -> String {
+        said(&self.file, &self.eval, self.why)
+    }
+}
+
+/// [`Unfollowed::said`], from its fields as `--json` wrote them.
+pub(crate) fn said(file: &str, eval: &str, why: &str) -> String {
+    let why = match why {
+        "missing" => "no such file",
+        _ => "a computed path trekr does not run",
+    };
+    format!("`eval_gemfile {eval}` in {file}: {why}")
+}
+
+/// The evals of `manifest`'s bundle that are not followed.
+pub(crate) fn unfollowed_evals(root: &Path, manifest: &Path) -> Vec<Unfollowed> {
+    let source = crate::scan::read_source(manifest).unwrap_or_default();
+    evaled(root, manifest, &source).1
 }
 
 /// The path gems inside the checkout (not the checkout itself), each with
@@ -147,7 +209,7 @@ pub(crate) fn declared_in(root: &Path, manifest: &Path) -> Vec<(Declaration, Str
     let mut gemspecs = Vec::new();
     // The manifest, then each file it evals (`eval_gemfile`), in turn.
     let source = crate::scan::read_source(manifest).unwrap_or_default();
-    let evals = evaled(manifest, &source);
+    let (evals, _) = evaled(root, manifest, &source);
     for (file, source) in std::iter::once((manifest.to_path_buf(), source)).chain(evals) {
         let found = gemfile::declarations(&source);
         let dir = file.parent().unwrap_or(root).to_path_buf();

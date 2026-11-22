@@ -123,8 +123,13 @@ pub(super) fn cmd_status(
             let ruby_now = stdlib.as_deref().and_then(|root| {
                 crate::gems::stdlib::for_checkout(Path::new(&checkout.repo), Some(Path::new(root)))
             });
-            let (located, _) =
+            let (located, resolved) =
                 crate::gems::for_checkout(Path::new(&checkout.repo), ruby_now.as_ref());
+            if let Some(crate::gems::Resolved::Declared { unfollowed, .. }) = resolved
+                && !unfollowed.is_empty()
+            {
+                row["gems"]["unread_evals"] = serde_json::to_value(unfollowed)?;
+            }
             let (missing, unlocated) = index::gem_holes(&located, ruby_now.as_ref());
             if !missing.is_empty() {
                 row["gems"]["missing"] = serde_json::to_value(missing)?;
@@ -252,6 +257,14 @@ pub(super) fn cmd_status(
                 .map(str::to_string)
                 .collect()
         };
+        for eval in gems["unread_evals"].as_array().into_iter().flatten() {
+            let field = |key: &str| eval[key].as_str().unwrap_or_default();
+            println!(
+                "{:>32}! not followed, so its gems are not indexed: {}",
+                "",
+                crate::gems::bundle::said(field("file"), field("eval"), field("why"))
+            );
+        }
         let missing = names(&gems["missing"], "");
         if !missing.is_empty() {
             println!(

@@ -18969,3 +18969,27 @@ background pass, which checks the disk has room for a full rewrite.
 
 Test: `gc_that_frees_pages_compacts_the_file_at_once`, red before (the
 file kept every byte).
+
+## DEC-876 — An `eval_gemfile` is followed when its path is the common idiom, and said when not
+
+**Decided.** `gemfile::declarations` reads an `eval_gemfile`'s path from a
+literal, `File.expand_path(literal, __dir__)`, `File.join(__dir__,
+literal)` and `File.expand_path("../x", __FILE__)` (which names `x` beside
+the file): the forms written to mean "the file beside this one". Any other
+argument (a local, `ENV.fetch(…)`) is kept as written in `unread_evals`,
+and `bundle::evaled` says each eval it does not follow — `computed`, or
+`missing` when the file is not there — rather than skip it. `--dead
+Gemfile` lists them in `summary.unread_evals` and a text line each; with
+no lockfile, where the evals declare what is indexed (DEC-847), `--index`
+and `--status` list them in `gems.unread_evals`. With a lockfile the
+lockfile says what is indexed, so the index has nothing to say. Hunt 4's
+eg: `File.expand_path("gf/c.rb", __dir__)` and a missing `nope.rb` were
+both silent, c.rb's gems ungraded.
+
+The forms read are the ones that take no running: `__dir__` is the
+evaling file's directory, and `expand_path("../x", __FILE__)` the same
+directory by another spelling. rspec-rails' `eval_gemfile custom_gemfile
+if File.exist?(custom_gemfile)`, a local, is said as computed.
+
+Tests: testbed 1024 (the three forms graded), `an_eval_gemfile_not_followed_is_said`,
+both red before.

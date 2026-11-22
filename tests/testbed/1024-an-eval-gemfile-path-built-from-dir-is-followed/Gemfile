@@ -1,0 +1,4 @@
+source "https://rubygems.org"
+eval_gemfile File.expand_path("gems/extra.rb", __dir__)
+eval_gemfile File.join(__dir__, "gems/more.rb")
+eval_gemfile File.expand_path("../gems/last.rb", __FILE__)

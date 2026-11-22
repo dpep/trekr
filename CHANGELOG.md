@@ -94,6 +94,12 @@
 - **With no lockfile, `--index` resolves the gems a file the Gemfile
   evals declares** (`eval_gemfile "Gemfile.tools"`), as `--dead Gemfile`
   grades them: they were left out, so nothing of theirs was indexed.
+- **`--dead Gemfile` follows `eval_gemfile File.expand_path("x.rb",
+  __dir__)`**, and `File.join(__dir__, "x.rb")`: the file was skipped and
+  its gems never graded. An eval it cannot follow (a computed path, a
+  missing file) is said, in `summary.unread_evals` and on a line of its
+  own; with no lockfile, `--index` and `--status` say it in
+  `gems.unread_evals`.
 - **With no lockfile, a git gem with no checkout is indexed at its
   installed release**: `gem "hashdiff", git: …` with nothing in
   `bundler/gems` dropped hashdiff, the gemspec's dependency on it too, so

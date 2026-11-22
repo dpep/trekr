@@ -42,12 +42,15 @@ pub(crate) struct Declaration {
 /// What a Gemfile or gemspec declares, in source order. Each `gemspec` (a
 /// Gemfile pulling in a gemspec's dependencies) is the directory it reads,
 /// `.` unless `path:` names another. Each `eval_gemfile` is the file it
-/// reads, as written.
+/// reads, relative to the file evaling it: a literal, or
+/// `File.expand_path(literal, __dir__)` and its kin (`eval_path`). One whose
+/// path is computed otherwise is in `unread_evals`, as written.
 #[derive(Debug, Default)]
 pub(crate) struct Declared {
     pub(crate) gems: Vec<Declaration>,
     pub(crate) gemspecs: Vec<String>,
     pub(crate) evals: Vec<String>,
+    pub(crate) unread_evals: Vec<String>,
 }
 
 pub(crate) fn declarations(source: &[u8]) -> Declared {
@@ -227,12 +230,17 @@ impl<'pr> Visit<'pr> for Reader<'_> {
                 None
             }
             b"eval_gemfile" if node.receiver().is_none() => {
-                if let Some(file) = node
+                if let Some(arg) = node
                     .arguments()
                     .and_then(|args| args.arguments().iter().next())
-                    .and_then(|arg| string(&arg))
                 {
-                    self.found.evals.push(file);
+                    match eval_path(&arg) {
+                        Some(file) => self.found.evals.push(file),
+                        None => self
+                            .found
+                            .unread_evals
+                            .push(String::from_utf8_lossy(arg.location().as_slice()).into_owned()),
+                    }
                 }
                 None
             }
@@ -260,6 +268,36 @@ fn string(node: &Node<'_>) -> Option<String> {
 fn symbol(node: &Node<'_>) -> Option<String> {
     let symbol = node.as_symbol_node()?;
     String::from_utf8(symbol.unescaped().to_vec()).ok()
+}
+
+/// The file an `eval_gemfile` names, relative to the file evaling it: a
+/// literal; `File.expand_path(literal, __dir__)` or `File.join(__dir__,
+/// literal)`, the same; `File.expand_path("../x", __FILE__)`, `x`, as the
+/// path is taken from the file's name. None for anything else.
+fn eval_path(node: &Node<'_>) -> Option<String> {
+    if let Some(literal) = string(node) {
+        return Some(literal);
+    }
+    let call = node.as_call_node()?;
+    let on_file = call
+        .receiver()?
+        .as_constant_read_node()
+        .is_some_and(|c| c.name().as_slice() == b"File");
+    let args: Vec<Node<'_>> = call.arguments()?.arguments().iter().collect();
+    let dir = |node: &Node<'_>| {
+        node.as_call_node().is_some_and(|c| {
+            c.name().as_slice() == b"__dir__" && c.receiver().is_none() && c.arguments().is_none()
+        })
+    };
+    match (call.name().as_slice(), args.as_slice()) {
+        _ if !on_file => None,
+        (b"expand_path", [path, base]) if dir(base) => string(path),
+        (b"expand_path", [path, base]) if base.as_source_file_node().is_some() => {
+            string(path)?.strip_prefix("../").map(str::to_string)
+        }
+        (b"join", [base, path]) if dir(base) => string(path),
+        _ => None,
+    }
 }
 
 /// The names a symbol, string, or a list of them writes.
