@@ -108,8 +108,8 @@ fn write_files(
         profile.skipped += wanted.len() - to_parse.len();
     }
 
-    // Never inside a batch: a gem's rows are few, and the bundle's
-    // transaction is shared.
+    // Never inside a batch: a bundle decides for all its gems at once
+    // (`index_bundle`).
     let bulk = !part
         && standalone
         && known
@@ -1078,7 +1078,7 @@ fn index_bundle(
     // One path per unknown blob, in gem order: a blob two gems share is
     // parsed for the first and known by the time the second is written.
     let mut to_parse: Vec<(usize, Oid, PathBuf)> = Vec::new();
-    {
+    let bulk = {
         // Inside the bundle's transaction (`gem_batch`): under the lock.
         let known = known_now(store, known, profile)?;
         let mut seen: HashSet<&Oid> = HashSet::new();
@@ -1097,46 +1097,57 @@ fn index_bundle(
                 profile.skipped += wanted.len() - parsed;
             }
         }
-    }
+        // A first index's bundle is about half of what it writes (DEC-884).
+        bulk_load(to_parse.len(), known.oids.len())
+    };
 
     // Parsed a chunk at a time on the pool, in order, while this thread
     // writes the chunk before: each gem's facts arrive together and in turn.
     let mut received = Received::new(profile.is_some());
     let (send, parsed) =
         std::sync::mpsc::sync_channel::<(usize, Oid, extract::Parsed)>(BUNDLE_CHUNK);
-    let (indexed, parse_done) = std::thread::scope(|scope| {
-        let parsing = scope.spawn(move || {
-            for chunk in to_parse.chunks(BUNDLE_CHUNK) {
-                let parsed: Vec<_> = pool.install(|| {
-                    chunk
-                        .par_iter()
-                        .filter_map(|(at, oid, path)| Some((*at, oid.clone(), parse_file(path)?)))
-                        .collect()
-                });
-                for item in parsed {
-                    // The writer failed and let go; its error is the answer.
-                    if send.send(item).is_err() {
-                        return std::time::Instant::now();
+    let write = |store: &mut Store| {
+        std::thread::scope(|scope| {
+            let parsing = scope.spawn(move || {
+                for chunk in to_parse.chunks(BUNDLE_CHUNK) {
+                    let parsed: Vec<_> = pool.install(|| {
+                        chunk
+                            .par_iter()
+                            .filter_map(|(at, oid, path)| {
+                                Some((*at, oid.clone(), parse_file(path)?))
+                            })
+                            .collect()
+                    });
+                    for item in parsed {
+                        // The writer failed and let go; its error is the answer.
+                        if send.send(item).is_err() {
+                            return std::time::Instant::now();
+                        }
                     }
                 }
-            }
-            std::time::Instant::now()
-        });
-        let mut parsed = parsed.into_iter().peekable();
-        let written: rusqlite::Result<Vec<_>> = walked
-            .iter()
-            .enumerate()
-            .map(|(at, (root, files))| {
-                let facts = std::iter::from_fn(|| parsed.next_if(|(gem, _, _)| *gem == at))
-                    .map(|(_, oid, p)| received.take(oid, p));
-                store.write(&root.to_string_lossy(), files, facts, 0)
-            })
-            .collect();
-        // A write that failed lets go of the rest, and the parse stops.
-        drop(parsed);
-        (written, parsing.join().expect("the parse does not panic"))
-    });
-    let indexed = indexed?;
+                std::time::Instant::now()
+            });
+            let mut parsed = parsed.into_iter().peekable();
+            let written: rusqlite::Result<Vec<_>> = walked
+                .iter()
+                .enumerate()
+                .map(|(at, (root, files))| {
+                    let facts = std::iter::from_fn(|| parsed.next_if(|(gem, _, _)| *gem == at))
+                        .map(|(_, oid, p)| received.take(oid, p));
+                    store.write(&root.to_string_lossy(), files, facts, 0)
+                })
+                .collect();
+            // A write that failed lets go of the rest, and the parse stops.
+            drop(parsed);
+            let parse_done = parsing.join().expect("the parse does not panic");
+            written.map(|written| (written, parse_done))
+        })
+    };
+    let (indexed, parse_done) = if bulk {
+        store.in_bulk(write)?
+    } else {
+        write(store)?
+    };
     received.finish(store, profile, known, parse_done);
     Ok(indexed)
 }

@@ -709,9 +709,7 @@ impl Store {
             ..Indexed::default()
         };
         if bulk {
-            for (name, _) in schema::BULK_INDEXES {
-                tx.execute_batch(&format!("DROP INDEX IF EXISTS {name};"))?;
-            }
+            drop_fact_indexes(&tx)?;
         }
 
         for (oid, f) in facts {
@@ -723,14 +721,8 @@ impl Store {
             insert_facts(&tx, oid, f)?;
         }
         if bulk {
-            // The sort spills to disk: `temp_store` is MEMORY for queries, and
-            // there a 30× monorepo's sort held 1.5 GB.
             let started = std::time::Instant::now();
-            tx.execute_batch("PRAGMA temp_store=FILE;")?;
-            for (_, create) in schema::BULK_INDEXES {
-                tx.execute_batch(create)?;
-            }
-            tx.execute_batch("PRAGMA temp_store=MEMORY;")?;
+            rebuild_fact_indexes(&tx)?;
             self.timing.rebuild += started.elapsed();
         }
         let map_started = std::time::Instant::now();
@@ -880,6 +872,24 @@ impl Store {
         tx.commit()?;
         self.timing.map += map_started.elapsed();
         Ok(counts)
+    }
+
+    /// `write_bulk`'s drop and rebuild around several writes: a bundle's
+    /// gems, loaded in its one transaction (DEC-884). The transaction is
+    /// what makes it safe, as the savepoint is for `write_bulk`: a reader
+    /// never sees the store without its indexes, and a load that fails
+    /// rolls the drop back with everything else.
+    pub(crate) fn in_bulk<T, E: From<rusqlite::Error>>(
+        &mut self,
+        load: impl FnOnce(&mut Store) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E> {
+        assert!(!self.autocommit(), "a bulk load runs inside a transaction");
+        drop_fact_indexes(&self.conn)?;
+        let loaded = load(self)?;
+        let started = std::time::Instant::now();
+        rebuild_fact_indexes(&self.conn)?;
+        self.timing.rebuild += started.elapsed();
+        Ok(loaded)
     }
 
     /// Is this exactly the map already stored for `root`? The same test
@@ -2839,6 +2849,25 @@ fn shown(roots: &Roots, rows: impl Iterator<Item = Result<EdgeRow>>) -> Result<V
     Ok(kept)
 }
 
+/// The fact tables' secondary indexes, dropped for a bulk load (DEC-057).
+fn drop_fact_indexes(conn: &Connection) -> Result<()> {
+    for (name, _) in schema::BULK_INDEXES {
+        conn.execute_batch(&format!("DROP INDEX IF EXISTS {name};"))?;
+    }
+    Ok(())
+}
+
+/// The fact indexes, rebuilt by sorting after a bulk load.
+fn rebuild_fact_indexes(conn: &Connection) -> Result<()> {
+    // The sort spills to disk: `temp_store` is MEMORY for queries, and
+    // there a 30× monorepo's sort held 1.5 GB.
+    conn.execute_batch("PRAGMA temp_store=FILE;")?;
+    for (_, create) in schema::BULK_INDEXES {
+        conn.execute_batch(create)?;
+    }
+    conn.execute_batch("PRAGMA temp_store=MEMORY;")
+}
+
 /// `?first, …` for `count` parameters, numbered so that a query can name
 /// one of them again.
 fn numbered(first: usize, count: usize) -> String {
@@ -3589,6 +3618,48 @@ mod tests {
         assert!(outcome.is_err());
         assert_eq!((index_names(&store), store.totals().unwrap().defs), before);
         assert!(index_names(&store).contains(&"call_name_name".to_string()));
+    }
+
+    /// A bundle loaded in bulk, in its one transaction, leaves what its
+    /// plain writes do; one that fails part way keeps the indexes.
+    #[test]
+    fn a_bundle_loaded_in_bulk_leaves_what_plain_writes_do() {
+        let gems = [
+            ("/gem1", "class G\n  def go; x(1); end\nend\n"),
+            ("/gem2", "module H; Y; end\n"),
+        ];
+        let load = |store: &mut Store| {
+            for (root, src) in gems {
+                let (files, facts) = one_file(src);
+                store.write(root, &files, facts, 0)?;
+            }
+            Ok::<(), rusqlite::Error>(())
+        };
+        let mut plain = Store::open_in_memory().unwrap();
+        plain.batch(load).unwrap();
+        let mut bulk = Store::open_in_memory().unwrap();
+        bulk.batch(|store| store.in_bulk(load)).unwrap();
+        assert_eq!(index_names(&plain), index_names(&bulk));
+        let t = |s: &Store| s.totals().unwrap();
+        assert_eq!(
+            (t(&plain).defs, t(&plain).calls, t(&plain).const_refs),
+            (t(&bulk).defs, t(&bulk).calls, t(&bulk).const_refs)
+        );
+
+        let failed = bulk.batch(|store| {
+            store.in_bulk(|store| {
+                let (files, facts) = one_file("class Z\nend\n");
+                store.write("/gem3", &files, facts, 0)?;
+                Err::<(), _>(rusqlite::Error::InvalidQuery)
+            })
+        });
+        assert!(failed.is_err());
+        assert_eq!(
+            index_names(&bulk),
+            index_names(&plain),
+            "the drop rolled back"
+        );
+        assert!(!bulk.has_checkout("/gem3").unwrap());
     }
 
     #[test]

@@ -14,7 +14,7 @@ belongs to:
 | area | DEC- |
 | --- | --- |
 | Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651, 873, 878, 882 |
-| Indexing and freshness | 014, 035, 041, 043, 046, 047, 048, 049, 055, 066, 139, 171, 195, 232, 320, 400, 500, 501, 512 |
+| Indexing and freshness | 014, 035, 041, 043, 046, 047, 048, 049, 055, 066, 139, 171, 195, 232, 320, 400, 500, 501, 512, 884 |
 | Extraction: macros, made methods, schema | 022, 033, 069, 070, 085, 086, 094, 110, 111, 130, 131, 132, 160, 161, 162, 163, 164, 212, 310, 312, 480, 561, 643, 645, 710, 711, 712, 740, 741, 883 |
 | Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841, 871 |
 | Resolve: the receiver ladder, confidence, residue | 008, 010, 011, 019, 020, 027, 028, 031, 068, 071, 077, 081, 082, 089, 093, 112, 116, 126, 127, 133, 136, 137, 140, 165, 166, 172, 211, 213, 214, 260, 261, 280, 311, 314, 340, 341, 342, 350, 351, 380, 390, 391, 392, 401, 440, 441, 442, 444, 445, 541, 795, 796, 797, 798, 825, 826, 827, 828, 837, 868, 869, 872 |
@@ -3335,7 +3335,7 @@ agent gets exactly `referenceLimit` locations with no sign they were cut.
 
 ## DEC-057 — A load that doubles the store rebuilds the fact indexes by sorting
 
-*Revisited by DEC-234:* a load of half the store rebuilds them.
+*Revisited by DEC-234:* a load of half the store rebuilds them. *Revisited by DEC-884:* and so does a bundle's gems' load, by the same rule.
 
 **Decided.** When an index is about to parse more blobs than the store already
 knows — a first index, above all — `Store::write_bulk` drops the fact tables'
@@ -19072,3 +19072,40 @@ extraction golden is unchanged, and so is the store's logical content
 (every fact table by oid, the maps, checkouts, gem and default-gem rows,
 signatures, the index list) after a cold index of rails, and of discourse
 and rails into one store.
+
+## DEC-884 — A bundle whose new blobs are half the store loads in bulk
+
+**Decided.** `index_bundle` applies DEC-234's rule (`bulk_load`) to the
+bundle as a whole: when the gems' new blobs come to half the blobs the
+store holds, the fact indexes are dropped before the gems are written and
+rebuilt by sorting after them (`Store::in_bulk`), inside the bundle's one
+transaction (DEC-041). That transaction is DEC-057's safety argument
+unchanged: no reader sees the store without its indexes, and a load that
+fails rolls the drop back. `write_bulk` and `in_bulk` share the drop and
+the rebuild. The rebuild comes before `set_gems_used` and
+`hidden_default_gems`, which read `def` by name.
+
+DEC-057 left gems out as "each is small", but a first index writes the
+checkout and then the rest of the bundle in a batch of its own, and on
+discourse that batch is 10.9k blobs into a store of 11.6k: about half of
+all rows, inserted one by one into indexed tables, at about 3× a checkout
+row's cost (round 2's profile).
+
+Release builds, cold `--index`, the store wiped before each run, the two
+builds back to back with their order alternating, 8 rounds:
+
+| corpus (load) | wall, best | wall, median of paired differences | instructions | max RSS |
+| --- | ---: | ---: | ---: | ---: |
+| rails (8–11) | 3.08 → 2.90 s | −0.27 s, faster in 8 of 8 | 57.2 → 56.2 G (best) | −13 MB (median) |
+| discourse (7–11) | 4.67 → 4.51 s | −0.06 s, faster in 4 of 8 | 98.7 → 98.3 G (best) | noise |
+
+Round 2's probe measured discourse 4.55 → 4.25 s and 460 → 410 MB; at
+this load neither reproduced beyond the table's numbers. The rebuild
+sorts the whole store, checkout included, so on discourse it costs about
+what the inserts it saves did. Kept for rails' clear gain, at no cost to
+discourse. The store's logical content is identical after a cold index of
+each corpus, and of both into one store; the DEC-882 battery's outputs
+are byte-identical to the base build.
+
+Test: `a_bundle_loaded_in_bulk_leaves_what_plain_writes_do`, which also
+fails one part way and finds the indexes rolled back.
