@@ -13,7 +13,7 @@ belongs to:
 
 | area | DEC- |
 | --- | --- |
-| Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651 |
+| Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651, 873 |
 | Indexing and freshness | 014, 035, 041, 043, 046, 047, 048, 049, 055, 066, 139, 171, 195, 232, 320, 400, 500, 501, 512 |
 | Extraction: macros, made methods, schema | 022, 033, 069, 070, 085, 086, 094, 110, 111, 130, 131, 132, 160, 161, 162, 163, 164, 212, 310, 312, 480, 561, 643, 645, 710, 711, 712, 740, 741 |
 | Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653, 761, 790, 840, 841 |
@@ -18684,3 +18684,15 @@ caught it).
 Test: `parked_references_are_searched_again_only_when_the_index_is_whole`
 (ten parked, a hover answered ahead of them, at most two searches each:
 when asked, and when whole).
+
+## DEC-873 — A body's calls come back in path order
+
+**Decided.** `Store::body_calls` orders its rows by path and line. It was
+`SELECT DISTINCT` with no order, so its rows followed blob ids, which
+follow the parallel index's finish order; the macro callers built from it,
+and so the first exposer `views::exposed_receiver` picks, varied between
+fresh indexes of one checkout. Testbed 600's flip.
+
+**Measured:** eight fresh indexes of testbed 600's checkout, each asked
+its eight `--def`s and three `--refs`: two distinct answer sets before
+(six and two), one after (all eight).

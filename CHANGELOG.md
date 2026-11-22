@@ -221,6 +221,8 @@
   its owner `Object`, and asking `--refs` about that owner answered
   `no_such_method`, exit 1. It lists the def's callers, and so does
   `--refs` at the def itself, which exited 64; the card answers too.
+- **Answers that rest on `helper_method` and other class-body macros no
+  longer vary between fresh indexes** of the same checkout.
 
 ## 0.10.2 — 2026-11-20
 

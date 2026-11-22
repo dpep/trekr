@@ -1382,7 +1382,9 @@ impl Store {
                FROM body_call c
                JOIN file f ON f.blob_id = c.blob_id
                JOIN checkout k ON k.id = f.checkout_id
-              WHERE c.name = ?1 AND k.root IN ({})",
+              WHERE c.name = ?1 AND k.root IN ({})
+              -- Not blob order, which follows the parallel index's finish.
+              ORDER BY 3, 4",
             numbered(2, roots.list.len())
         ))?;
         let params = std::iter::once(name.to_string()).chain(roots.list.iter().cloned());
