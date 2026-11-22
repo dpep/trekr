@@ -18918,3 +18918,31 @@ d108f331 replaced the cut with `strip_suffix("::*Assignment")`, which never
 matches a literal `*`, so no two-star shape reached a convention and the
 row went `unreferenced`, lower (the final perf hunt). A one-star shape
 reads as before. Testbed 1023, `the_last_star_of_a_shape_is_the_part_it_spans`.
+
+## DEC-875 — `scan::listed` lists a checkout once per process
+
+**Decided.** DEC-845 put every reader beside the index on `scan::listed`,
+each with its own `git ls-files -c -o --exclude-standard`, and an untracked
+listing costs git a walk of the untracked tree every time: `--dead` ran it
+four times (views, config, the texts, routes), `--dead Gemfile` twice
+(scripts, texts). hunt 4's huge, 36k untracked files, took a warm
+`--dead app/models` from 0.36 s to 1.0–1.2 s. git now lists the whole
+checkout once per process and root, and each call filters that listing in
+memory by its pathspecs, matched as `ls-files` matches them with no magic
+(`*` crosses `/`; a literal spec names a path or a directory above it).
+Only CLI commands call it; a resident process would hold a stale listing,
+so one that ever does must not.
+
+Warm wall time, median of 7 alternating runs, the same build with and
+without the change (output byte-identical each time):
+
+| checkout | command | before | after |
+| --- | --- | --- | --- |
+| hunt4-rd-huge | `--dead app/models --json` | 0.92 s | 0.44 s |
+| hunt4-rd-huge | `--dead Gemfile --json` | 0.84 s | 0.59 s |
+| discourse | `--dead app/models --json` | 6.3 s | 6.2 s |
+
+discourse's runs spread 1.7–8.8 s on a loaded machine either way: no
+claim there beyond byte-identity. Test:
+`a_pathspec_matches_as_git_matches_it`, and the testbed's untracked case
+1010 through the cache.

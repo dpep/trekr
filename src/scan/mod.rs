@@ -14,7 +14,7 @@ pub(crate) mod near;
 use crate::core::Oid;
 use anyhow::Result;
 use sha1::{Digest, Sha1};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -704,16 +704,88 @@ fn admits(root: &Path, relative: &str, gits: Option<&Gits>) -> Result<Option<Str
 /// file), relative and sorted, by the rule [`scan`] lists its own by:
 /// tracked, and untracked but not ignored. For the readers beside the
 /// index, of files it does not read; empty when git cannot list them.
+///
+/// git lists the whole checkout once per process and root, and each call
+/// filters it: a `--dead` reads views, config, routes and scripts, and an
+/// untracked tree costs git its walk on every listing (DEC-875). Only CLI
+/// commands call this; a resident process would see a stale listing.
 pub(crate) fn listed(root: &Path, globs: &[&str]) -> Vec<String> {
-    let mut args = vec!["ls-files", "-c", "-o", "--exclude-standard", "-z", "--"];
-    args.extend(globs);
-    let Ok(out) = git(root, &args) else {
-        return Vec::new();
+    let all = listed_all(root);
+    match globs {
+        [] => all.to_vec(),
+        globs => all
+            .iter()
+            .filter(|path| globs.iter().any(|spec| pathspec_matches(spec, path)))
+            .cloned()
+            .collect(),
+    }
+}
+
+/// Every file [`listed`] may name under `root`, listed by git once.
+fn listed_all(root: &Path) -> std::sync::Arc<Vec<String>> {
+    type Listings = HashMap<PathBuf, std::sync::Arc<Vec<String>>>;
+    static LISTED: std::sync::OnceLock<std::sync::Mutex<Listings>> = std::sync::OnceLock::new();
+    let mut listings = LISTED
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(known) = listings.get(root) {
+        return known.clone();
+    }
+    let args = ["ls-files", "-c", "-o", "--exclude-standard", "-z"];
+    let paths = match git(root, &args) {
+        Ok(out) => {
+            let mut paths = parse_paths(&out);
+            paths.sort();
+            paths.dedup();
+            paths
+        }
+        Err(_) => Vec::new(),
     };
-    let mut paths = parse_paths(&out);
-    paths.sort();
-    paths.dedup();
+    let paths = std::sync::Arc::new(paths);
+    listings.insert(root.to_path_buf(), paths.clone());
     paths
+}
+
+/// Does `path` match a git pathspec as `ls-files` reads one (no magic)? A
+/// spec with a wildcard is matched whole, `*` crossing `/` as git's does; a
+/// literal one names the path or a directory above it.
+fn pathspec_matches(spec: &str, path: &str) -> bool {
+    if !spec.contains(['*', '?', '[']) {
+        return path == spec
+            || path
+                .strip_prefix(spec)
+                .is_some_and(|rest| rest.starts_with('/') || spec.ends_with('/'));
+    }
+    wildcard(spec.as_bytes(), path.as_bytes())
+}
+
+/// `*` any run of bytes, `?` any one; nothing else is special. The specs
+/// [`listed`]'s callers pass use no `[` class.
+fn wildcard(spec: &[u8], text: &[u8]) -> bool {
+    let (mut s, mut t) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while t < text.len() {
+        match spec.get(s) {
+            Some(b'*') => {
+                star = Some((s, t));
+                s += 1;
+            }
+            Some(&c) if c == b'?' || c == text[t] => {
+                s += 1;
+                t += 1;
+            }
+            _ => match star {
+                Some((at, from)) => {
+                    s = at + 1;
+                    t = from + 1;
+                    star = Some((at, from + 1));
+                }
+                None => return false,
+            },
+        }
+    }
+    spec[s..].iter().all(|&c| c == b'*')
 }
 
 /// How long git is given to say whether the index walk reads one file before
@@ -940,6 +1012,28 @@ mod tests {
         git(&["add", "Gemfile", ".gitignore"]);
         assert_eq!(listed(&dir, &[]), [".gitignore", "Dangerfile", "Gemfile"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The specs `--dead`'s readers pass, matched as `git ls-files -- spec`
+    /// matches them.
+    #[test]
+    fn a_pathspec_matches_as_git_matches_it() {
+        assert!(pathspec_matches("*.slim", "app/views/a.html.slim"));
+        assert!(pathspec_matches("*.slim", "a.slim"));
+        assert!(!pathspec_matches("*.slim", "a.slim.bak"));
+        assert!(pathspec_matches("*.yml", "config/x.yml"));
+        assert!(pathspec_matches("config/routes.rb", "config/routes.rb"));
+        assert!(!pathspec_matches(
+            "config/routes.rb",
+            "engines/config/routes.rb"
+        ));
+        assert!(pathspec_matches(
+            "*/config/routes.rb",
+            "engines/a/config/routes.rb"
+        ));
+        assert!(!pathspec_matches("*/config/routes.rb", "config/routes.rb"));
+        assert!(pathspec_matches("app", "app/x.rb"));
+        assert!(!pathspec_matches("app", "apps/x.rb"));
     }
 
     #[test]
