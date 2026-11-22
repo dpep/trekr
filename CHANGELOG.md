@@ -4,300 +4,170 @@
 
 ### Added
 
-- **`trekr --dead Gemfile` grades the gems a Gemfile, `gems.rb` or
-  gemspec at the checkout's root declares**, one row per `gem` line
-  (`kind: gem`): `unreferenced` when nothing in the checkout names a
-  constant the gem owns, requires one of its files or calls a method of a
-  module of its own — Builder, Arbre, Jb and Slim views, Thor files,
-  Capistrano tasks and any extensionless file that parses as Ruby code,
-  not bare words (`Dangerfile`, `Vagrantfile`, `Fastfile`) included, untracked files
-  too, and a path gem inside the checkout
-  graded as a gem; `test-only` when only tests use a default-group gem;
-  `convention-only` when a config (an adapter in `database.yml`, a
-  `.rubocop.yml` plugin), a command line (Procfile, CI, lefthook), a
-  symbol naming a plugin (`provider :saml`), or another used gem's
-  `require` loads it by name. A Railtie, a method defined on a class it
-  does not own, a command it installs, a plugin's name or the development
-  group grade it `lower`. A gem only the lockfile names is never a row. A
-  lockfile, a second bundle (`Gemfile.next`, `gemfiles/*.gemfile`), or a
-  Gemfile in a subdirectory is refused with exit 64; an engine's gemspec
-  that is a path gem of the root bundle is graded, and so is a file the
-  root Gemfile reads with `eval_gemfile`, whose gems `--dead Gemfile`
-  grades too, named from the checkout wherever the file sits. An eval's
-  path is read from a literal, `File.expand_path("x.rb", __dir__)` or
-  `File.join(__dir__, "x.rb")`; one it cannot follow (a computed path, a
-  missing file) is said, in `summary.unread_evals` and on a line of its
-  own.
-  `--explain` lists each gem found in use and the first evidence;
-  `--json` carries it as `referenced`.
-
+- **`trekr --dead Gemfile` grades the gems a root Gemfile, `gems.rb` or
+  gemspec declares**, one row per `gem` line (`kind: gem`). A gem is
+  `unreferenced` when nothing in the checkout names a constant it owns,
+  requires its files or calls a method of its own modules — views
+  (Builder, Arbre, Jb, Slim), Thor files, Capistrano tasks, extensionless
+  Ruby files (`Dangerfile`, `Fastfile`), untracked files and in-checkout
+  path gems included. It is `test-only` when only tests use a
+  default-group gem, and `convention-only` when a config
+  (`database.yml`'s adapter, a `.rubocop.yml` plugin), a command line
+  (Procfile, CI, lefthook), a plugin symbol (`provider :saml`) or another
+  used gem's `require` loads it by name. A Railtie, a method defined on a
+  class the gem does not own, a command it installs, a plugin's name or
+  the development group grades it `lower`. A gem only the lockfile names
+  is never a row.
+  - Also read: an engine's gemspec that is a path gem of the root bundle,
+    and each file the Gemfile `eval_gemfile`s, named from the checkout.
+    An eval's path is read from a literal, `File.expand_path("x.rb",
+    __dir__)` or `File.join(__dir__, "x.rb")`; one it cannot follow (a
+    computed path, a missing file) is listed in `summary.unread_evals`
+    and on a line of its own.
+  - Refused with exit 64: a lockfile, a second bundle (`Gemfile.next`,
+    `gemfiles/*.gemfile`), a Gemfile in a subdirectory.
+  - `--explain` lists each gem in use with its first evidence; `--json`
+    carries it as `referenced`.
 - **`--dead` names the candidate whose deletion frees a method**: a
-  `single-caller` row whose one call is written in a `clear`
-  `unreferenced` or `test-only` method (the innermost `def` around the
-  call, of every `def` in scope), and which is `clear` itself
-  with no `super` from an override or symbol besides, carries
-  `cascaded_from` (`name`, `path`, `line`, `tier`), and its
-  reason says "its caller, build, is itself unreferenced". Delete the
-  root first. One step only: a method freed through another candidate, or
-  two that call only each other, carry none; run `--dead` again after
-  deleting.
-- **`--dead` lists a `test-only` method's tests**: the row carries
-  `test_sites`, each call, symbol or `super` a test writes, with the
-  example and the innermost group written around it.
+  `clear` `single-caller` row whose one call sits in a `clear`
+  `unreferenced` or `test-only` method, with no `super` or symbol besides,
+  carries `cascaded_from` (`name`, `path`, `line`, `tier`) and says "its
+  caller, build, is itself unreferenced". Delete the root first, then run
+  `--dead` again for the next step.
+- **`--dead` lists a `test-only` method's tests** in `test_sites`: each
+  call, symbol or `super` a test writes, with its example and innermost
+  group.
 
 ### Changed
 
+- **The store moves to version 78**: the first run after upgrading
+  re-indexes each checkout, once.
+- **Building the tree is faster**: placing class macros' mixins no longer
+  loads every `initialize` nor rescans each class's concerns, so a
+  `--def` or `--ancestors` that needs the tree, and the language server's
+  first answer, shed most of that build on a large app.
+- **`--dead` and `--refs` spend less CPU**: about a quarter fewer
+  instructions for `--dead Gemfile` on rails, a sixth fewer for `--dead`
+  and `--refs` on a large app.
+- **Lower peak memory**: `--dead` on a large app peaks about 15 % lower
+  (discourse 1.50–1.55 → 1.26–1.30 GB), the language server holds about a
+  fifth less after references (169 → 138 MB), and a cold `--index` of
+  rails is about 0.2 s faster (DEC-884..887).
 - **`--usage` counts each row under the trekr that made it**: `--json`
-  rows carry `version` (`+dev` for a cargo build, `""` for counts from
-  before), and the summary ends with a `trekr versions:` line. `--dead` on
-  a bundle file counts as `dead gems`, `--status --all` as `status all`,
-  and `--older-than` and `--jobs` are counted when given.
-  The counts file is migrated in place on first use; nothing to do.
-- **A query that builds the tree no longer loads every `initialize` to
-  place class macros' mixins**: on discourse a tree-needing `--def` or
-  `--ancestors` sheds most of its time.
-- **Building the tree is faster**: placing class macros' mixins no
-  longer loads every `initialize`, nor rescans each class's concerns, so
-  a `--def` or `--ancestors` that needs the tree, and the language
-  server's first answer, shed most of that build on a large app.
-- **`--dead` and `--refs` spend less CPU**: methods are looked up by
-  name without binding every gem's root, and call names are read without
-  copying them. About a quarter fewer instructions for `--dead Gemfile`
-  on rails, a sixth fewer for `--dead` and `--refs` on a large app.
+  rows carry `version` (`+dev` for a cargo build, `""` for older counts),
+  and the summary ends with a `trekr versions:` line. `--dead` on a bundle
+  file counts as `dead gems`, `--status --all` as `status all`, and
+  `--older-than` and `--jobs` are counted when given. The counts file
+  migrates in place.
 
 ### Removed
 
-- **`trekr --gc --vacuum` and `--retention` are gone.** Compaction is
-  automatic: the background cleanup hands free pages back, and a `--gc`
-  that frees pages inside the index hands them back before it reports
-  once they come to 32 MB, its `reclaimed_bytes` counting the shrink, so
-  there is nothing to run. For one `--gc` or `--status` with another retention, set
-  `TREKR_RETENTION` (`TREKR_RETENTION=0 trekr --gc`). `--gc --json` no
-  longer carries `vacuumed`. Either flag is now an unknown-flag error
-  (exit 64).
+- **`trekr --gc --vacuum` and `--retention` are gone** (exit 64 as unknown
+  flags). Compaction is automatic: the background cleanup returns free
+  pages, and a `--gc` that frees 32 MB or more compacts before it reports,
+  counted in `reclaimed_bytes`. For another retention on one `--gc` or
+  `--status`, set `TREKR_RETENTION` (`TREKR_RETENTION=0 trekr --gc`).
+  `--gc --json` drops `vacuumed`.
 
 ### Fixed
 
 - **`--dead` reads the untracked files the index reads**: a view, YAML
-  config, script or `config/routes.rb` git had never seen was not read
-  beside the index, so a method only it named stayed `unreferenced`,
-  `clear`, and an untracked routes file was "no routes file read".
-
-- **`--dead` reads a Slim view's Ruby as Slim 5 splits a line**, as
-  `--dead Gemfile` does: an attribute written `href = x` went unread, and
-  a `/` comment's `#{}` counted as a name the view writes.
-- **`--dead` reads a Slim view, or a YAML config, holding a
-  byte that is not UTF-8**: one Latin-1 `é` left the whole file unread, so
-  a method only it named was `unreferenced`, `clear`. The byte reads as
-  U+FFFD, as `--dead Gemfile` already read such a view.
-- **`--dead` reads a non-ASCII identifier whole in a Slim view, a YAML
-  config and a constantized string**: `= hlp_slim_ü`, `class:
-  TrabajoAñoJob` and `Object.const_get("Ñu")` named nothing, so each left
-  its method or class `unreferenced`, `clear`.
+  config, script or `config/routes.rb` git has never seen now counts.
+- **`--dead` reads Slim views and YAML configs more fully**: a Slim line
+  splits as Slim 5 does (`href = x` is read, a `/` comment's `#{}` is
+  not), a byte that is not UTF-8 reads as U+FFFD instead of leaving the
+  file unread, and a non-ASCII identifier is read whole there and in a
+  constantized string (`= hlp_slim_ü`, `class: TrabajoAñoJob`,
+  `Object.const_get("Ñu")`).
 - **`--dead` reads a constantized name with two interpolations by its
   last one**: `"#{self.class}::#{@target.class}Assignment".constantize`
-  left `GroupAssignment` `unreferenced` though a class `Group` spells it;
-  it is `convention-only`.
-
-- **With no lockfile, `--index` resolves the gems a file the Gemfile
-  evals declares** (`eval_gemfile "Gemfile.tools"`), as `--dead Gemfile`
-  grades them: they were left out, so nothing of theirs was indexed.
-- **With no lockfile, `--index` follows `eval_gemfile
-  File.expand_path("x.rb", __dir__)`** and `File.join(__dir__, "x.rb")`,
-  and an eval it cannot follow (a computed path, a missing file) is said
-  in `--index`'s and `--status`'s `gems.unread_evals`.
-- **With no lockfile, a git gem with no checkout is indexed at its
-  installed release**: `gem "hashdiff", git: …` with nothing in
-  `bundler/gems` dropped hashdiff, the gemspec's dependency on it too, so
-  nothing of it was indexed. The installed release that meets the
-  requirements is, and `gems.unlocated` says the git source was not taken.
-- **`--status` names the bundle's gems the index lacks**: `gems.missing`
-  and `gems.unlocated`, as `--index` reports them. A gem not installed, or
-  a git gem not checked out, was counted nowhere ("all indexed").
-
-- **`--dead` reads an operator assignment to a call as a call of its
-  reader and its writer**: `w.count ||= 0`, `w.total += 1` and
-  `w.label &&= x` left all six methods `unreferenced`, `clear`; each is
-  now called once. `--refs` counts them too. The store version moves, so
-  the next run re-indexes.
-- **`--dead` reads a guard nested in a validator's options**: under
-  `validates` and `validates!`, `exclusion: { unless: :skip_name? }` and
-  `numericality: { greater_than: :min_size, if: :sized? }` left `skip_name?`,
-  `min_size` and `sized?` `unreferenced`, "not read as a call"; they are
+  makes `GroupAssignment` `convention-only`.
+- **`--dead` and `--refs` read an operator assignment to a call as calls
+  of its reader and writer** (`w.count ||= 0`, `w.total += 1`,
+  `w.label &&= x`).
+- **`--dead` reads a guard nested in a validator's options** under
+  `validates` and `validates!` (`exclusion: { unless: :skip_name? }`,
+  `numericality: { greater_than: :min_size, if: :sized? }`): each is
   `convention-only`.
-- **`--dead` reads graphql-ruby's `method:` and `prepare:`**: `field :color,
-  String, method: :paint` and `argument :name, String, prepare: :clean_name`
-  left `paint` and `clean_name` `unreferenced`; they are `convention-only`.
-- **`--dead` no longer lists a concern's `ClassMethods`**: the module
-  ActiveSupport::Concern extends each includer with, written out or made
-  by `class_methods do`, is reached as its concern is, so it is no
-  candidate (it was `convention-only`, or `unreferenced` without
-  ActiveSupport indexed). Its methods still are, and a `ClassMethods` in a
-  module that extends no Concern still is.
-- **A module that extends a checkout module merely named `…Concern` is no
-  concern**: `module Trackable; extend AuditConcern` made
-  `Trackable::ClassMethods`'s methods class methods of every includer, so
-  `--def` placed `Widget.tracked_fields` on it; it is `residue`
-  now. A concern is one whose `extend` resolves to
-  `ActiveSupport::Concern`, or, with ActiveSupport not indexed, is
-  written `ActiveSupport::Concern` or `Concern` — through a constant
-  alias too (`C = ActiveSupport::Concern; extend C`), which was no
-  concern, so its `ClassMethods` were no class methods of an includer.
-- **`--dead` reads a class's own `descendants` as a listing of its
-  subclasses**: `descendants` in a class method,
-  `T.unsafe(self).subclasses` (on one line or two), or
-  `self.class.descendants` in an instance method, makes each subclass
-  `convention-only` by `subclasses`, as `Base.subclasses` does; they were
-  `unreferenced`. A module's class side lists nothing: a class that
-  includes it is no subclass.
-- **`--dead` grades a top-level `def` in a library's `lib/` as its public
-  API**: `lower`, with an `api` entry point, as a public method there is.
-  Ruby makes it private to Object, callable anywhere, and a one-method gem
-  written that way had its whole API `test-only`, `clear`.
-- **`--dead` reads `T.unsafe(Base).subclasses` as `Base.subclasses`**:
-  a constant wrapped in `T.unsafe` listed nothing, so Base's subclasses
-  were `unreferenced`; they are `convention-only` by `subclasses`. So for
-  `.descendants` and `.constants`.
-- **`--dead` no longer names the wrong caller of a call written after a
-  second `def` on one line**: in `def build; header; end; def run; footer;
-  end`, `footer`'s reason said its caller was `build`. A call after another
-  `def` on its line now names no caller, since either may hold it. Nor
-  does a call held by a method that is no candidate: one in a live `def`
-  nested in a candidate, or beside one on its line, was put in the
-  candidate. Nor a call on the line a `def` ends, which may follow its
-  `end`: `def self.boot; 1; end; register` in a class body put
-  `register` in `boot`, though it runs as the class loads. A call inside
-  a one-line `def` names no caller either.
-- **`--dead` reads `class << io` as `def io.x`**: a method defined in the
-  singleton class of a local's object was filed as the class's own
-  (`Printer.write`), `unreferenced`, `clear`, and named as the caller of
-  the methods it calls. It is `lower`, "defined on the object `io` holds, which
-  trekr cannot type", and frees nothing.
-- **`--dead` reads a call written as an assignment target as a call of
-  its writer**: `pr.left, pr.right = 1, 2` and `rescue => pr.err` left
-  `left=`, `right=` and `err=` `unreferenced`, `clear`; each is called once,
-  and `--def` on the name answers the writer.
-- **A call on `self` in a method defined on an object is a call on that
-  object**: in `def obj.kinds` or `class << obj; def kinds`, a bare
-  `descendants` made the enclosing class's subclasses `convention-only`,
-  and a bare `helper_one` was `confirmed` by `--refs`, and placed by
-  `--def`, as the enclosing class's `helper_one`, which Ruby would not
-  call. The call is typed as the object (`obj = Object.new` is an
-  `Object`), or untyped when trekr cannot type it. One in a block a
-  method may run as another object (`instance_exec`, a DSL's `draw do`)
-  stays `possible` when the object lacks the name.
-- **`--refs` on a method defined on an object counts the calls that may
-  be on it**: with `w = Widget.new; class << w; def extra; end; end;
-  w.extra`, `--refs` on `extra` excluded `w.extra` as "no such method" on
-  Widget, while `--dead` counted it. A call whose receiver may be the
-  object is `possible`, in `--refs` and the editor's Find References, as
-  `--dead` grades it; one on another class is still excluded, and so is
-  one on the class itself (`Widget.extra`) for an instance's method.
-- **`--refs` on a method an object overrides counts the call on the
-  object**: with `w = Widget.new; def w.label` where Widget has its own
-  `label`, `--refs` on the object's `label` excluded `w.label`, "resolves
-  to a different owner", and `--dead` graded it `override`, "no call
-  names it". The call is `possible`. `--def` at `w.label` still answers
-  Widget#label.
-- **`--dead` reads `def @w.x`, `class << @w`, `def (io).x` and `def it.x`
-  as the object's**: each was filed as the class's own method, `def @w.e`
-  as `Runner.e`, `unreferenced`, `clear`, with its body's bare calls on
-  Runner. Each is `lower`, defined on an object trekr cannot type (or
-  typed as the local in parentheses is), and a call of the name may reach
-  it.
-- **`--dead` reads `def io.x` and `class << io` at the top of a script
-  as the object's**, as it does in a class: there `top_write`, called as
-  `io.top_write`, was `unreferenced`, `clear`, and so was a method only its
-  body calls. Both are `single-caller`, `lower`.
-- **`--dead` counts a bare call at the top of a script as a call of the
-  top-level method it runs**: `def helper_top; …; end; helper_top` left
-  `helper_top` `unreferenced`, `clear`, though `--def` on the call
-  answers it.
-- **`trekr --lsp` reads framing as clients write it, not only as the spec
-  spells it**: `Content-Length:93` with no space, a header name in any
-  case, `\n` line ends and blank lines between messages are read. Spoom's
-  LSP client, which writes the first and a `\n` after each body, had the
-  connection closed at `initialize`. A missing or unreadable
-  `Content-Length` still closes it.
-- **`trekr --lsp` no longer answers empty while a checkout is first
-  indexed**: definition answered `null`, and references the open file's
-  sites alone, until the index's first part landed, with nothing said.
-  Now a definition waits for that part, and references wait for the whole
-  index, as `--refs` does; other requests, `$/cancelRequest` and
-  `shutdown` are served meanwhile. A request still waiting after 30 s or
-  at shutdown is refused with `RequestFailed`, saying the checkout is being
-  indexed, and one whose document is edited meanwhile with
-  `ContentModified`; with indexing turned off (`trekr.index: false`), at once,
-  naming `trekr --index`. A local variable's definition and references
-  read only the file, and are answered at once.
-- **`--no-index` beside another trekr's first index says it is under
-  way**: its `not_indexed` reason was "this checkout has never been
-  indexed"; it is "another trekr is indexing it now (…)".
-- **`--refs` on a method defined on one object counts a predicate
-  matcher as it counts the call**: `expect(widget).to be_ready` was
-  ruled out as Widget's own `ready?`, while `widget.ready?` was `possible`;
-  both are `possible`, in Find References too.
-- **`--dead` no longer panics on a non-ASCII identifier**: `año.descendants`,
-  `año.const_get(name)` or `T.unsafe(año).descendants` in the checkout's
-  Ruby panicked ("not a char boundary"). The receiver is read whole, so a
-  caveat names `año.const_get`.
-- **Hover no longer fails on a doc comment indented with NBSP or U+3000**:
-  a line indented with a space beside one indented with U+3000 made every
-  hover on that method an internal error. The comment is dedented by
-  characters.
-- **`trekr --lsp` exits 1 on `exit` with no `shutdown` before it**, as
-  the spec says; it exited 0.
-- **`--lsp` no longer dies on a bad `Content-Length`**: one past
-  addressable memory panicked the server. It, any longer than 256 MiB,
-  and a header section longer than 8 KiB are refused as other bad framing
-  is: the reason on stderr, and the connection closes.
-- **`--refs Object#helper` finds a top-level `def helper`**: `--def` names
-  its owner `Object`, and asking `--refs` about that owner answered
-  `no_such_method`, exit 1. It lists the def's callers, and so does
-  `--refs` at the def itself, which exited 64; the card answers too. A
-  top-level def comes before Kernel's (`def format` is not
-  `Kernel#format`), and one with a `class Object` def of the same name is
-  one method: both are listed as its definition.
-- **`--dead` counts a call Kernel answers as a possible call of a
-  top-level def of the name**, which comes before Kernel's once its file
-  is loaded; it excluded the call, and could call the def `unreferenced`.
-- **`--dead` asks about `def CONF.alpha` as `CONF`'s**, and about
-  `def (CONF).alpha` and `def (Mod::CONF).alpha` too: it took the scope
-  the def is written in for its owner, so a top-level one was
-  `unreferenced`, `clear`, while `CONF.alpha` called it, and one in a
-  module was named `Settings.gamma`. `--refs` at such a def answers, where
-  it exited 64. The store version moves, so the next run re-indexes.
-- **The editor's Find References and incoming calls at a top-level def
-  list what `--refs` at it lists**: they asked by name, so
-  incoming calls confirmed a class's call `--refs` calls possible, and
-  Find References left out a call in a module's `def self.x`, and a
-  `class Object` def of the name among the declarations.
-- **A concern included through a plain module no longer puts its
-  `ClassMethods` on the class**: `module Outer; include Inner; end` gave a
-  class including `Outer` Inner's class methods, which Ruby does not.
-- **On the class side, of an `extend` and an included concern's
-  `ClassMethods`, the one written later wins**, as in Ruby: a class that
-  writes `extend Finders` before `include Lookup` answers a class method
-  both define with `Lookup::ClassMethods`, on the class and on its
-  subclasses, where the class itself answered `Finders`. The same holds
-  through a concern another concern includes, and for what an
-  `included` hook extends.
-- **A call in a module's own `def self.x` is the module's**: its residue
-  said no class mixes the module in, as if the call ran on one.
+- **`--dead` reads graphql-ruby's `method:` and `prepare:`**
+  (`field :color, String, method: :paint`): `convention-only`.
+- **`--dead` no longer lists a concern's `ClassMethods`**, written out or
+  made by `class_methods do`; its methods are still graded, and so is a
+  `ClassMethods` in a module that extends no Concern.
+- **`--dead` reads a class listing its own subclasses**: `descendants` in
+  a class method, `T.unsafe(self).subclasses`, `self.class.descendants`
+  in an instance method, and `T.unsafe(Base).subclasses` (likewise
+  `.descendants`, `.constants`) make each subclass `convention-only` by
+  `subclasses`. A module's class side lists nothing.
+- **`--dead` grades a top-level `def` in a library's `lib/` as public
+  API**: `lower`, with an `api` entry point.
+- **`--dead` names a call's caller only when one `def` surely holds it**:
+  a call after a second `def` on its line, on the line a `def` ends, or
+  in a one-line `def` names no caller, and one in a live `def` nested in
+  or beside a candidate is not put in the candidate.
+- **`--dead` reads a method defined on an object as the object's**:
+  `class << io`, `def @w.x`, `class << @w`, `def (io).x` and `def it.x`,
+  in a class or at the top of a script, are `lower`, "defined on the
+  object `io` holds, which trekr cannot type" (or typed as the local in
+  parentheses is).
+- **`--dead` reads an assignment target as a call of its writer**
+  (`pr.left, pr.right = 1, 2`, `rescue => pr.err`), and `--def` on the
+  name answers the writer.
+- **`--dead` asks about `def CONF.alpha` as `CONF`'s**, also written
+  `def (CONF).alpha` or `def (Mod::CONF).alpha`; `--refs` at such a def
+  answers.
+- **`--dead` no longer panics on a non-ASCII receiver** (`año.descendants`,
+  `año.const_get(name)`); a caveat names it whole.
+- **`--dead DIR` reads the `.rake` files in it.**
+- **A concern is one whose `extend` is `ActiveSupport::Concern`**, also
+  through a constant alias (`C = ActiveSupport::Concern; extend C`), or
+  written `ActiveSupport::Concern` or `Concern` when ActiveSupport is not
+  indexed — not a module merely named `…Concern`. A concern included
+  through a plain module no longer puts its `ClassMethods` on the class,
+  and of an `extend` and a concern's `ClassMethods`, the one written later
+  wins, as in Ruby, also through nested concerns and `included` hooks.
+- **A method defined on an object is reached as Ruby reaches it**: a bare
+  call in `def obj.kinds` or `class << obj` is a call on `obj` (typed as
+  it, or untyped), not on the enclosing class; `--refs` on the object's
+  method counts a call whose receiver may be the object as `possible`,
+  also where the object overrides its class's method and for a predicate
+  matcher (`expect(widget).to be_ready`), in Find References too.
+- **A top-level `def` is found as Ruby finds it**: it comes before
+  Kernel's, a `class Object` def of the name is the same method, and an
+  explicit receiver may call it where a site makes it public (a top-level
+  `public`, a `class Object` def, `Object.class_eval`). `--refs
+  Object#helper`, `--refs` at the def and its card list its callers;
+  `--dead` counts a bare call at the top of a script and a call Kernel
+  answers; the editor's Find References and incoming calls list what
+  `--refs` lists.
+- **A call in a module's own `def self.x` runs on the module.**
 - **Answers that rest on `helper_method` and other class-body macros no
   longer vary between fresh indexes** of the same checkout.
-- **`--dead` and `--refs` let an explicit receiver call a top-level def
-  that a site makes public**: after a top-level `public`, or beside a
-  `class Object` def (or `Object.class_eval`) of the name. `o.pub_top` and
-  `User.new.dual` were excluded as calls of a private method, so `--dead`
-  graded the def `unreferenced`, `clear`, while `--refs` at a `class
-  Object` def confirmed the call.
-- **Ruby 3.4's `it` is a block's local**, as `_1` is: `--refs` at it said
-  "no method at", `--def` snapped to the next name, and the editor's Find
-  References answered nothing, or with indexing off said to run
-  `trekr --index`.
-- **`--dead DIR` reads the `.rake` files in it**: `--dead lib/tasks`
-  read no file, though naming a `.rake` file read it.
+- **Ruby 3.4's `it` is a block's local**, as `_1` is, for `--refs`,
+  `--def` and Find References.
+- **With no lockfile, `--index` resolves the gems an `eval_gemfile`
+  declares**, following a literal path, `File.expand_path("x.rb",
+  __dir__)` and `File.join(__dir__, "x.rb")`; an eval it cannot follow is
+  listed in `gems.unread_evals`. A git gem with no checkout is indexed at
+  its installed release and listed in `gems.unlocated`.
+- **`--status` names the bundle's gems the index lacks**: `gems.missing`,
+  `gems.unlocated` and `gems.unread_evals`, as `--index` reports them.
+- **`--no-index` beside another trekr's first index says it is under
+  way**: "another trekr is indexing it now (…)".
+- **`trekr --lsp` reads framing as clients write it**: `Content-Length:93`
+  with no space, any header case, `\n` line ends and blank lines between
+  messages (Spoom's client). A missing, unreadable or over-256 MiB
+  `Content-Length`, or a header section over 8 KiB, closes the connection
+  with the reason on stderr.
+- **`trekr --lsp` waits for a checkout's first index instead of answering
+  empty**: definition waits for the index's first part, references for
+  the whole index; other requests are served meanwhile. After 30 s or at
+  shutdown a waiting request is refused with `RequestFailed`, or
+  `ContentModified` if its document changed; with `trekr.index: false`,
+  at once, naming `trekr --index`. A local variable's answers never wait.
+- **`trekr --lsp` exits 1 on `exit` without `shutdown`**, as the spec
+  says.
+- **Hover works on a doc comment indented with NBSP or U+3000.**
 
 ## 0.10.2 — 2026-11-20
 
