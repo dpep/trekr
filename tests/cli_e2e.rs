@@ -5266,6 +5266,39 @@ fn gc_reports_the_bytes_it_returned_to_the_disk() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A `--gc` that frees pages inside the index hands the free pages back at
+/// once when they are worth it: the file shrinks, rather than waiting for
+/// the background cleanup's interval.
+#[test]
+fn gc_that_frees_pages_compacts_the_file_at_once() {
+    let (dir, db) = ruby_scratch("gc-compact");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+    let gone = dir.with_file_name("gc-compact-gone");
+    let _ = fs::remove_dir_all(&gone);
+    fs::create_dir_all(&gone).unwrap();
+    repo(&gone);
+    // Its own blobs, which no other checkout maps.
+    let body: String = (0..400).map(|i| format!("  def gone_{i}; end\n")).collect();
+    fs::write(gone.join("gone.rb"), format!("class Gone\n{body}end\n")).unwrap();
+    commit_all(&gone);
+    trekr(&db, &gone, &["--index"]);
+    bloat(&db, 40);
+    fs::remove_dir_all(&gone).unwrap();
+    let before = fs::metadata(&db).unwrap().len();
+
+    let gc = json(&trekr(&db, &dir, &["--gc", "--older-than", "0", "--json"]));
+    assert!(gc["freed_bytes"].as_i64().unwrap() > 0, "{gc}");
+    let after = fs::metadata(&db).unwrap().len();
+    assert!(after + 30_000_000 < before, "{before} -> {after}: {gc}");
+    assert!(gc["free_bytes"].as_i64().unwrap() < 1_000_000, "{gc}");
+    assert!(
+        gc["reclaimed_bytes"].as_i64().unwrap() >= 30_000_000,
+        "{gc}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// What an older trekr, a recovery or a dead index left beside the store is
 /// listed by `--status`; `--gc` removes a set-aside copy and a dead index's
 /// early store at once, and another trekr's store once it has been idle as

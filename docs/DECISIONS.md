@@ -18946,3 +18946,26 @@ discourse's runs spread 1.7–8.8 s on a loaded machine either way: no
 claim there beyond byte-identity. Test:
 `a_pathspec_matches_as_git_matches_it`, and the testbed's untracked case
 1010 through the cache.
+
+## DEC-878 — A `--gc` that frees pages compacts the file at once
+
+**Decided.** When `--gc` (not a dry run) frees pages inside the index and
+the file's free pages then come to `MIN_WASTE` (32 MB), it hands them back
+before it reports, a chunk per write transaction as the background
+cleanup does (`cleanup::compact_after_gc`, over `in_chunks`), and counts
+the shrink in `reclaimed_bytes`. With `--vacuum` gone (DEC-863), a `--gc`
+that freed 86 MB inside the file returned 6.8 MB to the disk, the rest
+waiting for a background pass gated by the two-hour interval: nothing let
+a user compact on purpose.
+
+The trigger is "freed something, and the free pages are worth it", not
+"freed 32 MB itself": the free pages are handed back together, whoever
+freed them, and a `--gc` that removed nothing does not compact (DEC-863's
+`gc_reports_the_bytes_it_returned_to_the_disk` keeps its 40 MB free). The
+background pass's quarter-of-the-file rule is not applied: it keeps a
+large store from being compacted for churn the next index reuses, and a
+`--gc` is the user asking. An older, non-incremental store is left to the
+background pass, which checks the disk has room for a full rewrite.
+
+Test: `gc_that_frees_pages_compacts_the_file_at_once`, red before (the
+file kept every byte).

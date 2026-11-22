@@ -60,8 +60,10 @@
 ### Removed
 
 - **`trekr --gc --vacuum` and `--retention` are gone.** Compaction is
-  automatic: the background cleanup hands free pages back, so there is
-  nothing to run. For one `--gc` or `--status` with another retention, set
+  automatic: the background cleanup hands free pages back, and a `--gc`
+  that frees pages inside the index hands them back before it reports
+  once they come to 32 MB, its `reclaimed_bytes` counting the shrink, so
+  there is nothing to run. For one `--gc` or `--status` with another retention, set
   `TREKR_RETENTION` (`TREKR_RETENTION=0 trekr --gc`). `--gc --json` no
   longer carries `vacuumed`. Either flag is now an unknown-flag error
   (exit 64).

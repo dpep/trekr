@@ -863,9 +863,11 @@ checkout's, and `expired`: those unmapped longer than the retention.
 on a dry run too, since without it a collection scans a table per blob, and
 an index removes nothing — and names them in `indexes` (empty when none).
 It reports `reclaimed_bytes`, what it returned to the disk: the files it
-removed (`snapshots`, `overlays`, `core_files`, `kept`). `freed_bytes` is the
-pages its deletions freed inside the file, which later writes reuse;
-`free_bytes` is every free page left in it, which the background cleanup
+removed (`snapshots`, `overlays`, `core_files`, `kept`), and the index
+file's shrink. `freed_bytes` is the pages its deletions freed inside the
+file; when it freed any and the file's free pages come to 32 MB, `--gc`
+hands them back before it reports (DEC-878). `free_bytes` is every free
+page left in it, which later writes reuse and the background cleanup
 compacts once it is worth it.
 
 A reindex with nothing changed parses nothing (~60 ms on a 3k-file repo), and

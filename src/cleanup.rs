@@ -389,6 +389,18 @@ fn record(store: &Store, now: i64, done: &Done) -> rusqlite::Result<()> {
     })
 }
 
+/// After a `--gc` that freed pages: hand the file's free pages back now, when
+/// they come to [`MIN_WASTE`], rather than leave them to the background
+/// cleanup an interval away (DEC-878). An incremental store only: an older
+/// one needs a full rewrite and the room for it, which the background pass
+/// checks for.
+pub(crate) fn compact_after_gc(store: &Store, freed: i64) -> anyhow::Result<Compacted> {
+    if freed <= 0 || store.free_bytes()? < MIN_WASTE || !store.incremental()? {
+        return Ok(Compacted::NotWorth);
+    }
+    in_chunks(store)
+}
+
 /// Hand every free page back, a chunk per write transaction, pausing between
 /// them so a waiting writer goes first. A writer that keeps the lock past the
 /// wait ends the pass where it is.

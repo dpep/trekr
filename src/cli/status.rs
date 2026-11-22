@@ -571,13 +571,20 @@ pub(super) fn cmd_gc(out: Output, older_than: u64, dry_run: bool) -> anyhow::Res
     if !dry_run {
         kept.iter().for_each(crate::store::remove_kept);
     }
+    // What this collection freed inside the index is handed back now, once
+    // it is worth it, not an interval later; less is left for later writes
+    // or the background cleanup (DEC-650, DEC-878).
+    let before = store.db_bytes()?;
+    if !dry_run {
+        crate::cleanup::compact_after_gc(&store, garbage.freed_bytes)?;
+    }
     let db_bytes = store.db_bytes()?;
     let free_bytes = store.free_bytes()?;
-    // What left the disk: the files. A delete inside the index frees pages
-    // for later writes; the background cleanup hands them back (DEC-650).
+    // What left the disk: the files, and the index file's shrink.
     let reclaimed_bytes =
         (snapshots.bytes + overlay_bytes + core.bytes + kept.iter().map(|k| k.bytes).sum::<u64>())
-            as i64;
+            as i64
+            + (before - db_bytes).max(0);
     let found = !garbage.checkouts.is_empty()
         || garbage.blobs > 0
         || snapshots.files > 0
