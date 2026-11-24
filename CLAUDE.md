@@ -66,6 +66,11 @@ bounded, regular files only, because a checkout's file may be a pipe or a
 link to `/dev/zero`. `clippy.toml` refuses `std::fs::read` and
 `read_to_string`; a test file allows them at its top.
 
+**Every thread comes from `stack`** (`stack::spawn`, `spawn_scoped`,
+`pool`): any thread may walk a deeply nested tree, and a stack overflow
+aborts the process (DEC-894). `clippy.toml` refuses the std and rayon
+constructors.
+
 **Before a release, and after touching `src/serve/` or `editors/vscode/`:**
 `script/check.sh --e2e` (or `TREKR_CHECK_E2E=1`, or `make vscode-test`), which
 adds the extension's e2e suite in a real VS Code against the debug build. It

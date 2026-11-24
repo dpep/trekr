@@ -51,7 +51,7 @@ impl Hints {
         // A query writes its one file and closes the pipe at spawn: read it
         // now, or the first part may be written without it.
         match in_background() {
-            true => drop(std::thread::spawn(read)),
+            true => drop(crate::stack::spawn(read)),
             false => read(),
         }
         hints
@@ -62,7 +62,7 @@ impl Hints {
     pub(crate) fn tail(&mut self, file: PathBuf) {
         self.listening = true;
         let sink = self.sent.clone();
-        std::thread::spawn(move || {
+        crate::stack::spawn(move || {
             use std::io::{Read, Seek};
             let (mut at, mut partial) = (0u64, Vec::new());
             loop {

@@ -19334,3 +19334,36 @@ alone would exclude every implicit call in a module.
 same way: its `lib/tasks/tareas.rake` is now read.
 
 Testbed 1044.
+
+## DEC-894 — Every thread runs on a 256 MiB stack
+
+**Decided.** `src/stack.rs` owns thread creation: the CLI runs on a spawned
+thread, rayon's global pool and every built pool get the same stack, and
+`clippy.toml` refuses `std::thread::spawn`, `Scope::spawn`,
+`thread::Builder::new` and `rayon::ThreadPoolBuilder::new` outside it. The
+stack is reserved, not committed. Mirrors rq's `PARSE_STACK` (0.61.2).
+
+**Why every thread.** Prism's parser, trekr's walkers and prism's free all
+recurse on a tree's depth, and an overflow aborts the process: one file of
+10,000 nested brackets aborted `--symbols`, and `--index` on any checkout
+holding it. Files are parsed on the main thread, the index pool, rayon's
+global pool (`--refs` re-reads, among others) and the server's threads,
+so a stack given only to the parse paths is a list someone must keep
+complete; given to every thread, there is no list.
+
+**What it moved.** The process's main thread and rayon's global workers now
+exist before `--index` watches its stop signals, so the watcher can no
+longer rely on masking them first: a handler forwards each signal to it
+through a pipe, from whichever thread it lands on.
+
+**Not instead.** Prism's `PRISM_DEPTH_MAXIMUM` (10,000) bounds only its
+parser's recursion: a left-associative chain (`1 + 1 + …`) is built in a
+loop, so its tree is as deep as the chain is long, and the walk and the
+free still recurse on it.
+
+**Measured.** Peak RSS of a cold `--index` of rails, two runs each:
+348–353 MB before, 334–362 MB after (noise). A trivial `--symbols` goes
+5.7 → 6.3 ms median, the global pool now spawned up front. The cliff moves
+rather than vanishes: in a release build a chain of 80,000 outlines and
+90,000 still aborts (about 3 KB of stack per level); a debug build manages
+15,000.

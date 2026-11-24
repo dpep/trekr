@@ -217,7 +217,7 @@ enum Out {
 impl Writer {
     pub(crate) fn stdout() -> Writer {
         let (sender, receiver) = mpsc::channel::<Out>();
-        let thread = std::thread::spawn(move || {
+        let thread = crate::stack::spawn(move || {
             let stdout = io::stdout();
             let mut stdout = stdout.lock();
             for out in receiver {

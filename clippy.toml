@@ -1,7 +1,12 @@
 # A checkout's file may be a FIFO, /dev/zero or huge, so input goes through
 # the bounded readers. `File::open` + `read_to_end` is not covered: the
 # bounded readers are built on it, and the few other uses are deliberate.
+# Threads come from `stack`, which gives each one a stack a deep tree fits on.
 disallowed-methods = [
   { path = "std::fs::read", reason = "a checkout's file may be a FIFO or /dev/zero: use scan::read_source (bounded, regular files only)" },
   { path = "std::fs::read_to_string", reason = "a checkout's file may be a FIFO or /dev/zero: use scan::read_source / scan::read_text" },
+  { path = "std::thread::spawn", reason = "a thread may walk a deep tree: use stack::spawn" },
+  { path = "std::thread::Scope::spawn", reason = "a thread may walk a deep tree: use stack::spawn_scoped" },
+  { path = "std::thread::Builder::new", reason = "a thread may walk a deep tree: use stack::spawn" },
+  { path = "rayon::ThreadPoolBuilder::new", reason = "a worker may walk a deep tree: use stack::pool" },
 ]

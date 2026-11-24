@@ -72,7 +72,7 @@ fn linguist_generated(root: &Path, paths: &BTreeSet<&str>) -> BTreeSet<String> {
         .flat_map(|p| [p.as_bytes(), b"\0"].concat())
         .collect();
     let writer = child.stdin.take().map(|mut stdin| {
-        std::thread::spawn(move || {
+        crate::stack::spawn(move || {
             let _ = stdin.write_all(&input);
         })
     });

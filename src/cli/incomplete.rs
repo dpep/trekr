@@ -78,7 +78,7 @@ pub(super) fn watch_signals() {
             libc::sigaction(signal, &action, std::ptr::null_mut());
         }
     }
-    std::thread::spawn(move || {
+    crate::stack::spawn(move || {
         let mut byte = 0u8;
         // SAFETY: reads one byte into `byte` from the pipe opened above.
         if unsafe { libc::read(fds[0], (&raw mut byte).cast(), 1) } != 1 {

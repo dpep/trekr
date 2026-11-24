@@ -590,7 +590,7 @@ impl Session {
                 Some(_) if building => self.collect_tree(root, Some(ASIDE)),
                 Some(store) => {
                     let (send, done) = mpsc::channel();
-                    std::thread::spawn(move || {
+                    crate::stack::spawn(move || {
                         let built = Tree::build(&store, &key)
                             .and_then(|tree| Ok((tree, store.warming(&key)?)));
                         let _ = send.send(built);
@@ -846,7 +846,7 @@ impl Session {
         };
         let key = root.to_string_lossy().into_owned();
         let (send, done) = mpsc::channel();
-        std::thread::spawn(move || {
+        crate::stack::spawn(move || {
             let listed = Tree::build(&store, &key).map(|tree| Members::of(&tree));
             let _ = send.send(listed);
         });

@@ -185,7 +185,7 @@ pub(super) fn probe(store: &Store, root: &Path) -> Option<Probe> {
         return None;
     }
     let open = store.opener();
-    let stored = std::thread::spawn(move || open?().ok()?.file_map(&root_str).ok());
+    let stored = crate::stack::spawn(move || open?().ok()?.file_map(&root_str).ok());
     Some(scan::Probe::start(root, move |now| {
         let stored = stored.join().ok().flatten()?;
         let gone = stored

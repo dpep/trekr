@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A source file nesting an expression thousands deep (`[[[…]]]`, or a
+  chain like `1 + 1 + …`) no longer aborts trekr while indexing,
+  outlining or re-reading it.
+
 ## 0.11.0 — 2026-11-22
 
 ### Added

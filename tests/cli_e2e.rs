@@ -336,6 +336,46 @@ fn reindexing_an_unchanged_checkout_parses_nothing() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Parsing, walking and freeing a tree recurse on its depth, and a stack
+/// overflow aborts the whole process rather than failing one file. A chain
+/// (`1 + 1 + …`) nests as deeply as brackets do.
+#[test]
+fn a_deeply_nested_file_aborts_neither_an_outline_nor_the_index() {
+    use std::os::unix::process::ExitStatusExt;
+    let (dir, db) = ruby_scratch("deep-nesting");
+    repo(&dir);
+    let depth = 10_000;
+    let brackets = "[".repeat(depth) + &"]".repeat(depth);
+    let chain = format!("1{} + helper", " + 1".repeat(depth));
+    for (file, class, value) in [
+        ("brackets.rb", "Brackets", brackets),
+        ("chain.rb", "Chain", chain),
+    ] {
+        fs::write(
+            dir.join(file),
+            format!("class {class}\n  X = {value}\nend\n"),
+        )
+        .unwrap();
+        let out = trekr(&db, &dir, &["--symbols", file, "--json"]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.signal(), None, "{file}: {stderr}");
+        assert!(out.status.success(), "{file}: {stderr}");
+        assert_eq!(json(&out)[0]["name"], class, "{file}");
+    }
+
+    let out = trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.signal(), None, "{stderr}");
+    assert_eq!(json(&out)["indexed"]["files"], 3, "{stderr}");
+    let helper = json(&trekr(&db, &dir, &["--refs", "Widget#helper", "--json"]));
+    assert_eq!(helper["definition"][0]["line"], 12, "{helper}");
+    // A bare name re-reads every file that mentions it, the chain included.
+    let out = trekr(&db, &dir, &["--refs", "helper", "--json"]);
+    assert_eq!(out.status.signal(), None, "{}", stdout(&out));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn an_uncommitted_edit_is_indexed_like_any_other_content() {
     let (dir, db) = ruby_scratch("dirty");

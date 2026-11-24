@@ -596,10 +596,7 @@ mod tests {
             .unwrap();
         let query = refs::Query::parse("Widget#save");
         let answer = |threads: usize, keep: bool| {
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .unwrap();
+            let pool = crate::stack::pool().num_threads(threads).build().unwrap();
             pool.install(|| {
                 // A connection stays on the thread that opened it.
                 let store = Store::open(&db).unwrap();

@@ -60,7 +60,7 @@ fn dump_linearizations() {
         let workers: Vec<_> = (0..threads)
             .map(|at| {
                 let (names, row) = (&names, &row);
-                scope.spawn(move || {
+                crate::stack::spawn_scoped(scope, move || {
                     names
                         .iter()
                         .skip(at)

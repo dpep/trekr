@@ -162,7 +162,7 @@ mod tests {
         let runs = std::sync::atomic::AtomicU32::new(0);
         std::thread::scope(|scope| {
             for _ in 0..8 {
-                scope.spawn(|| {
+                crate::stack::spawn_scoped(scope, || {
                     once.get_or_init("k", || {
                         runs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         std::thread::sleep(std::time::Duration::from_millis(5));

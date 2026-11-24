@@ -16,11 +16,12 @@ pub(crate) mod resolve;
 pub(crate) mod scan;
 pub(crate) mod schema;
 pub(crate) mod serve;
+pub(crate) mod stack;
 pub(crate) mod store;
 pub(crate) mod tree;
 pub(crate) mod usage;
 
 /// The binary's entry: the CLI, which hands `--lsp` to the language server.
 pub fn run() -> std::process::ExitCode {
-    cli::run(serve::run)
+    stack::run(|| cli::run(serve::run))
 }

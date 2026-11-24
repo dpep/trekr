@@ -121,7 +121,7 @@ fn write_files(
     let mut received = Received::new(profile.is_some());
     let (send, parsed) = std::sync::mpsc::sync_channel::<(Oid, extract::Parsed)>(256);
     let (counts, parse_done) = std::thread::scope(|scope| {
-        let parsing = scope.spawn(move || {
+        let parsing = crate::stack::spawn_scoped(scope, move || {
             pool.install(|| {
                 to_parse
                     .into_par_iter()
@@ -162,7 +162,7 @@ fn index_all(
 ) -> anyhow::Result<(crate::store::Indexed, GemReport)> {
     let root_str = root.to_string_lossy().into_owned();
     store.wait_as_writer(writer_waiting)?;
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
+    let pool = crate::stack::pool().num_threads(jobs).build()?;
     // What the language server or a query wants read first: this index's if
     // it fills the checkout, the one it waits for's if another does.
     let mut hints = crate::background::Hints::listen(autoindex::spawned_by_trekr());
@@ -544,7 +544,7 @@ fn index_first(
             let mut counts = std::thread::scope(|scope| {
                 let early = main.as_deref().map(|main| {
                     let (written, stop) = (&written, &stop);
-                    scope.spawn(move || {
+                    crate::stack::spawn_scoped(scope, move || {
                         write_early(main, root, files, hints, written, (read, of), stop)
                     })
                 });
@@ -1108,7 +1108,7 @@ fn index_bundle(
         std::sync::mpsc::sync_channel::<(usize, Oid, extract::Parsed)>(BUNDLE_CHUNK);
     let write = |store: &mut Store| {
         std::thread::scope(|scope| {
-            let parsing = scope.spawn(move || {
+            let parsing = crate::stack::spawn_scoped(scope, move || {
                 for chunk in to_parse.chunks(BUNDLE_CHUNK) {
                     let parsed: Vec<_> = pool.install(|| {
                         chunk
@@ -1701,8 +1701,9 @@ mod tests {
         let stop = std::sync::atomic::AtomicBool::new(false);
         let early = crate::store::early::path(&main, std::process::id());
         std::thread::scope(|scope| {
-            let writer =
-                scope.spawn(|| write_early(&main, &repo, &files, &hints, &written, (1, 3), &stop));
+            let writer = crate::stack::spawn_scoped(scope, || {
+                write_early(&main, &repo, &files, &hints, &written, (1, 3), &stop)
+            });
             let done = Stop(&stop);
             let started = std::time::Instant::now();
             while !early.exists() && started.elapsed() < std::time::Duration::from_secs(10) {

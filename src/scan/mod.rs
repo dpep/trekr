@@ -251,7 +251,7 @@ impl Gits {
             running.children.push(child);
         }
         // Both pipes at once, or a full one stalls the other.
-        let errors = std::thread::spawn(move || {
+        let errors = crate::stack::spawn(move || {
             let mut bytes = Vec::new();
             let _ = stderr.read_to_end(&mut bytes);
             bytes
@@ -570,7 +570,7 @@ impl<T: Send + 'static> Probe<T> {
         let root = root.to_path_buf();
         let gits = std::sync::Arc::new(Gits::default());
         let running = gits.clone();
-        std::thread::spawn(move || drop(send.send(scan_in(&root, Some(&running)).map(then))));
+        crate::stack::spawn(move || drop(send.send(scan_in(&root, Some(&running)).map(then))));
         Probe {
             started: std::time::Instant::now(),
             found,
@@ -616,7 +616,8 @@ fn scan_in(root: &Path, gits: Option<&Gits>) -> Result<Files> {
     // what `git_fingerprint` watches. Both read the index alone, so they run
     // at once: a query waits on this (DEC-035).
     let (listed, status) = std::thread::scope(|scope| {
-        let listed = scope.spawn(|| git_in(root, &["ls-files", "-s", "-z"], gits));
+        let listed =
+            crate::stack::spawn_scoped(scope, || git_in(root, &["ls-files", "-s", "-z"], gits));
         let status = git_in(
             root,
             &[
@@ -815,7 +816,7 @@ impl Admission {
         let gits = std::sync::Arc::new(Gits::default());
         let running = gits.clone();
         let (root, relative) = (root.to_path_buf(), relative.to_string());
-        std::thread::spawn(move || drop(send.send(admits(&root, &relative, Some(&running)))));
+        crate::stack::spawn(move || drop(send.send(admits(&root, &relative, Some(&running)))));
         Admission {
             started: std::time::Instant::now(),
             found,

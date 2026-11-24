@@ -1016,7 +1016,7 @@ impl Tree {
                         phases.mark("snapshot-encode");
                         // Freeing a namespace's worth of strings is a third
                         // of a second at 30×; nothing here waits for it.
-                        std::thread::spawn(move || drop(names));
+                        crate::stack::spawn(move || drop(names));
                         let snapshot = files::save(&dir, root, &key, slot, bytes);
                         phases.mark("snapshot-write");
                         snapshot
@@ -3085,7 +3085,7 @@ end
                 std::thread::scope(|scope| {
                     for start in 0..8 {
                         let (tree, names, first) = (&tree, &names, &first);
-                        scope.spawn(move || {
+                        crate::stack::spawn_scoped(scope, move || {
                             for step in 0..names.len() {
                                 let at = (start + step) % names.len();
                                 assert_eq!(tree.ancestors(names[at]).chain, first[at]);
