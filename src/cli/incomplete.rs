@@ -11,7 +11,7 @@
 use super::{Output, json_text, paths, warming_note};
 use crate::store::Store;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 /// The checkout being indexed, and how to report on it.
 static INDEXING: OnceLock<(String, Output)> = OnceLock::new();
@@ -20,39 +20,80 @@ static DONE: AtomicBool = AtomicBool::new(false);
 
 const SIGNALS: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
 
-/// Take the stopping signals onto a thread of their own. Call before this
-/// process starts any other thread: each inherits the mask, so the signal
-/// can only arrive here. A child process does not — std resets it at spawn.
+/// Where [`forward`] writes a signal for the watching thread to read.
+static FORWARD_TO: AtomicI32 = AtomicI32::new(-1);
+
+/// The handler: whichever thread the signal lands on, hand it to the
+/// watcher. Only async-signal-safe calls, and errno left as it was found.
+extern "C" fn forward(signal: libc::c_int) {
+    let byte = signal as u8;
+    // SAFETY: `errno_location` is this thread's errno; `write` is
+    // async-signal-safe, to a non-blocking pipe that `watch_signals` opened.
+    unsafe {
+        let errno = *errno_location();
+        libc::write(
+            FORWARD_TO.load(Ordering::Relaxed),
+            (&raw const byte).cast(),
+            1,
+        );
+        *errno_location() = errno;
+    }
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn errno_location() -> *mut libc::c_int {
+    // SAFETY: libc's accessor for the calling thread's errno.
+    unsafe { libc::__errno_location() }
+}
+
+#[cfg(not(target_os = "linux"))]
+unsafe fn errno_location() -> *mut libc::c_int {
+    // SAFETY: libc's accessor for the calling thread's errno.
+    unsafe { libc::__error() }
+}
+
+/// Take the stopping signals onto a thread of their own: a handler forwards
+/// each through a pipe, so it reaches the watcher whichever thread it lands
+/// on, and threads started before this one need no mask. A child process
+/// does not inherit the handler — exec resets it.
 pub(super) fn watch_signals() {
-    // SAFETY: a signal set built and installed as the calling thread's mask.
-    let set = unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut set);
+    let mut fds = [0; 2];
+    // SAFETY: a pipe into a two-element array, both ends close-on-exec and
+    // the write end non-blocking, so a handler never waits on a full pipe;
+    // then the handler installed for each stopping signal.
+    unsafe {
+        if libc::pipe(fds.as_mut_ptr()) != 0 {
+            return;
+        }
+        for fd in fds {
+            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        }
+        libc::fcntl(fds[1], libc::F_SETFL, libc::O_NONBLOCK);
+        FORWARD_TO.store(fds[1], Ordering::Relaxed);
         for signal in SIGNALS {
-            libc::sigaddset(&mut set, signal);
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = forward as extern "C" fn(libc::c_int) as libc::sighandler_t;
+            action.sa_flags = libc::SA_RESTART;
+            libc::sigemptyset(&mut action.sa_mask);
+            libc::sigaction(signal, &action, std::ptr::null_mut());
         }
-        if libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) != 0 {
-            return;
-        }
-        set
-    };
+    }
     std::thread::spawn(move || {
-        let mut signal = 0;
-        // SAFETY: waits on the set this function blocked.
-        if unsafe { libc::sigwait(&set, &mut signal) } != 0 {
+        let mut byte = 0u8;
+        // SAFETY: reads one byte into `byte` from the pipe opened above.
+        if unsafe { libc::read(fds[0], (&raw mut byte).cast(), 1) } != 1 {
             return;
         }
+        let signal = libc::c_int::from(byte);
         if !DONE.load(Ordering::SeqCst)
             && let Some((root, out)) = INDEXING.get()
         {
             report(*out, root, &format!("stopped by {}", name(signal)));
         }
         // Die of it, as the default action would have.
-        // SAFETY: restores the default action and delivers the signal to
-        // this thread, which no longer blocks it.
+        // SAFETY: restores the default action and delivers the signal.
         unsafe {
             libc::signal(signal, libc::SIG_DFL);
-            libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
             libc::raise(signal);
         }
         std::process::exit(128 + signal);
